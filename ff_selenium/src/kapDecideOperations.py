@@ -1,13 +1,42 @@
 import requests
 import time
 import os
+import fitz  # PyMuPDF
 from requests.exceptions import RequestException
+class PDFTextExtractor:
+    def __init__(self, output_dir="/root/kap_txts"):
+        self.output_dir = output_dir
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
 
+    def extract_text(self, pdf_content, file_name):
+        # Write the PDF content to a temporary file
+        temp_pdf_path = os.path.join(self.output_dir, file_name)
+        with open(temp_pdf_path, "wb") as pdf_file:
+            pdf_file.write(pdf_content)
+
+        # Open the PDF file
+        pdf_document = fitz.open(temp_pdf_path)
+
+        # Extract text from the PDF
+        pdf_text = ""
+        for page_num in range(len(pdf_document)):
+            page = pdf_document.load_page(page_num)
+            pdf_text += page.get_text()
+
+        # Write the extracted text to a .txt file
+        txt_file_path = os.path.join(self.output_dir, f"{os.path.splitext(file_name)[0]}.txt")
+        with open(txt_file_path, "w") as txt_file:
+            txt_file.write(pdf_text)
+        # Remove the temporary PDF file
+        os.remove(temp_pdf_path)
+        print(f"Extracted text written to {txt_file_path}")
 class PDFDownloader:
     def __init__(self, max_attempts=1, backoff_time=5):
         self.max_attempts = max_attempts
         self.backoff_time = backoff_time
         self.headers = {'User-Agent': 'Mozilla/5.0'}
+        self.extractor = PDFTextExtractor()
 
     def download_pdf(self, pdf_url, pdf_path):
         attempt = 0
@@ -22,6 +51,9 @@ class PDFDownloader:
                     pdf_file.write(pdf_response.content)
 
                 print(f"Downloaded {pdf_path}")
+                # Extract text and write to a .txt file
+                self.extractor.extract_text(pdf_response.content, os.path.basename(pdf_path))
+                
                 return pdf_response.content
             except requests.exceptions.RequestException as e:
                 print(f"Error downloading {pdf_path}: {e}")

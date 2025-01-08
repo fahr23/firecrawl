@@ -13,6 +13,7 @@ FROM base AS build
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
 RUN apt-get update -qq && apt-get install -y ca-certificates && update-ca-certificates
+RUN apt-get update && apt-get install -y git python3 python3-venv python3-pip
 RUN pnpm install
 RUN --mount=type=secret,id=SENTRY_AUTH_TOKEN \
     bash -c 'export SENTRY_AUTH_TOKEN="$(cat /run/secrets/SENTRY_AUTH_TOKEN)"; if [ -z $SENTRY_AUTH_TOKEN ]; then pnpm run build:nosentry; else pnpm run build; fi'
