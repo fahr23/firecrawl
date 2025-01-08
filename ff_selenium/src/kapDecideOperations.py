@@ -85,6 +85,7 @@ class DatabaseManager:
             host=db_params["host"]
         )
         self.cursor = self.connection.cursor()
+        self.create_table()
 
     def create_table(self):
             create_table_query = """
@@ -108,6 +109,7 @@ class DatabaseManager:
             )
             """
             self.cursor.execute(create_table_query)
+            self.connection.commit()
     
     def insert_data(self, data):
         insert_query = """
@@ -130,6 +132,7 @@ class DatabaseManager:
             updatetime = CURRENT_TIMESTAMP
         """
         self.cursor.execute(insert_query, data)
+        self.connection.commit()
 
 # Example usage:
 # from minio import Minio
@@ -225,6 +228,23 @@ for item in reversed(data):
 
     # Check if the PDF already exists
     if not os.path.exists(pdf_path):
+        # Assuming `item` is defined and contains the data to be inserted
+        db_manager.insert_data((
+            item.get("publishDate", ''),
+            item.get("kapTitle", ''),
+            item.get("isOldKap", ''),
+            item.get("disclosureClass", ''),
+            item.get("disclosureType", ''),
+            item.get("disclosureCategory", ''),
+            item.get("summary", ''),
+            item.get("subject", ''),
+            item.get("ruleTypeTerm", ''),
+            item.get("disclosureIndex", ''),
+            item.get("isLate", ''),
+            item.get("stockCodes", ''),
+            item.get("hasMultiLanguageSupport", ''),
+            item.get("attachmentCount", '')
+        ))
         retries = 0
         while retries < max_retries:
             try:
