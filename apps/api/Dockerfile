@@ -16,7 +16,7 @@ RUN apt-get update -qq && apt-get install -y ca-certificates && update-ca-certif
 RUN pnpm install
 RUN --mount=type=secret,id=SENTRY_AUTH_TOKEN \
     bash -c 'export SENTRY_AUTH_TOKEN="$(cat /run/secrets/SENTRY_AUTH_TOKEN)"; if [ -z $SENTRY_AUTH_TOKEN ]; then pnpm run build:nosentry; else pnpm run build; fi'
-
+RUN apt-get -y install git
 # Install Go
 FROM golang:1.19 AS go-base
 COPY sharedLibs/go-html-to-md /app/sharedLibs/go-html-to-md

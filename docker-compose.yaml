@@ -3,7 +3,7 @@ name: firecrawl
 x-common-service: &common-service
   build: apps/api
   networks:
-    - backend
+    - backtofuture_network
   extra_hosts:
     - "host.docker.internal:host-gateway"
 
@@ -17,7 +17,7 @@ services:
       - PROXY_PASSWORD=${PROXY_PASSWORD}
       - BLOCK_MEDIA=${BLOCK_MEDIA}
     networks:
-      - backend
+      - backtofuture_network
 
   api:
     <<: *common-service
@@ -89,9 +89,10 @@ services:
   redis:
     image: redis:alpine
     networks:
-      - backend
+      - backtofuture_network
     command: redis-server --bind 0.0.0.0
 
 networks:
-  backend:
+  backtofuture_network:
     driver: bridge
+    external: true
