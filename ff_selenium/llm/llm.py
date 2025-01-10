@@ -12,11 +12,12 @@ class PDF(FPDF):
     def __init__(self):
         super().__init__()
         self.add_font('DejaVu', '', '/workspaces/firecrawl/ff_selenium/llm/DejaVuSans.ttf', uni=True)
+        self.add_font('DejaVu', 'B', '/workspaces/firecrawl/ff_selenium/llm/DejaVuSansBold.ttf', uni=True)
         self.add_page()
         self.set_font('DejaVu', '', 12)  # Use Unicode font
 
     def header(self):
-        self.set_font('DejaVu', '', 12)  # Use Unicode font for the header
+        self.set_font('DejaVu', 'B', 12)  # Use Unicode font for the header
         self.cell(0, 10, 'BacktoFuture Responses', 0, 1, 'C')
 
     def footer(self):
@@ -25,16 +26,19 @@ class PDF(FPDF):
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
     def chapter_title(self, title):
-        self.set_font('DejaVu', '', 12)  # Use Unicode font for titles
+        self.set_font('DejaVu', 'B', 12)  # Use Unicode font for the header
+        self.set_text_color(255, 0, 0)  # Set text color to red
         self.cell(0, 10, title, 0, 1, 'L')
         self.ln(10)
+        self.set_text_color(0, 0, 0)  # Reset text color to black
+
 
     def chapter_body(self, body):
         self.set_font('DejaVu', '', 12)  # Use Unicode font for body
         self.multi_cell(0, 10, body)
         self.ln()
 # Ensure the font file is added to FPDF
-PDF().add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
+# PDF().add_font('DejaVu', '', 'DejaVuSans.ttf', uni=True)
 
 def send_to_chatgpt(conversation_history):
     """
@@ -49,10 +53,11 @@ def send_to_chatgpt(conversation_history):
                 "role": "system",
                 "content": (
                     "Kamu Aydınlatma Platformu (KAP) verilerini sana göndereceğim. "
+                    "Türkçe olarak cevaplarını hazırla. "
                     "Verilen bildirimlerden yola çıkarak kısa ve orta vadeli yatırım yorumları yap. "
                     "Yatırım fırsatlarını değerlendir ve her yorumun yanında yatırımcılara yönelik "
                     "net tavsiyelerde bulun. Tavsiyelerinin dayandığı nedenleri açıkça belirt. "
-                    "Cevaplarını Türkçe olarak hazırla ve finansal fırsatları detaylandır."
+                    "Cevaplarını Türkçe olarak hazırla ve finansal fırsatları detaylandır. "
                 )
             },
             {"role": "user", "content": conversation_history}
@@ -70,14 +75,37 @@ def send_to_chatgpt(conversation_history):
     except Exception as e:
         print(f"Error communicating with ChatGPT API: {e}")
         return None
+def send_file_content(file_path, pdf):
+    """
+    Sends the content of a single file to ChatGPT API and writes the response to the PDF.
 
-def process_latest_files():
+    :param file_path: Path to the text file.
+    :param pdf: PDF object to write the response to.
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            file_content = file.read()
+            response = send_to_chatgpt(file_content)
+            if response:
+                pdf.chapter_title(f"Response for file: {os.path.basename(file_path)}")
+                pdf.chapter_body(response.content)
+                pdf.add_page()
+                print(f"Response for file: {os.path.basename(file_path)}")
+                print(response.content)
+                print("\n" + "="*50 + "\n")
+
+            else:
+                print(f"Failed to get a response for file: {os.path.basename(file_path)}")
+    except Exception as e:
+        print(f"Error reading {file_path}: {e}")
+
+def process_latest_text_contents():
     """
     Processes the last 10 created text files in the specified directory.
     """
     files = [os.path.join(TEXT_FILES_DIR, f) for f in os.listdir(TEXT_FILES_DIR) if os.path.isfile(os.path.join(TEXT_FILES_DIR, f)) and f.endswith('.txt')]
     files.sort(key=os.path.getctime, reverse=False)
-    latest_files = files[:10]
+    latest_files = files[:2]
     # Print the file names
     print("Latest files:")
     for file in latest_files:
@@ -105,12 +133,41 @@ def process_latest_files():
                 print(f"Response for chunk {i + 1}:")
                 print(response.content)
                 print("\n" + "="*50 + "\n")
+                pdf.add_page()
+
             else:
                 print(f"Failed to get a response for chunk {i + 1}.")
 
         pdf.output("ChatGPT_Responses.pdf")
     else:
         print("No content to send to ChatGPT.")
+
+def process_latest_files():
+    """
+    Processes the last 10 created text files in the specified directory.
+    """
+    files = [os.path.join(TEXT_FILES_DIR, f) for f in os.listdir(TEXT_FILES_DIR) if os.path.isfile(os.path.join(TEXT_FILES_DIR, f)) and f.endswith('.txt')]
+    files.sort(key=os.path.getctime, reverse=False)
+    latest_files = files[:2]
+
+    # Print the file names
+    print("Latest files:")
+    for file in latest_files:
+        print(file)
+
+
+    pdf = PDF()
+    filename = "BacktoFuture_Responses"
+
+    for file_path in latest_files:
+        filename += "_" + os.path.basename(file_path).replace('.txt', '')
+        send_file_content(file_path, pdf)
+
+    filename += ".pdf"
+    pdf.output(filename, 'F')
+
+
+
 
 if __name__ == "__main__":
     # Process and send notifications to ChatGPT API
