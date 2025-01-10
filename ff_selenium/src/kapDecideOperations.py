@@ -220,7 +220,7 @@ data = response.json()
 
 # Iterate through data to download PDFs
 download_counter = 0  # Initialize a counter for downloads
-
+total_downloads = 0 # Initialize a counter for total downloads
 for item in reversed(data):
     disclosure_index = item['disclosureIndex']
     pdf_url = f"https://www.kap.org.tr/tr/BildirimPdf/{disclosure_index}"
@@ -253,6 +253,7 @@ for item in reversed(data):
                     # minio_uploader.upload_pdf_to_minio("pdf", str(disclosure_index), pdf_content)
                     # db_manager.insert_data(data)
                     download_counter += 1
+                    total_downloads += 1
                     break
             except RequestException as e:
                 time.sleep(wait_time)
@@ -264,4 +265,4 @@ for item in reversed(data):
         print(f"Reached download limit of {download_counter_conf}. Waiting for {wait_time} seconds before continuing...")
         time.sleep(wait_time)
         download_counter = 0  # Reset the counter after waiting
-print(f"Total PDFs downloaded: {download_counter}")
+print(f"Total PDFs downloaded: {total_downloads}")
