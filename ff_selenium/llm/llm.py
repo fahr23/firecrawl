@@ -4,6 +4,7 @@ from fpdf import FPDF
 
 # Configuration
 TEXT_FILES_DIR = "/root/kap_txts"  # Directory containing text files with KAP notifications
+LLM_ANALYTICS_DIR = "/root/llm_analytics"  # Directory to store the generated analytics
 client = OpenAI(base_url="http://host.docker.internal:1234/v1", api_key="lm-studio")
 MODEL = "QuantFactory/Llama-3-8B-Instruct-Finance-RAG-GGUF"
 MAX_TOKENS = 4096  # Maximum context length for the model
@@ -87,7 +88,9 @@ def send_file_content(file_path, pdf):
             file_content = file.read()
             response = send_to_chatgpt(file_content)
             if response:
-                pdf.chapter_title(f"Response for file: {os.path.basename(file_path)}")
+                url="https://www.kap.org.tr/tr/Bildirim/"
+                file_path=os.path.basename(file_path).replace('.txt','')
+                pdf.chapter_title(f"Response for file: {url+os.path.basename(file_path)}")
                 pdf.chapter_body(response.content)
                 pdf.add_page()
                 print(f"Response for file: {os.path.basename(file_path)}")
@@ -164,8 +167,8 @@ def process_latest_files():
         send_file_content(file_path, pdf)
 
     filename += ".pdf"
-    pdf.output(filename, 'F')
-
+    output_path = os.path.join(LLM_ANALYTICS_DIR, filename)
+    pdf.output(output_path, 'F')
 
 
 

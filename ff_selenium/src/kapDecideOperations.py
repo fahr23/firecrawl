@@ -160,7 +160,7 @@ db_manager = DatabaseManager(db_params)
 import datetime
 
 # Number of days before today you want to calculate
-days_before = 2  # Example: 5 days before today
+days_before = 3  # Example: 5 days before today
 
 # Calculate the current day
 current_day = datetime.date.today()
@@ -206,7 +206,7 @@ base_directory = "/root/kap_pdfs"
 # full_path = os.path.join(base_directory, folder_name)
 full_path = os.path.join(base_directory)
 # Configuration
-download_counter_conf = 5
+download_counter_conf = 10
 wait_time = 60  # in seconds
 max_retries = 1
 

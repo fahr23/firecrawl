@@ -40,6 +40,10 @@
 	// "remoteUser": "devcontainer"
 	"mounts": [
 		"source=/Users/FF/Downloads/kap_pdfs,target=/root/kap_pdfs,type=bind",
-		"source=/Users/FF/Downloads/kap_txts,target=/root/kap_txts,type=bind"
+		"source=/Users/FF/Downloads/kap_txts,target=/root/kap_txts,type=bind",
+		"source=/Users/FF/Downloads/akbankyatirim_pdfs,target=/root/akbankyatirim_pdfs,type=bind",
+		"source=/Users/FF/Downloads/akbankyatirim_txts,target=/root/akbankyatirim_txts,type=bind",
+		"source=/Users/FF/Downloads//root/llm_analytics,target=/root/llm_analytics,type=bind"
+
 	  ]
 }
