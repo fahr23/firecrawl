@@ -1,3 +1,4 @@
+# Description: This script processes the latest KAP notifications in the specified directory and sends them to local finance LLM API for analysis.
 import os
 from openai import OpenAI
 from fpdf import FPDF

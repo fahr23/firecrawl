@@ -1,3 +1,4 @@
+# Description: Extract financial tables from PDFs and save them to a PostgreSQL database.
 import pdfplumber
 import pandas as pd
 import psycopg2
@@ -25,21 +26,31 @@ class DatabaseManager:
         self.schema = schema
 
     def create_table(self, table_name, columns):
-        """
-        Create a table if it does not exist.
-        """
-        columns_with_types = ", ".join([f'"{col}" TEXT' for col in columns])
-        create_table_query = sql.SQL("""
-            CREATE TABLE IF NOT EXISTS {schema}.{table_name} (
-                {columns_with_types}
+            """
+            Drop the table if it exists, then create a new table.
+            """
+            columns_with_types = ", ".join([f'"{col}" TEXT' for col in columns])
+            
+            drop_table_query = sql.SQL("""
+                DROP TABLE IF EXISTS {schema}.{table_name}
+            """).format(
+                schema=sql.Identifier(self.schema),
+                table_name=sql.Identifier(table_name)
             )
-        """).format(
-            schema=sql.Identifier(self.schema),
-            table_name=sql.Identifier(table_name),
-            columns_with_types=sql.SQL(columns_with_types)
-        )
-        self.cursor.execute(create_table_query)
-        self.connection.commit()
+            
+            create_table_query = sql.SQL("""
+                CREATE TABLE {schema}.{table_name} (
+                    {columns_with_types}
+                )
+            """).format(
+                schema=sql.Identifier(self.schema),
+                table_name=sql.Identifier(table_name),
+                columns_with_types=sql.SQL(columns_with_types)
+            )
+            
+            self.cursor.execute(drop_table_query)
+            self.cursor.execute(create_table_query)
+            self.connection.commit()
 
     def add_column(self, table_name, column):
         """
@@ -108,9 +119,9 @@ def save_table_to_db(table, page_num, db_manager, symbol, report_info_cleaned):
     df = pd.DataFrame(table[1:], columns=table[0])
     # Normalize column names
     df.columns = [camel_case(col.strip()) if col and col.strip() else f"column_{i}" for i, col in enumerate(df.columns)]
-    print(f"Columns: {df.columns}")
-    print(f"Page {page_num}")
-    print(df)
+    # print(f"Columns: {df.columns}")
+    # print(f"Page {page_num}")
+    # print(df)
     table_name = f"{symbol}_{report_info_cleaned}_page_{page_num}"
     db_manager.create_table(table_name, df.columns)
     for _, row in df.iterrows():

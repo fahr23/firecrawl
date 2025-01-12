@@ -1,3 +1,4 @@
+# Description: This script downloads PDFs from the Akbank Yatırım website and extracts the text from them.
 import requests
 import time
 import os
