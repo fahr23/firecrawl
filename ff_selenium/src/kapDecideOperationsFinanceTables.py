@@ -208,8 +208,8 @@ base_directory = "/root/kap_pdfs"
 # full_path = os.path.join(base_directory, folder_name)
 full_path = os.path.join(base_directory)
 # Configuration
-download_counter_conf = 8
-wait_time = 50  # in seconds
+download_counter_conf = 10
+wait_time = 100  # in seconds
 max_retries = 1
 
 # Create directory if it doesn't exist

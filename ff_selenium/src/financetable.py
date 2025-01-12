@@ -151,6 +151,7 @@ pdf_directory = "/root/kap_pdfs/"
 
 for pdf_file in os.listdir(pdf_directory):
     if pdf_file.endswith(".pdf"):
+        print(f"Processing {pdf_file}")
         pdf_path = os.path.join(pdf_directory, pdf_file)
         with pdfplumber.open(pdf_path) as pdf:
             first_page = pdf.pages[0]
@@ -172,7 +173,8 @@ for pdf_file in os.listdir(pdf_directory):
                     symbol = result[0]
                 else:
                     print(f"No symbol found for company name: {company_name}")
-                    continue  # Skip processing this PDF if no symbol is found
+                    symbol = re.sub(r'\s+', '', company_name)  # Remove spaces and new lines
+                    # continue  # Skip processing this PDF if no symbol is found
             
             # Extract specific text between "Finansal Rapor" and "Finansal Tablolara ilişkin Genel Açıklama"
             report_match = re.search(r"Finansal Rapor\s+(.*?)\s+Finansal Tablolara ilişkin Genel Açıklama", text, re.DOTALL)
