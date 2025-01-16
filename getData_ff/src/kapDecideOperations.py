@@ -3,44 +3,73 @@ import time
 import os
 import fitz  # PyMuPDF
 from requests.exceptions import RequestException
-class PDFTextExtractor:
+from abc import ABC, abstractmethod
+import tempfile
+import re
+import unicodedata
+class TextExtractor(ABC):
+    @abstractmethod
+    def extract_text(self, pdf_content, extract_path):
+        pass
+
+class PDFTextExtractor(TextExtractor):
     def __init__(self, output_dir="/root/kap_txts"):
         self.output_dir = output_dir
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
+    def normalize_text(self, text):
+        # Normalize unicode characters
+        text = unicodedata.normalize('NFKD', text)
+        # Replace specific unwanted characters or sequences
+        text = text.replace("൴", "i")
+        # Remove other unwanted characters using regex
+        text = re.sub(r'[^\x00-\x7F]+', ' ', text)  # Replace non-ASCII characters with space
+        text = re.sub(r'\s+', ' ', text)  # Replace multiple spaces with a single space
+        return text.strip()
+
     def extract_text(self, pdf_content, file_name):
-        # Write the PDF content to a temporary file
-        temp_pdf_path = os.path.join(self.output_dir, file_name)
-        with open(temp_pdf_path, "wb") as pdf_file:
-            pdf_file.write(pdf_content)
+        # Create a temporary directory
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Write the PDF content to a temporary file
+            temp_pdf_path = os.path.join(temp_dir, os.path.basename(file_name))
+            with open(temp_pdf_path, "wb") as pdf_file:
+                pdf_file.write(pdf_content)
 
-        # Open the PDF file
-        pdf_document = fitz.open(temp_pdf_path)
+            # Open the PDF file
+            with fitz.open(temp_pdf_path) as pdf_document:
+                # Extract text from the PDF
+                pdf_text = ""
+                for page_num in range(len(pdf_document)):
+                    page = pdf_document.load_page(page_num)
+                    pdf_text += page.get_text()
 
-        # Extract text from the PDF
-        pdf_text = ""
-        for page_num in range(len(pdf_document)):
-            page = pdf_document.load_page(page_num)
-            pdf_text += page.get_text()
+                # Normalize the extracted text
+                # pdf_text = self.normalize_text(pdf_text) #do not normalize text now
+                
 
-        # Write the extracted text to a .txt file
-        txt_file_path = os.path.join(self.output_dir, f"{os.path.splitext(file_name)[0]}.txt")
-        with open(txt_file_path, "w") as txt_file:
-            txt_file.write(pdf_text)
-        # Remove the temporary PDF file
-        os.remove(temp_pdf_path)
-        print(f"Extracted text written to {txt_file_path}")
+                # Write the extracted text to a .txt file
+                txt_file_path = os.path.join(self.output_dir, f"{os.path.splitext(file_name)[0]}.txt")
+                with open(txt_file_path, "w", encoding="utf-8") as txt_file:
+                    txt_file.write(pdf_text)
+
 class PDFDownloader:
-    def __init__(self, max_attempts=1, backoff_time=5):
+    def __init__(self, extractor: TextExtractor, download_path, extract_path, max_attempts=1, backoff_time=5):
+        self.extractor = extractor
+        self.download_path = download_path
+        self.extract_path = extract_path
         self.max_attempts = max_attempts
         self.backoff_time = backoff_time
         self.headers = {'User-Agent': 'Mozilla/5.0'}
-        self.extractor = PDFTextExtractor()
 
-    def download_pdf(self, pdf_url, pdf_path):
+
+    def download_pdf(self, pdf_url, pdf_name):
         attempt = 0
         backoff_time = self.backoff_time
+        pdf_path = os.path.join(self.download_path, pdf_name)
+        extract_file_name = os.path.basename(pdf_name).replace('.pdf', '.txt').replace(' ', '_')
+        extract_path = os.path.join(self.extract_path, extract_file_name)
+        
         while attempt < self.max_attempts:
             try:
                 pdf_response = requests.get(pdf_url, headers=self.headers)
@@ -49,18 +78,15 @@ class PDFDownloader:
                 # Save the PDF file
                 with open(pdf_path, 'wb') as pdf_file:
                     pdf_file.write(pdf_response.content)
-
-                print(f"Downloaded {pdf_path}")
                 # Extract text and write to a .txt file
-                self.extractor.extract_text(pdf_response.content, os.path.basename(pdf_path))
-                
+                self.extractor.extract_text(pdf_response.content, extract_path)
                 return pdf_response.content
             except requests.exceptions.RequestException as e:
                 print(f"Error downloading {pdf_path}: {e}")
                 attempt += 1
                 time.sleep(backoff_time)
                 backoff_time *= 2  # Double the backoff time for the next attempt
-                attempt += 1
+
         return None
 
 class MinioUploader:
@@ -138,11 +164,22 @@ class DatabaseManager:
 # from minio import Minio
 # minio_client = Minio(...)  # Initialize Minio client
 # cursor = ...  # Initialize database cursor
+# from_date = payload['fromDate'].replace("-", "")
+# to_date = payload['toDate'].replace("-", "")
+# folder_name = f"{from_date}to{to_date}"
+kap_pdf_directory = "/root/kap_pdfs"
+kap_txt_directory = "/root/kap_txts"
+kap_pdf_ek_directory = "/root/kap_pdfs_ek"
+kap_txt_ek_directory = "/root/kap_txts_ek"
 
-# Initialize classes
-pdf_downloader = PDFDownloader()
-pdf_downloader_ek = PDFDownloader()
-# minio_uploader = MinioUploader(minio_client)
+# Initialize the PDF downloader and text extractor
+kap_txt_extractor = PDFTextExtractor(output_dir=kap_txt_directory)
+pdf_downloader = PDFDownloader(extractor=kap_txt_extractor, download_path=kap_pdf_directory, extract_path=kap_txt_directory)
+
+# Initialize the PDF downloader and text extractor for attachments
+kap_txt_ek_extractor= PDFTextExtractor(output_dir=kap_txt_ek_directory)
+pdf_downloader_ek = PDFDownloader(extractor=kap_txt_ek_extractor, download_path=kap_pdf_ek_directory, extract_path=kap_txt_ek_directory)
+
 
 # Initialize database cursor (example using psycopg2)
 import psycopg2
@@ -200,13 +237,7 @@ headers = {
     "Accept-Language": "en-US,en;q=0.5",
     "Referer": "https://www.kap.org.tr/",
 }
-# from_date = payload['fromDate'].replace("-", "")
-# to_date = payload['toDate'].replace("-", "")
-# folder_name = f"{from_date}to{to_date}"
-kap_pdf_directory = "/root/kap_pdfs"
-kap_txt_directory = "/root/kap_txts"
-kap_pdf_ek_directory = "/root/kap_pdf_ek"
-kap_txt_ek_directory = "/root/kap_txt_ek"
+
 
 directories = [kap_pdf_directory, kap_txt_directory, kap_pdf_ek_directory, kap_txt_ek_directory]
 
@@ -235,7 +266,7 @@ total_downloads = 0  # Initialize a counter for total downloads
 for item in reversed(data):
     disclosure_index = item['disclosureIndex']
     pdf_url = f"https://www.kap.org.tr/tr/BildirimPdf/{disclosure_index}"
-    pdf_path = os.path.join(full_path, f"{disclosure_index}.pdf")
+    pdf_path = os.path.join(kap_pdf_directory, f"{disclosure_index}.pdf")
 
     # Check if the PDF already exists
     if not os.path.exists(pdf_path):
@@ -270,15 +301,15 @@ for item in reversed(data):
                     attachment_url = f"https://www.kap.org.tr{attachment_link['href']}"
                     
                     # Define the directory to save the PDF
-                    save_dir = os.path.join(kap_pdf_ek_directory, str(disclosure_index))
+                    # save_dir = os.path.join(kap_pdf_ek_directory, str(disclosure_index))
                     # Define the PDF file name
-                    pdf_name = f"{disclosure_index}_{attachment_link.text.strip()}.pdf"
-                    pdf_path = os.path.join(save_dir, pdf_name)
+                    pdf_name = f"{disclosure_index}_{attachment_link.text.strip()}"
+                    pdf_path = os.path.join(kap_pdf_ek_directory, pdf_name)
                     
                     # Download and save the PDF
-                    pdf_content = pdf_downloader.download_pdf(attachment_url, pdf_path)
+                    pdf_content = pdf_downloader_ek.download_pdf(attachment_url, pdf_path)
                     if pdf_content:
-                        print(f"Downloaded PDF to {pdf_path}")
+                        # print(f"Downloaded PDF to {pdf_path}")
                         download_counter += 1
                         total_downloads += 1
 
