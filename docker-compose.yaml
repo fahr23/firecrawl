@@ -51,7 +51,7 @@ services:
       - playwright-service
     ports:
       - "3002:3002"
-    command: [ "pnpm", "run", "start:production" ]
+    # command: [ "pnpm", "run", "start:production" ]
 
   worker:
     <<: *common-service

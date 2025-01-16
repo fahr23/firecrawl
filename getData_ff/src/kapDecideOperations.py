@@ -141,6 +141,7 @@ class DatabaseManager:
 
 # Initialize classes
 pdf_downloader = PDFDownloader()
+pdf_downloader_ek = PDFDownloader()
 # minio_uploader = MinioUploader(minio_client)
 
 # Initialize database cursor (example using psycopg2)
@@ -202,25 +203,35 @@ headers = {
 # from_date = payload['fromDate'].replace("-", "")
 # to_date = payload['toDate'].replace("-", "")
 # folder_name = f"{from_date}to{to_date}"
-base_directory = "/root/kap_pdfs"
-# full_path = os.path.join(base_directory, folder_name)
-full_path = os.path.join(base_directory)
+kap_pdf_directory = "/root/kap_pdfs"
+kap_txt_directory = "/root/kap_txts"
+kap_pdf_ek_directory = "/root/kap_pdf_ek"
+kap_txt_ek_directory = "/root/kap_txt_ek"
+
+directories = [kap_pdf_directory, kap_txt_directory, kap_pdf_ek_directory, kap_txt_ek_directory]
+
+# Create directories if they don't exist
+for directory in directories:
+    os.makedirs(directory, exist_ok=True)
+
+
 # Configuration
 download_counter_conf = 10
 wait_time = 60  # in seconds
 max_retries = 1
 
-# Create directory if it doesn't exist
-if not os.path.exists(full_path):
-    os.makedirs(full_path)
-
 # Make the request with headers
 response = requests.post(url, json=payload, headers=headers)
 data = response.json()
 
+import os
+import requests
+from bs4 import BeautifulSoup
+
+
 # Iterate through data to download PDFs
 download_counter = 0  # Initialize a counter for downloads
-total_downloads = 0 # Initialize a counter for total downloads
+total_downloads = 0  # Initialize a counter for total downloads
 for item in reversed(data):
     disclosure_index = item['disclosureIndex']
     pdf_url = f"https://www.kap.org.tr/tr/BildirimPdf/{disclosure_index}"
@@ -245,6 +256,34 @@ for item in reversed(data):
             item.get("hasMultiLanguageSupport", ''),
             item.get("attachmentCount", '')
         ))
+        
+        if item.get("attachmentCount", 0) != 0:
+            print(f"Attachments found for {pdf_url}")
+            url = f"https://www.kap.org.tr/tr/BildirimPopup/{disclosure_index}"
+            response = requests.get(url, headers=headers)
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            attachment_links = soup.find_all('a', class_='modal-attachment type-xsmall bi-sky-black maximize')
+            
+            for attachment_link in attachment_links:
+                if 'href' in attachment_link.attrs:
+                    attachment_url = f"https://www.kap.org.tr{attachment_link['href']}"
+                    
+                    # Define the directory to save the PDF
+                    save_dir = os.path.join(kap_pdf_ek_directory, str(disclosure_index))
+                    # Define the PDF file name
+                    pdf_name = f"{disclosure_index}_{attachment_link.text.strip()}.pdf"
+                    pdf_path = os.path.join(save_dir, pdf_name)
+                    
+                    # Download and save the PDF
+                    pdf_content = pdf_downloader.download_pdf(attachment_url, pdf_path)
+                    if pdf_content:
+                        print(f"Downloaded PDF to {pdf_path}")
+                        download_counter += 1
+                        total_downloads += 1
+
+            continue
+
         retries = 0
         while retries < max_retries:
             try:
@@ -259,10 +298,10 @@ for item in reversed(data):
                 time.sleep(wait_time)
                 retries += 1
 
-
     # Check if the download counter has reached the configured limit
     if download_counter >= download_counter_conf:
         print(f"Reached download limit of {download_counter_conf}. Waiting for {wait_time} seconds before continuing...")
         time.sleep(wait_time)
         download_counter = 0  # Reset the counter after waiting
+
 print(f"Total PDFs downloaded: {total_downloads}")

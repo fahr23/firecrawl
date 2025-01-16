@@ -30,9 +30,11 @@
 	// Uncomment the next line if you want to keep your containers running after VS Code shuts down.
 	// "shutdownAction": "none",
 
-	// Uncomment the next line to run commands after the container is created.
-	// "postCreateCommand": "cat /etc/os-release",
-
+	"postCreateCommand": "apt-get update && \
+	  (dpkg -l | grep -qw git || apt-get install -y git) && \
+	  (dpkg -l | grep -qw python3 || apt-get install -y python3) && \
+	  (dpkg -l | grep -qw python3-venv || apt-get install -y python3-venv) && \
+	  (dpkg -l | grep -qw python3-pip || apt-get install -y python3-pip)",
 	// Configure tool-specific properties.
 	// "customizations": {},
 
@@ -43,7 +45,8 @@
 		"source=/Users/FF/Downloads/kap_txts,target=/root/kap_txts,type=bind",
 		"source=/Users/FF/Downloads/akbankyatirim_pdfs,target=/root/akbankyatirim_pdfs,type=bind",
 		"source=/Users/FF/Downloads/akbankyatirim_txts,target=/root/akbankyatirim_txts,type=bind",
-		"source=/Users/FF/Downloads//root/llm_analytics,target=/root/llm_analytics,type=bind"
-
+		"source=/Users/FF/Downloads/llm_analytics,target=/root/llm_analytics,type=bind",
+		"source=/Users/FF/Downloads/kap_pdfs_ek,target=/root/kap_pdfs_ek,type=bind",
+		"source=/Users/FF/Downloads/kap_txts_ek,target=/root/kap_txts_ek,type=bind"
 	  ]
 }
