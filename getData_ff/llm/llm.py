@@ -13,8 +13,8 @@ CHUNK_SIZE = 3000  # Chunk size to ensure we stay within the token limit
 class PDF(FPDF):
     def __init__(self):
         super().__init__()
-        self.add_font('DejaVu', '', '/workspaces/firecrawl/ff_selenium/llm/DejaVuSans.ttf', uni=True)
-        self.add_font('DejaVu', 'B', '/workspaces/firecrawl/ff_selenium/llm/DejaVuSansBold.ttf', uni=True)
+        self.add_font('DejaVu', '', '/workspaces/firecrawl/getData_ff/llm/DejaVuSans.ttf', uni=True)
+        self.add_font('DejaVu', 'B', '/workspaces/firecrawl/getData_ff/llm/DejaVuSansBold.ttf', uni=True)
         self.add_page()
         self.set_font('DejaVu', '', 12)  # Use Unicode font
 
