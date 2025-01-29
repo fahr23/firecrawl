@@ -45,7 +45,7 @@ def getReportwithDatabaseOps(subject_list=None):
     db_manager = DatabaseManager(db_params)
 
     # Number of days before today you want to calculate
-    days_before = 3  # Example: 5 days before today
+    days_before = 1  # Example: 5 days before today
 
     # Calculate the current day
     current_day = datetime.date.today()
@@ -88,6 +88,7 @@ def getReportwithDatabaseOps(subject_list=None):
     # Make the request with headers
     response = requests.post(url, json=payload, headers=headers)
     data = response.json()
+    print(f"Total disclosures found: {len(data)}")
 
     # Iterate through data to download PDFs
     download_counter = 0  # Initialize a counter for downloads
@@ -160,4 +161,5 @@ def getReportwithDatabaseOps(subject_list=None):
     print(f"Total PDFs downloaded: {total_downloads}")
 
 if __name__ == "__main__":
-    getReportwithDatabaseOps(subject_list=["4028328c594bfdca01594c0af9aa0057"])  # Example: finance tables
+    # getReportwithDatabaseOps(subject_list=["4028328c594bfdca01594c0af9aa0057"])  # Example: finance tables
+    getReportwithDatabaseOps()  # Example: finance tables
