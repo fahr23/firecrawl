@@ -45,7 +45,7 @@ def getReportwithDatabaseOps(subject_list=None):
     db_manager = DatabaseManager(db_params)
 
     # Number of days before today you want to calculate
-    days_before = 1  # Example: 5 days before today
+    days_before = 3  # Example: 5 days before today
 
     # Calculate the current day
     current_day = datetime.date.today()

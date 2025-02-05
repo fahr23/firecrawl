@@ -38,38 +38,19 @@ def remove_nulls_from_content(content):
 def fetch_and_save_data(start_date, end_date, price_type):
     url = f"https://www.borsaistanbul.com/datfile/kmtprfrnstrh?startDate={start_date}&endDate={end_date}&priceType={price_type}"
     print(f"url: {url}")
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Referrer-Policy": "strict-origin-when-cross-origin",
-        "Referer": "https://www.borsaistanbul.com/"
-    }
-    retries = 3
-    while retries > 0:
-        try:
-            response = requests.get(url, headers=headers)
-            response.raise_for_status()  # Raise an HTTPError for bad responses
-            if response.content and response.content.strip():
-                if b"Request Rejected" in response.content or b"Please enable JavaScript" in response.content:
-                    print(f"Request rejected for URL: {url}")
-                    retries -= 1
-                    if retries == 0:
-                        return
-                    continue
-                cleaned_content = remove_nulls_from_content(response.content)
-                data = json.loads(cleaned_content)
-                break
-            else:
-                print(f"No content returned for URL: {url}")
-                retries -= 1
-                if retries == 0:
-                    return
-        except (RequestException, JSONDecodeError) as e:
-            print(f"Error fetching or decoding JSON data: {e}")
-            retries -= 1
-            if retries == 0:
-                return
+    # Fetch the JSON response
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an HTTPError for bad responses
+        if response.content and response.content.strip():
+            cleaned_content = remove_nulls_from_content(response.content)
+            data = json.loads(cleaned_content)
+        else:
+            print(f"No content returned for URL: {url}")
+            return
+    except (RequestException, JSONDecodeError) as e:
+        print(f"Error fetching or decoding JSON data: {e}")
+        return
 
     # Extract relevant data
     rfrnsTrh = data.get("rfrnsTrh", [])
@@ -79,7 +60,6 @@ def fetch_and_save_data(start_date, end_date, price_type):
     for item in rfrnsTrh:
         prc_date = item.get("prc_date")
         takasfiyat = item.get("takasfiyat")
-        takasfiyat = takasfiyat / 1000  # Convert kg to gram
 
         # Check if the date already exists in the database
         cursor.execute('SELECT id FROM historical_price_emtia WHERE date = %s', (prc_date,))
@@ -112,8 +92,8 @@ def fetch_and_save_data(start_date, end_date, price_type):
                 conn.commit()
 
 # Define the date range and price types
-end_date = datetime.now().strftime("%Y%m%d")
-start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+start_date = "20240101"
+end_date = "20250129"
 price_types = ["AG", "AU", "PD", "PT"]
 
 # Fetch and save data for the specified date range and price types
