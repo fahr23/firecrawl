@@ -161,5 +161,5 @@ def getReportwithDatabaseOps(subject_list=None):
     print(f"Total PDFs downloaded: {total_downloads}")
 
 if __name__ == "__main__":
-    # getReportwithDatabaseOps(subject_list=["4028328c594bfdca01594c0af9aa0057"])  # Example: finance tables
-    getReportwithDatabaseOps()  # Example: finance tables
+    getReportwithDatabaseOps(subject_list=["4028328c594bfdca01594c0af9aa0057"])  # Example: finance tables
+    # getReportwithDatabaseOps()  # Example: finance tables
