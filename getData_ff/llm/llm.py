@@ -4,12 +4,12 @@ from openai import OpenAI
 from fpdf import FPDF
 
 # Configuration
-TEXT_FILES_DIR = "/root/kap_txts"  # Directory containing text files with KAP notifications
+TEXT_FILES_DIR = "/root/akbankyatirim_txts"  # Directory containing text files with KAP notifications
 LLM_ANALYTICS_DIR = "/root/llm_analytics"  # Directory to store the generated analytics
 client = OpenAI(base_url="http://host.docker.internal:1234/v1", api_key="lm-studio")
 MODEL = "QuantFactory/Llama-3-8B-Instruct-Finance-RAG-GGUF"
 MAX_TOKENS = 4096  # Maximum context length for the model
-CHUNK_SIZE = 3000  # Chunk size to ensure we stay within the token limit
+CHUNK_SIZE = 4000  # Adjusted chunk size to avoid exceeding the token limit
 class PDF(FPDF):
     def __init__(self):
         super().__init__()
@@ -77,6 +77,7 @@ def send_to_chatgpt(conversation_history):
     except Exception as e:
         print(f"Error communicating with ChatGPT API: {e}")
         return None
+
 def send_file_content(file_path, pdf):
     """
     Sends the content of a single file to ChatGPT API and writes the response to the PDF.
@@ -87,19 +88,27 @@ def send_file_content(file_path, pdf):
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
             file_content = file.read()
-            response = send_to_chatgpt(file_content)
-            if response:
-                url="https://www.kap.org.tr/tr/Bildirim/"
-                file_path=os.path.basename(file_path).replace('.txt','')
-                pdf.chapter_title(f"Response for file: {url+os.path.basename(file_path)}")
-                pdf.chapter_body(response.content)
-                pdf.add_page()
-                print(f"Response for file: {os.path.basename(file_path)}")
-                print(response.content)
-                print("\n" + "="*50 + "\n")
+            # Split file content into chunks
+            chunks = [file_content[i:i + CHUNK_SIZE] for i in range(0, len(file_content), CHUNK_SIZE)]
+            responses = []
+            for i, chunk in enumerate(chunks):
+                response = send_to_chatgpt(chunk)
+                if response:
+                    responses.append(response.content)
+                    print(f"Response for chunk {i + 1} of file {os.path.basename(file_path)}:")
+                    print(response.content)
+                    print("\n" + "="*50 + "\n")
+                else:
+                    print(f"Failed to get a response for chunk {i + 1} of file {os.path.basename(file_path)}")
 
+            if responses:
+                url = "https://www.kap.org.tr/tr/Bildirim/"
+                file_path = os.path.basename(file_path).replace('.txt', '')
+                pdf.chapter_title(f"Response for file: {url + os.path.basename(file_path)}")
+                pdf.chapter_body("\n".join(responses))
+                pdf.add_page()
             else:
-                print(f"Failed to get a response for file: {os.path.basename(file_path)}")
+                print(f"Failed to get any responses for file: {os.path.basename(file_path)}")
     except Exception as e:
         print(f"Error reading {file_path}: {e}")
 
@@ -152,7 +161,7 @@ def process_latest_files():
     """
     files = [os.path.join(TEXT_FILES_DIR, f) for f in os.listdir(TEXT_FILES_DIR) if os.path.isfile(os.path.join(TEXT_FILES_DIR, f)) and f.endswith('.txt')]
     files.sort(key=os.path.getctime, reverse=False)
-    latest_files = files[:2]
+    latest_files = files[:4]
 
     # Print the file names
     print("Latest files:")
