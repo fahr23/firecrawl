@@ -19,18 +19,14 @@ conn = psycopg2.connect(**db_params)
 cursor = conn.cursor()
 
 # Create table if not exists
-# cursor.execute('''
-#     CREATE TABLE IF NOT EXISTS historical_price_emtia (
-#         id SERIAL PRIMARY KEY,
-#         date DATE NOT NULL,
-#         kur_temInatkodu_D REAL,
-#         kur_temInatkodu_EU REAL,
-#         rfrns_AG REAL,
-#         rfrns_AU REAL,
-#         rfrns_PD REAL,
-#         rfrns_PT REAL
-#     )
-# ''')
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS tradingview_sectors (
+        id SERIAL PRIMARY KEY,
+        sector_name VARCHAR(255) NOT NULL,
+        stock_symbol VARCHAR(50) NOT NULL,
+        fetch_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+''')
 
 # Function to remove null values from the response content
 def remove_nulls_from_content(content):
@@ -63,7 +59,23 @@ def fetch_and_save_data():
                 soup = BeautifulSoup(cleaned_content, 'html.parser')
                 sectors = soup.select('tbody tr.listRow a.tickerLinkCell-ZOeSlGQR')
                 for sector in sectors:
-                    print(sector.text)
+                    sector_name = sector.text
+                    print(sector_name)
+                    sector_url = f"https://tr.tradingview.com{sector['href']}"
+                    print(sector_url)
+                    sector_response = requests.get(sector_url, headers=headers)
+                    sector_response.raise_for_status()
+                    sector_soup = BeautifulSoup(sector_response.content, 'html.parser')
+                    stocks = sector_soup.select('tbody tr.listRow')
+                    for stock in stocks:
+                        stock_symbol = stock.select_one('a.tickerNameBox-GrtoTeat.tickerName-GrtoTeat').text
+                        stock_price = stock.select_one('td.cell-RLhfr_y4.right-RLhfr_y4').text.strip()
+                        print(f"{stock_symbol}: {stock_price}")
+                        cursor.execute('''
+                            INSERT INTO tradingview_sectors (sector_name, stock_symbol)
+                            VALUES (%s, %s)
+                        ''', (sector_name, stock_symbol))
+                    conn.commit()
                 break
             else:
                 print(f"No content returned for URL: {url}")
@@ -75,8 +87,6 @@ def fetch_and_save_data():
             retries -= 1
             if retries == 0:
                 return
-
-  
 
 # Fetch and save data for the specified date range and price types
 
