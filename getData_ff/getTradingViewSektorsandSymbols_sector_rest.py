@@ -4,6 +4,10 @@ import psycopg2
 from datetime import datetime, timedelta
 from requests.exceptions import RequestException, JSONDecodeError
 
+
+
+# https://www.tradingview.com/support/solutions/43000724300-sector-industry/
+
 # Database connection parameters
 # engine now support this feature beaceuse it gets other data for run
 db_params = {
@@ -19,7 +23,7 @@ cursor = conn.cursor()
 
 # Create table if not exists
 cursor.execute('''
-    CREATE TABLE IF NOT EXISTS tradingview_sectors (
+    CREATE TABLE IF NOT EXISTS tradingview_sectors_en (
         id SERIAL PRIMARY KEY,
         sector_name VARCHAR(255) NOT NULL,
         stock_symbol VARCHAR(50) NOT NULL,
@@ -88,11 +92,11 @@ def fetch_and_save_data():
                     stock_symbol = item["d"][0]
                     print(f"{sector}: {stock_symbol}")
                     cursor.execute('''
-                        SELECT 1 FROM tradingview_sectors WHERE sector_name = %s AND stock_symbol = %s
+                        SELECT 1 FROM tradingview_sectors_en WHERE sector_name = %s AND stock_symbol = %s
                     ''', (sector, stock_symbol))
                     if cursor.fetchone() is None:
                         cursor.execute('''
-                            INSERT INTO tradingview_sectors (sector_name, stock_symbol)
+                            INSERT INTO tradingview_sectors_en (sector_name, stock_symbol)
                             VALUES (%s, %s)
                         ''', (sector, stock_symbol))
                 conn.commit()

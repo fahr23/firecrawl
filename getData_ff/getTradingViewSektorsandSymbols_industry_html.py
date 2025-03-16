@@ -20,7 +20,7 @@ cursor = conn.cursor()
 
 # Create table if not exists
 cursor.execute('''
-    CREATE TABLE IF NOT EXISTS tradingview_sectors (
+    CREATE TABLE IF NOT EXISTS tradingview_industry_tr (
         id SERIAL PRIMARY KEY,
         sector_name VARCHAR(255) NOT NULL,
         stock_symbol VARCHAR(50) NOT NULL,
@@ -34,7 +34,7 @@ def remove_nulls_from_content(content):
 
 # Function to fetch and save data for a specific date range and price type
 def fetch_and_save_data():
-    url = f"https://tr.tradingview.com/markets/stocks-turkey/sectorandindustry-sector/"
+    url = f"https://tr.tradingview.com/markets/stocks-turkey/sectorandindustry-industry/"
     print(f"url: {url}")
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
@@ -71,10 +71,19 @@ def fetch_and_save_data():
                         stock_symbol = stock.select_one('a.tickerNameBox-GrtoTeat.tickerName-GrtoTeat').text
                         stock_price = stock.select_one('td.cell-RLhfr_y4.right-RLhfr_y4').text.strip()
                         print(f"{stock_symbol}: {stock_price}")
+                        
+                        # Check if the entry already exists
                         cursor.execute('''
-                            INSERT INTO tradingview_sectors (sector_name, stock_symbol)
-                            VALUES (%s, %s)
+                            SELECT 1 FROM tradingview_industry_tr WHERE sector_name = %s AND stock_symbol = %s
                         ''', (sector_name, stock_symbol))
+                        
+                        if cursor.fetchone() is None:
+                            cursor.execute('''
+                                INSERT INTO tradingview_industry_tr (sector_name, stock_symbol)
+                                VALUES (%s, %s)
+                            ''', (sector_name, stock_symbol))
+                        else:
+                            print(f"Entry for {stock_symbol} in sector {sector_name} already exists.")
                     conn.commit()
                 break
             else:
