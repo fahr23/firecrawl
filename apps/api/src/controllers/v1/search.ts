@@ -20,6 +20,42 @@ import { isUrlBlocked } from "../../scraper/WebScraper/utils/blocklist";
 import * as Sentry from "@sentry/node";
 import { BLOCKLISTED_URL_MESSAGE } from "../../lib/strings";
 
+// Used for deep research
+export async function searchAndScrapeSearchResult(
+  query: string,
+  options: {
+    teamId: string;
+    plan: PlanType | undefined;
+    origin: string;
+    timeout: number;
+    scrapeOptions: ScrapeOptions;
+  }
+): Promise<Document[]> {
+  try {
+    const searchResults = await search({
+      query,
+      num_results: 5
+  });
+
+  const documents = await Promise.all(
+    searchResults.map(result => 
+      scrapeSearchResult(
+        {
+          url: result.url,
+          title: result.title,
+          description: result.description
+        },
+        options
+      )
+    )
+  );
+
+    return documents;
+  } catch (error) {
+    return [];
+  }
+}
+
 async function scrapeSearchResult(
   searchResult: { url: string; title: string; description: string },
   options: {
@@ -47,7 +83,7 @@ async function scrapeSearchResult(
         mode: "single_urls" as Mode,
         team_id: options.teamId,
         scrapeOptions: options.scrapeOptions,
-        internalOptions: {},
+        internalOptions: { teamId: options.teamId },
         plan: options.plan || "free",
         origin: options.origin,
         is_scrape: true,
@@ -74,7 +110,7 @@ async function scrapeSearchResult(
     });
 
     let statusCode = 0;
-    if (error.message.includes("Could not scrape url")) {
+    if (error?.message?.includes("Could not scrape url")) {
       statusCode = 403;
     }
     // Return a minimal document with SERP results at top level
@@ -103,7 +139,7 @@ export async function searchController(
     let limit = req.body.limit;
 
     // Buffer results by 50% to account for filtered URLs
-    const num_results_buffer = Math.floor(limit * 1.5);
+    const num_results_buffer = Math.floor(limit * 2);
 
     let searchResults = await search({
       query: req.body.query,

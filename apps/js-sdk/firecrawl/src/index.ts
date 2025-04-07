@@ -1,7 +1,6 @@
 import axios, { type AxiosResponse, type AxiosRequestHeaders, AxiosError } from "axios";
 import * as zt from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { WebSocket } from "isows";
 import { TypedEventTarget } from "typescript-event-target";
 
 /**
@@ -65,9 +64,15 @@ export interface FirecrawlDocument<T = any, ActionsSchema extends (ActionsResult
   rawHtml?: string;
   links?: string[];
   extract?: T;
+  json?: T;
   screenshot?: string;
   metadata?: FirecrawlDocumentMetadata;
   actions: ActionsSchema;
+  compare?: {
+    previousScrapeAt: string | null;
+    changeStatus: "new" | "same" | "changed" | "removed";
+    visibility: "visible" | "hidden";
+  };
   // v1 search only
   title?: string;
   description?: string;
@@ -78,7 +83,7 @@ export interface FirecrawlDocument<T = any, ActionsSchema extends (ActionsResult
  * Defines the options and configurations available for scraping web content.
  */
 export interface CrawlScrapeOptions {
-  formats: ("markdown" | "html" | "rawHtml" | "content" | "links" | "screenshot" | "screenshot@fullPage" | "extract")[];
+  formats?: ("markdown" | "html" | "rawHtml" | "content" | "links" | "screenshot" | "screenshot@fullPage" | "extract" | "json" | "compare")[];
   headers?: Record<string, string>;
   includeTags?: string[];
   excludeTags?: string[];
@@ -92,6 +97,8 @@ export interface CrawlScrapeOptions {
   mobile?: boolean;
   skipTlsVerification?: boolean;
   removeBase64Images?: boolean;
+  blockAds?: boolean;
+  proxy?: "basic" | "stealth";
 }
 
 export type Action = {
@@ -101,6 +108,7 @@ export type Action = {
 } | {
   type: "click",
   selector: string,
+  all?: boolean,
 } | {
   type: "screenshot",
   fullPage?: boolean,
@@ -127,11 +135,24 @@ export interface ScrapeParams<LLMSchema extends zt.ZodSchema = any, ActionsSchem
     schema?: LLMSchema;
     systemPrompt?: string;
   };
+  jsonOptions?:{
+    prompt?: string;
+    schema?: LLMSchema;
+    systemPrompt?: string;
+  }
   actions?: ActionsSchema;
 }
 
 export interface ActionsResult {
   screenshots: string[];
+  scrapes: ({
+    url: string;
+    html: string;
+  })[];
+  javascriptReturns: {
+    type: string;
+    value: unknown
+  }[];
 }
 
 /**
@@ -152,6 +173,7 @@ export interface CrawlParams {
   includePaths?: string[];
   excludePaths?: string[];
   maxDepth?: number;
+  maxDiscoveryDepth?: number;
   limit?: number;
   allowBackwardLinks?: boolean;
   allowExternalLinks?: boolean;
@@ -161,9 +183,11 @@ export interface CrawlParams {
     url: string;
     headers?: Record<string, string>;
     metadata?: Record<string, string>;
+    events?: ["completed", "failed", "page", "started"][number][];
   };
   deduplicateSimilarURLs?: boolean;
   ignoreQueryParameters?: boolean;
+  regexOnFullURL?: boolean;
 }
 
 /**
@@ -229,6 +253,7 @@ export interface MapParams {
   includeSubdomains?: boolean;
   sitemapOnly?: boolean;
   limit?: number;
+  timeout?: number;
 }
 
 /**
@@ -250,7 +275,11 @@ export interface ExtractParams<LLMSchema extends zt.ZodSchema = any> {
   schema?: LLMSchema | object;
   systemPrompt?: string;
   allowExternalLinks?: boolean;
+  enableWebSearch?: boolean;
   includeSubdomains?: boolean;
+  origin?: string;
+  showSources?: boolean;
+  scrapeOptions?: CrawlScrapeOptions;
 }
 
 /**
@@ -262,6 +291,7 @@ export interface ExtractResponse<LLMSchema extends zt.ZodSchema = any> {
   data: LLMSchema;
   error?: string;
   warning?: string;
+  sources?: string[];
 }
 
 /**
@@ -279,9 +309,11 @@ export interface ErrorResponse {
  */
 export class FirecrawlError extends Error {
   statusCode: number;
-  constructor(message: string, statusCode: number) {
+  details?: any;
+  constructor(message: string, statusCode: number, details?: any) {
     super(message);
     this.statusCode = statusCode;
+    this.details = details;
   }
 }
 
@@ -310,6 +342,162 @@ export interface SearchResponse {
   data: FirecrawlDocument<undefined>[];
   warning?: string;
   error?: string;
+}
+
+/**
+ * Response interface for crawl/batch scrape error monitoring.
+ */
+export interface CrawlErrorsResponse {
+  /**
+   * Scrapes that errored out + error details
+   */
+  errors: {
+    id: string,
+    timestamp?: string,
+    url: string,
+    error: string,
+  }[];
+
+  /**
+   * URLs blocked by robots.txt
+   */
+  robotsBlocked: string[];
+};
+
+/**
+ * Parameters for deep research operations.
+ * Defines options for conducting deep research on a query.
+ */
+export interface DeepResearchParams<LLMSchema extends zt.ZodSchema = any>  {
+  /**
+   * Maximum depth of research iterations (1-10)
+   * @default 7
+   */
+  maxDepth?: number;
+  /**
+   * Time limit in seconds (30-300)
+   * @default 270
+   */
+  timeLimit?: number;
+  /**
+   * Maximum number of URLs to analyze (1-1000)
+   * @default 20
+   */
+  maxUrls?: number;
+  /**
+   * The prompt to use for the final analysis
+   */
+  analysisPrompt?: string;
+  /**
+   * The system prompt to use for the research agent
+   */
+  systemPrompt?: string;
+  /**
+   * The formats to use for the final analysis
+   */
+  formats?: ("markdown" | "json")[];
+  /**
+   * The JSON options to use for the final analysis
+   */
+  jsonOptions?:{
+    prompt?: string;
+    schema?: LLMSchema;
+    systemPrompt?: string;
+  };
+  /** 
+   * Experimental flag for streaming steps
+   */
+  // __experimental_streamSteps?: boolean;
+}
+
+/**
+ * Response interface for deep research operations.
+ */
+export interface DeepResearchResponse {
+  success: boolean;
+  id: string;
+}
+
+/**
+ * Status response interface for deep research operations.
+ */
+export interface DeepResearchStatusResponse {
+  success: boolean;
+  data: {
+    finalAnalysis: string;
+    activities: Array<{
+      type: string;
+      status: string;
+      message: string;
+      timestamp: string;
+      depth: number;
+    }>;
+    sources: Array<{
+      url: string;
+      title: string;
+      description: string;
+    }>;
+  };
+  status: "processing" | "completed" | "failed";
+  error?: string;
+  expiresAt: string;
+  currentDepth: number;
+  maxDepth: number;
+  activities: Array<{
+    type: string;
+    status: string;
+    message: string;
+    timestamp: string;
+    depth: number;
+  }>;
+  sources: Array<{
+    url: string;
+    title: string;
+    description: string;
+  }>;
+  summaries: string[];
+}
+
+/**
+ * Parameters for LLMs.txt generation operations.
+ */
+export interface GenerateLLMsTextParams {
+  /**
+   * Maximum number of URLs to process (1-100)
+   * @default 10
+   */
+  maxUrls?: number;
+  /**
+   * Whether to show the full LLMs-full.txt in the response
+   * @default false
+   */
+  showFullText?: boolean;
+  /**
+   * Experimental flag for streaming
+   */
+  __experimental_stream?: boolean;
+}
+
+/**
+ * Response interface for LLMs.txt generation operations.
+ */
+export interface GenerateLLMsTextResponse {
+  success: boolean;
+  id: string;
+}
+
+/**
+ * Status response interface for LLMs.txt generation operations.
+ */
+export interface GenerateLLMsTextStatusResponse {
+  success: boolean;
+  data: {
+    llmstxt: string;
+    llmsfulltxt?: string;
+  };
+  status: "processing" | "completed" | "failed";
+  error?: string;
+  expiresAt: string;
 }
 
 /**
@@ -371,11 +559,28 @@ export default class FirecrawlApp {
         },
       };
     }
+
+    if (jsonData?.jsonOptions?.schema) {
+      let schema = jsonData.jsonOptions.schema;
+      // Try parsing the schema as a Zod schema
+      try {
+        schema = zodToJsonSchema(schema);
+      } catch (error) {
+        
+      }
+      jsonData = {
+        ...jsonData,
+        jsonOptions: {
+          ...jsonData.jsonOptions,
+          schema: schema,
+        },
+      };
+    }
     try {
       const response: AxiosResponse = await axios.post(
         this.apiUrl + `/v1/scrape`,
         jsonData,
-        { headers }
+        { headers, timeout: params?.timeout !== undefined ? (params.timeout + 5000) : undefined },
       );
       if (response.status === 200) {
         const responseData = response.data;
@@ -545,17 +750,28 @@ export default class FirecrawlApp {
    * Checks the status of a crawl job using the Firecrawl API.
    * @param id - The ID of the crawl operation.
    * @param getAllData - Paginate through all the pages of documents, returning the full list of all documents. (default: `false`)
+   * @param nextURL - The `next` URL from the previous crawl status. Only required if you're not manually increasing `skip`. Only used when `getAllData = false`.
+   * @param skip - How many entries to skip to paginate. Only required if you're not providing `nextURL`. Only used when `getAllData = false`.
+   * @param limit - How many entries to return. Only used when `getAllData = false`.
    * @returns The response containing the job status.
    */
-  async checkCrawlStatus(id?: string, getAllData = false): Promise<CrawlStatusResponse | ErrorResponse> {
+  async checkCrawlStatus(id?: string, getAllData = false, nextURL?: string, skip?: number, limit?: number): Promise<CrawlStatusResponse | ErrorResponse> {
     if (!id) {
       throw new FirecrawlError("No crawl ID provided", 400);
     }
 
     const headers: AxiosRequestHeaders = this.prepareHeaders();
+    const targetURL = new URL(nextURL ?? `${this.apiUrl}/v1/crawl/${id}`);
+    if (skip !== undefined) {
+      targetURL.searchParams.set("skip", skip.toString());
+    }
+    if (limit !== undefined) {
+      targetURL.searchParams.set("limit", limit.toString());
+    }
+
     try {
       const response: AxiosResponse = await this.getRequest(
-        `${this.apiUrl}/v1/crawl/${id}`,
+        targetURL.href,
         headers
       );
       if (response.status === 200) {
@@ -581,6 +797,7 @@ export default class FirecrawlApp {
           total: response.data.total,
           completed: response.data.completed,
           creditsUsed: response.data.creditsUsed,
+          next: getAllData ? undefined : response.data.next,
           expiresAt: new Date(response.data.expiresAt),
           data: allData
         }
@@ -600,6 +817,29 @@ export default class FirecrawlApp {
         return resp;
       } else {
         this.handleError(response, "check crawl status");
+      }
+    } catch (error: any) {
+      throw new FirecrawlError(error.message, 500);
+    }
+    return { success: false, error: "Internal server error." };
+  }
+
+  /**
+   * Returns information about crawl errors.
+   * @param id - The ID of the crawl operation.
+   * @returns Information about crawl errors.
+   */
+  async checkCrawlErrors(id: string): Promise<CrawlErrorsResponse | ErrorResponse> {
+    const headers = this.prepareHeaders();
+    try {
+      const response: AxiosResponse = await this.deleteRequest(
+        `${this.apiUrl}/v1/crawl/${id}/errors`,
+        headers
+      );
+      if (response.status === 200) {
+        return response.data;
+      } else {
+        this.handleError(response, "check crawl errors");
       }
     } catch (error: any) {
       throw new FirecrawlError(error.message, 500);
@@ -686,6 +926,7 @@ export default class FirecrawlApp {
    * @param pollInterval - Time in seconds for job status checks.
    * @param idempotencyKey - Optional idempotency key for the request.
    * @param webhook - Optional webhook for the batch scrape.
+   * @param ignoreInvalidURLs - Optional flag to ignore invalid URLs.
    * @returns The response from the crawl operation.
    */
   async batchScrapeUrls(
@@ -711,6 +952,23 @@ export default class FirecrawlApp {
         ...jsonData,
         extract: {
           ...jsonData.extract,
+          schema: schema,
+        },
+      };
+    }
+    if (jsonData?.jsonOptions?.schema) {
+      let schema = jsonData.jsonOptions.schema;
+
+      // Try parsing the schema as a Zod schema
+      try {
+        schema = zodToJsonSchema(schema);
+      } catch (error) {
+        
+      }
+      jsonData = {
+        ...jsonData,
+        jsonOptions: {
+          ...jsonData.jsonOptions,
           schema: schema,
         },
       };
@@ -795,17 +1053,28 @@ export default class FirecrawlApp {
    * Checks the status of a batch scrape job using the Firecrawl API.
    * @param id - The ID of the batch scrape operation.
    * @param getAllData - Paginate through all the pages of documents, returning the full list of all documents. (default: `false`)
+   * @param nextURL - The `next` URL from the previous batch scrape status. Only required if you're not manually increasing `skip`. Only used when `getAllData = false`.
+   * @param skip - How many entries to skip to paginate. Only used when `getAllData = false`.
+   * @param limit - How many entries to return. Only used when `getAllData = false`.
    * @returns The response containing the job status.
    */
-  async checkBatchScrapeStatus(id?: string, getAllData = false): Promise<BatchScrapeStatusResponse | ErrorResponse> {
+  async checkBatchScrapeStatus(id?: string, getAllData = false, nextURL?: string, skip?: number, limit?: number): Promise<BatchScrapeStatusResponse | ErrorResponse> {
     if (!id) {
       throw new FirecrawlError("No batch scrape ID provided", 400);
     }
 
     const headers: AxiosRequestHeaders = this.prepareHeaders();
+    const targetURL = new URL(nextURL ?? `${this.apiUrl}/v1/batch/scrape/${id}`);
+    if (skip !== undefined) {
+      targetURL.searchParams.set("skip", skip.toString());
+    }
+    if (limit !== undefined) {
+      targetURL.searchParams.set("limit", limit.toString());
+    }
+
     try {
       const response: AxiosResponse = await this.getRequest(
-        `${this.apiUrl}/v1/batch/scrape/${id}`,
+        targetURL.href,
         headers
       );
       if (response.status === 200) {
@@ -831,6 +1100,7 @@ export default class FirecrawlApp {
           total: response.data.total,
           completed: response.data.completed,
           creditsUsed: response.data.creditsUsed,
+          next: getAllData ? undefined : response.data.next,
           expiresAt: new Date(response.data.expiresAt),
           data: allData
         }
@@ -858,24 +1128,115 @@ export default class FirecrawlApp {
   }
 
   /**
+   * Returns information about batch scrape errors.
+   * @param id - The ID of the batch scrape operation.
+   * @returns Information about batch scrape errors.
+   */
+  async checkBatchScrapeErrors(id: string): Promise<CrawlErrorsResponse | ErrorResponse> {
+    const headers = this.prepareHeaders();
+    try {
+      const response: AxiosResponse = await this.deleteRequest(
+        `${this.apiUrl}/v1/batch/scrape/${id}/errors`,
+        headers
+      );
+      if (response.status === 200) {
+        return response.data;
+      } else {
+        this.handleError(response, "check batch scrape errors");
+      }
+    } catch (error: any) {
+      throw new FirecrawlError(error.message, 500);
+    }
+    return { success: false, error: "Internal server error." };
+  }
+
+  /**
    * Extracts information from URLs using the Firecrawl API.
    * Currently in Beta. Expect breaking changes on future minor versions.
-   * @param url - The URL to extract information from.
+   * @param urls - The URLs to extract information from. Optional if using other methods for data extraction.
    * @param params - Additional parameters for the extract request.
    * @returns The response from the extract operation.
    */
-  async extract<T extends zt.ZodSchema = any>(urls: string[], params?: ExtractParams<T>): Promise<ExtractResponse<zt.infer<T>> | ErrorResponse> {
+  async extract<T extends zt.ZodSchema = any>(urls?: string[], params?: ExtractParams<T>): Promise<ExtractResponse<zt.infer<T>> | ErrorResponse> {
     const headers = this.prepareHeaders();
 
-    let jsonData: { urls: string[] } & ExtractParams<T> = { urls,  ...params };
+    let jsonData: { urls?: string[] } & ExtractParams<T> = { urls: urls,  ...params };
     let jsonSchema: any;
     try {
       if (!params?.schema) {
         jsonSchema = undefined;
-      } else if (params.schema instanceof zt.ZodType) {
-        jsonSchema = zodToJsonSchema(params.schema);
+      } else if (typeof params.schema === "object" && params.schema !== null && Object.getPrototypeOf(params.schema)?.constructor?.name?.startsWith("Zod")) {
+        jsonSchema = zodToJsonSchema(params.schema as zt.ZodType);
       } else {
         jsonSchema = params.schema;
+      }
+    } catch (error: any) {
+      throw new FirecrawlError("Invalid schema. Schema must be either a valid Zod schema or JSON schema object.", 400);
+    }
+    
+    try {
+      const response: AxiosResponse = await this.postRequest(
+        this.apiUrl + `/v1/extract`,
+        { ...jsonData, schema: jsonSchema, origin: params?.origin || "api-sdk" },
+        headers
+      );
+
+      if (response.status === 200) {
+        const jobId = response.data.id;
+        let extractStatus;
+        do {
+          const statusResponse: AxiosResponse = await this.getRequest(
+            `${this.apiUrl}/v1/extract/${jobId}`,
+            headers
+          );
+          extractStatus = statusResponse.data;
+          if (extractStatus.status === "completed") {
+            if (extractStatus.success) {
+              return {
+                success: true,
+                data: extractStatus.data,
+                warning: extractStatus.warning,
+                error: extractStatus.error,
+                sources: extractStatus?.sources || undefined,
+              };
+            } else {
+              throw new FirecrawlError(`Failed to extract data. Error: ${extractStatus.error}`, statusResponse.status);
+            }
+          } else if (extractStatus.status === "failed" || extractStatus.status === "cancelled") {
+            throw new FirecrawlError(`Extract job ${extractStatus.status}. Error: ${extractStatus.error}`, statusResponse.status);
+          }
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Polling interval
+        } while (extractStatus.status !== "completed");
+      } else {
+        this.handleError(response, "extract");
+      }
+    } catch (error: any) {
+      throw new FirecrawlError(error.message, 500, error.response?.data?.details);
+    }
+    return { success: false, error: "Internal server error."};
+  }
+
+  /**
+   * Initiates an asynchronous extract job for a URL using the Firecrawl API.
+   * @param url - The URL to extract data from.
+   * @param params - Additional parameters for the extract request.
+   * @param idempotencyKey - Optional idempotency key for the request.
+   * @returns The response from the extract operation.
+   */
+  async asyncExtract(
+    urls: string[],
+    params?: ExtractParams,
+    idempotencyKey?: string
+  ): Promise<ExtractResponse | ErrorResponse> {
+    const headers = this.prepareHeaders(idempotencyKey);
+    let jsonData: any = { urls, ...params };
+    let jsonSchema: any;
+
+    try {
+      if (params?.schema instanceof zt.ZodType) {
+        jsonSchema = zodToJsonSchema(params.schema);
+      } else {
+        jsonSchema = params?.schema;
       }
     } catch (error: any) {
       throw new FirecrawlError("Invalid schema. Schema must be either a valid Zod schema or JSON schema object.", 400);
@@ -887,25 +1248,38 @@ export default class FirecrawlApp {
         { ...jsonData, schema: jsonSchema },
         headers
       );
+
       if (response.status === 200) {
-        const responseData = response.data as ExtractResponse<T>;
-        if (responseData.success) {
-          return {
-            success: true,
-            data: responseData.data,
-            warning: responseData.warning,
-            error: responseData.error
-          };
-        } else {
-          throw new FirecrawlError(`Failed to scrape URL. Error: ${responseData.error}`, response.status);
-        }
+        return response.data;
       } else {
-        this.handleError(response, "extract");
+        this.handleError(response, "start extract job");
+      }
+    } catch (error: any) {
+      throw new FirecrawlError(error.message, 500, error.response?.data?.details);
+    }
+    return { success: false, error: "Internal server error." };
+  }
+
+  /**
+   * Retrieves the status of an extract job.
+   * @param jobId - The ID of the extract job.
+   * @returns The status of the extract job.
+   */
+  async getExtractStatus(jobId: string): Promise<any> {
+    try {
+      const response: AxiosResponse = await this.getRequest(
+        `${this.apiUrl}/v1/extract/${jobId}`,
+        this.prepareHeaders()
+      );
+
+      if (response.status === 200) {
+        return response.data;
+      } else {
+        this.handleError(response, "get extract status");
       }
     } catch (error: any) {
       throw new FirecrawlError(error.message, 500);
     }
-    return { success: false, error: "Internal server error." };
   }
 
   /**
@@ -933,7 +1307,7 @@ export default class FirecrawlApp {
     data: any,
     headers: AxiosRequestHeaders
   ): Promise<AxiosResponse> {
-    return axios.post(url, data, { headers });
+    return axios.post(url, data, { headers, timeout: (data?.timeout ? (data.timeout + 5000) : undefined) });
   }
 
   /**
@@ -992,12 +1366,14 @@ export default class FirecrawlApp {
     checkInterval: number
   ): Promise<CrawlStatusResponse | ErrorResponse> {
     try {
+      let failedTries = 0;
       while (true) {
         let statusResponse: AxiosResponse = await this.getRequest(
           `${this.apiUrl}/v1/crawl/${id}`,
           headers
         );
         if (statusResponse.status === 200) {
+          failedTries = 0;
           let statusData = statusResponse.data;
             if (statusData.status === "completed") {
               if ("data" in statusData) {
@@ -1029,7 +1405,10 @@ export default class FirecrawlApp {
             );
           }
         } else {
-          this.handleError(statusResponse, "check crawl status");
+          failedTries++;
+          if (failedTries >= 3) {
+            this.handleError(statusResponse, "check crawl status");
+          }
         }
       }
     } catch (error: any) {
@@ -1043,12 +1422,14 @@ export default class FirecrawlApp {
    * @param {string} action - The action being performed when the error occurred.
    */
   handleError(response: AxiosResponse, action: string): void {
-    if ([402, 408, 409, 500].includes(response.status)) {
+    if ([400, 402, 403, 408, 409, 500].includes(response.status)) {
       const errorMessage: string =
         response.data.error || "Unknown error occurred";
+      const details = response.data.details ? ` - ${JSON.stringify(response.data.details)}` : '';
       throw new FirecrawlError(
-        `Failed to ${action}. Status code: ${response.status}. Error: ${errorMessage}`,
-        response.status
+        `Failed to ${action}. Status code: ${response.status}. Error: ${errorMessage}${details}`,
+        response.status,
+        response?.data?.details
       );
     } else {
       throw new FirecrawlError(
@@ -1056,6 +1437,421 @@ export default class FirecrawlApp {
         response.status
       );
     }
+  }
+
+  /**
+   * Initiates a deep research operation on a given query and polls until completion.
+   * @param query - The query to research.
+   * @param params - Parameters for the deep research operation.
+   * @param onActivity - Optional callback to receive activity updates in real-time.
+   * @param onSource - Optional callback to receive source updates in real-time.
+   * @returns The final research results.
+   */
+  async deepResearch(
+    query: string, 
+    params: DeepResearchParams<zt.ZodSchema>,
+    onActivity?: (activity: {
+      type: string;
+      status: string;
+      message: string;
+      timestamp: string;
+      depth: number;
+    }) => void,
+    onSource?: (source: {
+      url: string;
+      title?: string;
+      description?: string;
+      icon?: string;
+    }) => void
+  ): Promise<DeepResearchStatusResponse | ErrorResponse> {
+    try {
+      const response = await this.asyncDeepResearch(query, params);
+      
+      if (!response.success || 'error' in response) {
+        return { success: false, error: 'error' in response ? response.error : 'Unknown error' };
+      }
+
+      if (!response.id) {
+        throw new FirecrawlError(`Failed to start research. No job ID returned.`, 500);
+      }
+
+      const jobId = response.id;
+      let researchStatus;
+      let lastActivityCount = 0;
+      let lastSourceCount = 0;
+
+      while (true) {
+        researchStatus = await this.checkDeepResearchStatus(jobId);
+        
+        if ('error' in researchStatus && !researchStatus.success) {
+          return researchStatus;
+        }
+
+        // Stream new activities through the callback if provided
+        if (onActivity && researchStatus.activities) {
+          const newActivities = researchStatus.activities.slice(lastActivityCount);
+          for (const activity of newActivities) {
+            onActivity(activity);
+          }
+          lastActivityCount = researchStatus.activities.length;
+        }
+
+        // Stream new sources through the callback if provided
+        if (onSource && researchStatus.sources) {
+          const newSources = researchStatus.sources.slice(lastSourceCount);
+          for (const source of newSources) {
+            onSource(source);
+          }
+          lastSourceCount = researchStatus.sources.length;
+        }
+
+        if (researchStatus.status === "completed") {
+          return researchStatus;
+        }
+
+        if (researchStatus.status === "failed") {
+          throw new FirecrawlError(
+            `Research job ${researchStatus.status}. Error: ${researchStatus.error}`, 
+            500
+          );
+        }
+
+        if (researchStatus.status !== "processing") {
+          break;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      return { success: false, error: "Research job terminated unexpectedly" };
+    } catch (error: any) {
+      throw new FirecrawlError(error.message, 500, error.response?.data?.details);
+    }
+  }
+
+  /**
+   * Initiates a deep research operation on a given query without polling.
+   * @param params - Parameters for the deep research operation.
+   * @returns The response containing the research job ID.
+   */
+  async asyncDeepResearch(query: string, params: DeepResearchParams<zt.ZodSchema>): Promise<DeepResearchResponse | ErrorResponse> {
+    const headers = this.prepareHeaders();
+    let jsonData: any = { query, ...params };
+
+    if (jsonData?.jsonOptions?.schema) {
+      let schema = jsonData.jsonOptions.schema;
+      // Try parsing the schema as a Zod schema
+      try {
+        schema = zodToJsonSchema(schema);
+      } catch (error) {
+        
+      }
+      jsonData = {
+        ...jsonData,
+        jsonOptions: {
+          ...jsonData.jsonOptions,
+          schema: schema,
+        },
+      };
+    }
+
+    try {
+      const response: AxiosResponse = await this.postRequest(
+        `${this.apiUrl}/v1/deep-research`,
+        jsonData,
+        headers
+      );
+
+      if (response.status === 200) {
+        return response.data;
+      } else {
+        this.handleError(response, "start deep research");
+      }
+    } catch (error: any) {
+      if (error.response?.data?.error) {
+        throw new FirecrawlError(`Request failed with status code ${error.response.status}. Error: ${error.response.data.error} ${error.response.data.details ? ` - ${JSON.stringify(error.response.data.details)}` : ''}`, error.response.status);
+      } else {
+        throw new FirecrawlError(error.message, 500);
+      }
+    }
+    return { success: false, error: "Internal server error." };
+  }
+
+  /**
+   * Checks the status of a deep research operation.
+   * @param id - The ID of the deep research operation.
+   * @returns The current status and results of the research operation.
+   */
+  async checkDeepResearchStatus(id: string): Promise<DeepResearchStatusResponse | ErrorResponse> {
+    const headers = this.prepareHeaders();
+    try {
+      const response: AxiosResponse = await this.getRequest(
+        `${this.apiUrl}/v1/deep-research/${id}`,
+        headers
+      );
+
+      if (response.status === 200) {
+        return response.data;
+      } else if (response.status === 404) {
+        throw new FirecrawlError("Deep research job not found", 404);
+      } else {
+        this.handleError(response, "check deep research status");
+      }
+    } catch (error: any) {
+      if (error.response?.data?.error) {
+        throw new FirecrawlError(`Request failed with status code ${error.response.status}. Error: ${error.response.data.error} ${error.response.data.details ? ` - ${JSON.stringify(error.response.data.details)}` : ''}`, error.response.status);
+      } else {
+        throw new FirecrawlError(error.message, 500);
+      }
+    }
+    return { success: false, error: "Internal server error." };
+  }
+
+  /**
+   * @deprecated Use deepResearch() instead
+   * Initiates a deep research operation on a given topic and polls until completion.
+   * @param topic - The topic to research.
+   * @param params - Parameters for the deep research operation.
+   * @param onActivity - Optional callback to receive activity updates in real-time.
+   * @returns The final research results.
+   */
+  async __deepResearch(
+    topic: string, 
+    params: DeepResearchParams,
+    onActivity?: (activity: {
+      type: string;
+      status: string;
+      message: string;
+      timestamp: string;
+      depth: number;
+    }) => void
+  ): Promise<DeepResearchStatusResponse | ErrorResponse> {
+    try {
+      const response = await this.__asyncDeepResearch(topic, params);
+      
+      if (!response.success || 'error' in response) {
+        return { success: false, error: 'error' in response ? response.error : 'Unknown error' };
+      }
+
+      if (!response.id) {
+        throw new FirecrawlError(`Failed to start research. No job ID returned.`, 500);
+      }
+
+      const jobId = response.id;
+      let researchStatus;
+      let lastActivityCount = 0;
+
+      while (true) {
+        researchStatus = await this.__checkDeepResearchStatus(jobId);
+        
+        if ('error' in researchStatus && !researchStatus.success) {
+          return researchStatus;
+        }
+
+        // Stream new activities through the callback if provided
+        if (onActivity && researchStatus.activities) {
+          const newActivities = researchStatus.activities.slice(lastActivityCount);
+          for (const activity of newActivities) {
+            onActivity(activity);
+          }
+          lastActivityCount = researchStatus.activities.length;
+        }
+
+        if (researchStatus.status === "completed") {
+          return researchStatus;
+        }
+
+        if (researchStatus.status === "failed") {
+          throw new FirecrawlError(
+            `Research job ${researchStatus.status}. Error: ${researchStatus.error}`, 
+            500
+          );
+        }
+
+        if (researchStatus.status !== "processing") {
+          break;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      return { success: false, error: "Research job terminated unexpectedly" };
+    } catch (error: any) {
+      throw new FirecrawlError(error.message, 500, error.response?.data?.details);
+    }
+  }
+
+  /**
+   * @deprecated Use asyncDeepResearch() instead
+   * Initiates a deep research operation on a given topic without polling.
+   * @param params - Parameters for the deep research operation.
+   * @returns The response containing the research job ID.
+   */
+  async __asyncDeepResearch(topic: string, params: DeepResearchParams): Promise<DeepResearchResponse | ErrorResponse> {
+    const headers = this.prepareHeaders();
+    try {
+      const response: AxiosResponse = await this.postRequest(
+        `${this.apiUrl}/v1/deep-research`,
+        { topic, ...params },
+        headers
+      );
+
+      if (response.status === 200) {
+        return response.data;
+      } else {
+        this.handleError(response, "start deep research");
+      }
+    } catch (error: any) {
+      if (error.response?.data?.error) {
+        throw new FirecrawlError(`Request failed with status code ${error.response.status}. Error: ${error.response.data.error} ${error.response.data.details ? ` - ${JSON.stringify(error.response.data.details)}` : ''}`, error.response.status);
+      } else {
+        throw new FirecrawlError(error.message, 500);
+      }
+    }
+    return { success: false, error: "Internal server error." };
+  }
+
+  /**
+   * @deprecated Use checkDeepResearchStatus() instead
+   * Checks the status of a deep research operation.
+   * @param id - The ID of the deep research operation.
+   * @returns The current status and results of the research operation.
+   */
+  async __checkDeepResearchStatus(id: string): Promise<DeepResearchStatusResponse | ErrorResponse> {
+    const headers = this.prepareHeaders();
+    try {
+      const response: AxiosResponse = await this.getRequest(
+        `${this.apiUrl}/v1/deep-research/${id}`,
+        headers
+      );
+
+      if (response.status === 200) {
+        return response.data;
+      } else if (response.status === 404) {
+        throw new FirecrawlError("Deep research job not found", 404);
+      } else {
+        this.handleError(response, "check deep research status");
+      }
+    } catch (error: any) {
+      if (error.response?.data?.error) {
+        throw new FirecrawlError(`Request failed with status code ${error.response.status}. Error: ${error.response.data.error} ${error.response.data.details ? ` - ${JSON.stringify(error.response.data.details)}` : ''}`, error.response.status);
+      } else {
+        throw new FirecrawlError(error.message, 500);
+      }
+    }
+    return { success: false, error: "Internal server error." };
+  }
+
+  /**
+   * Generates LLMs.txt for a given URL and polls until completion.
+   * @param url - The URL to generate LLMs.txt from.
+   * @param params - Parameters for the LLMs.txt generation operation.
+   * @returns The final generation results.
+   */
+  async generateLLMsText(url: string, params?: GenerateLLMsTextParams): Promise<GenerateLLMsTextStatusResponse | ErrorResponse> {
+    try {
+      const response = await this.asyncGenerateLLMsText(url, params);
+      
+      if (!response.success || 'error' in response) {
+        return { success: false, error: 'error' in response ? response.error : 'Unknown error' };
+      }
+
+      if (!response.id) {
+        throw new FirecrawlError(`Failed to start LLMs.txt generation. No job ID returned.`, 500);
+      }
+
+      const jobId = response.id;
+      let generationStatus;
+
+      while (true) {
+        generationStatus = await this.checkGenerateLLMsTextStatus(jobId);
+        
+        if ('error' in generationStatus && !generationStatus.success) {
+          return generationStatus;
+        }
+
+        if (generationStatus.status === "completed") {
+          return generationStatus;
+        }
+
+        if (generationStatus.status === "failed") {
+          throw new FirecrawlError(
+            `LLMs.txt generation job ${generationStatus.status}. Error: ${generationStatus.error}`, 
+            500
+          );
+        }
+
+        if (generationStatus.status !== "processing") {
+          break;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+
+      return { success: false, error: "LLMs.txt generation job terminated unexpectedly" };
+    } catch (error: any) {
+      throw new FirecrawlError(error.message, 500, error.response?.data?.details);
+    }
+  }
+
+  /**
+   * Initiates a LLMs.txt generation operation without polling.
+   * @param url - The URL to generate LLMs.txt from.
+   * @param params - Parameters for the LLMs.txt generation operation.
+   * @returns The response containing the generation job ID.
+   */
+  async asyncGenerateLLMsText(url: string, params?: GenerateLLMsTextParams): Promise<GenerateLLMsTextResponse | ErrorResponse> {
+    const headers = this.prepareHeaders();
+    try {
+      const response: AxiosResponse = await this.postRequest(
+        `${this.apiUrl}/v1/llmstxt`,
+        { url, ...params },
+        headers
+      );
+
+      if (response.status === 200) {
+        return response.data;
+      } else {
+        this.handleError(response, "start LLMs.txt generation");
+      }
+    } catch (error: any) {
+      if (error.response?.data?.error) {
+        throw new FirecrawlError(`Request failed with status code ${error.response.status}. Error: ${error.response.data.error} ${error.response.data.details ? ` - ${JSON.stringify(error.response.data.details)}` : ''}`, error.response.status);
+      } else {
+        throw new FirecrawlError(error.message, 500);
+      }
+    }
+    return { success: false, error: "Internal server error." };
+  }
+
+  /**
+   * Checks the status of a LLMs.txt generation operation.
+   * @param id - The ID of the LLMs.txt generation operation.
+   * @returns The current status and results of the generation operation.
+   */
+  async checkGenerateLLMsTextStatus(id: string): Promise<GenerateLLMsTextStatusResponse | ErrorResponse> {
+    const headers = this.prepareHeaders();
+    try {
+      const response: AxiosResponse = await this.getRequest(
+        `${this.apiUrl}/v1/llmstxt/${id}`,
+        headers
+      );
+
+      if (response.status === 200) {
+        return response.data;
+      } else if (response.status === 404) {
+        throw new FirecrawlError("LLMs.txt generation job not found", 404);
+      } else {
+        this.handleError(response, "check LLMs.txt generation status");
+      }
+    } catch (error: any) {
+      if (error.response?.data?.error) {
+        throw new FirecrawlError(`Request failed with status code ${error.response.status}. Error: ${error.response.data.error} ${error.response.data.details ? ` - ${JSON.stringify(error.response.data.details)}` : ''}`, error.response.status);
+      } else {
+        throw new FirecrawlError(error.message, 500);
+      }
+    }
+    return { success: false, error: "Internal server error." };
   }
 }
 
@@ -1081,7 +1877,9 @@ export class CrawlWatcher extends TypedEventTarget<CrawlWatcherEvents> {
   constructor(id: string, app: FirecrawlApp) {
     super();
     this.id = id;
-    this.ws = new WebSocket(`${app.apiUrl}/v1/crawl/${id}`, app.apiKey);
+    // replace `http` with `ws` (`http://` -> `ws://` and `https://` -> `wss://`)
+    const wsUrl = app.apiUrl.replace(/^http/, "ws");
+    this.ws = new WebSocket(`${wsUrl}/v1/crawl/${id}`, app.apiKey);
     this.status = "scraping";
     this.data = [];
 

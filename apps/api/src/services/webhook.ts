@@ -1,6 +1,6 @@
 import axios from "axios";
 import { logger } from "../lib/logger";
-import { supabase_service } from "./supabase";
+import { supabase_rr_service, supabase_service } from "./supabase";
 import { WebhookEventType } from "../types";
 import { configDotenv } from "dotenv";
 import { z } from "zod";
@@ -16,6 +16,13 @@ export const callWebhook = async (
   eventType: WebhookEventType = "crawl.page",
   awaitWebhook: boolean = false,
 ) => {
+  if (specified) {
+    let subType = eventType.split(".")[1];
+    if (!specified.events.includes(subType as any)) {
+      return false;
+    }
+  }
+
   try {
     const selfHostedUrl = process.env.SELF_HOSTED_WEBHOOK_URL?.replace(
       "{{JOB_ID}}",
@@ -29,7 +36,7 @@ export const callWebhook = async (
     // Only fetch the webhook URL from the database if the self-hosted webhook URL and specified webhook are not set
     // and the USE_DB_AUTHENTICATION environment variable is set to true
     if (!webhookUrl && useDbAuthentication) {
-      const { data: webhooksData, error } = await supabase_service
+      const { data: webhooksData, error } = await supabase_rr_service
         .from("webhooks")
         .select("url")
         .eq("team_id", teamId)

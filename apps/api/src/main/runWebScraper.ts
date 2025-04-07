@@ -51,6 +51,7 @@ export async function startWebScraperPipeline({
     priority: job.opts.priority,
     is_scrape: job.data.is_scrape ?? false,
     is_crawl: !!(job.data.crawl_id && job.data.crawlerOptions !== null),
+    urlInvisibleInCurrentCrawl: job.data.crawlerOptions?.urlInvisibleInCurrentCrawl ?? false,
   });
 }
 
@@ -66,6 +67,7 @@ export async function runWebScraper({
   priority,
   is_scrape = false,
   is_crawl = false,
+  urlInvisibleInCurrentCrawl = false,
 }: RunWebScraperParams): Promise<ScrapeUrlResponse> {
   const logger = _logger.child({
     method: "runWebScraper",
@@ -97,6 +99,8 @@ export async function runWebScraper({
       response = await scrapeURL(bull_job_id, url, scrapeOptions, {
         priority,
         ...internalOptions,
+        urlInvisibleInCurrentCrawl,
+        teamId: internalOptions?.teamId ?? team_id,
       });
       if (!response.success) {
         if (response.error instanceof Error) {
@@ -168,27 +172,6 @@ export async function runWebScraper({
   }
 
   if (error === undefined && response?.success) {
-    if (is_scrape === false) {
-      let creditsToBeBilled = 1; // Assuming 1 credit per document
-      if (scrapeOptions.extract) {
-        creditsToBeBilled = 5;
-      }
-
-      // If the team is the background index team, return the response
-      if(team_id === process.env.BACKGROUND_INDEX_TEAM_ID!) {
-        return response;
-      }
-
-
-      billTeam(team_id, undefined, creditsToBeBilled, logger).catch((error) => {
-        logger.error(
-          `Failed to bill team ${team_id} for ${creditsToBeBilled} credits`,
-          { error },
-        );
-        // Optionally, you could notify an admin or add to a retry queue here
-      });
-    }
-
     return response;
   } else {
     if (response !== undefined) {

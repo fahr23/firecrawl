@@ -3,7 +3,14 @@ import * as Sentry from "@sentry/node";
 import { z } from "zod";
 
 import { robustFetch } from "../../lib/fetch";
-import { ActionError, EngineError, SiteError, UnsupportedFileError } from "../../error";
+import {
+  ActionError,
+  EngineError,
+  SiteError,
+  UnsupportedFileError,
+} from "../../error";
+import { MockState } from "../../lib/mock";
+import { fireEngineURL } from "./scrape";
 
 const successSchema = z.object({
   jobId: z.string(),
@@ -35,12 +42,45 @@ const successSchema = z.object({
     })
     .array()
     .optional(),
-  
+  actionResults: z.union([
+    z.object({
+      idx: z.number(),
+      type: z.literal("screenshot"),
+      result: z.object({
+        path: z.string(),
+      }),
+    }),
+    z.object({
+      idx: z.number(),
+      type: z.literal("scrape"),
+      result: z.union([
+        z.object({
+          url: z.string(),
+          html: z.string(),
+        }),
+        z.object({
+          url: z.string(),
+          accessibility: z.string(),
+        }),
+      ]),
+    }),
+    z.object({
+      idx: z.number(),
+      type: z.literal("executeJavascript"),
+      result: z.object({
+        return: z.string(),
+      }),
+    }),
+  ]).array().optional(),
+
   // chrome-cdp only -- file download handler
-  file: z.object({
-    name: z.string(),
-    content: z.string(),
-  }).optional().or(z.null()),
+  file: z
+    .object({
+      name: z.string(),
+      content: z.string(),
+    })
+    .optional()
+    .or(z.null()),
 });
 
 export type FireEngineCheckStatusSuccess = z.infer<typeof successSchema>;
@@ -74,9 +114,9 @@ export class StillProcessingError extends Error {
 export async function fireEngineCheckStatus(
   logger: Logger,
   jobId: string,
+  mock: MockState | null,
+  abort?: AbortSignal,
 ): Promise<FireEngineCheckStatusSuccess> {
-  const fireEngineURL = process.env.FIRE_ENGINE_BETA_URL!;
-
   const status = await Sentry.startSpan(
     {
       name: "fire-engine: Check status",
@@ -97,6 +137,7 @@ export async function fireEngineCheckStatus(
               }
             : {}),
         },
+        mock,
       });
     },
   );
@@ -121,11 +162,13 @@ export async function fireEngineCheckStatus(
       typeof status.error === "string" &&
       status.error.includes("File size exceeds")
     ) {
-      throw new UnsupportedFileError("File size exceeds " + status.error.split("File size exceeds ")[1]);
+      throw new UnsupportedFileError(
+        "File size exceeds " + status.error.split("File size exceeds ")[1],
+      );
     } else if (
       typeof status.error === "string" &&
       // TODO: improve this later
-      status.error.includes("Element")
+      (status.error.includes("Element") || status.error.includes("Javascript execution failed"))
     ) {
       throw new ActionError(status.error.split("Error: ")[1]);
     } else {

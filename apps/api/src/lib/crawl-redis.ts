@@ -27,7 +27,7 @@ export async function saveCrawl(id: string, crawl: StoredCrawl) {
     plan: crawl.plan,
   });
   await redisConnection.set("crawl:" + id, JSON.stringify(crawl));
-  await redisConnection.expire("crawl:" + id, 24 * 60 * 60, "NX");
+  await redisConnection.expire("crawl:" + id, 24 * 60 * 60);
 }
 
 export async function getCrawl(id: string): Promise<StoredCrawl | null> {
@@ -37,6 +37,7 @@ export async function getCrawl(id: string): Promise<StoredCrawl | null> {
     return null;
   }
 
+  await redisConnection.expire("crawl:" + id, 24 * 60 * 60);
   return JSON.parse(x);
 }
 
@@ -56,7 +57,7 @@ export async function addCrawlJob(id: string, job_id: string) {
     crawlId: id,
   });
   await redisConnection.sadd("crawl:" + id + ":jobs", job_id);
-  await redisConnection.expire("crawl:" + id + ":jobs", 24 * 60 * 60, "NX");
+  await redisConnection.expire("crawl:" + id + ":jobs", 24 * 60 * 60);
 }
 
 export async function addCrawlJobs(id: string, job_ids: string[]) {
@@ -69,7 +70,7 @@ export async function addCrawlJobs(id: string, job_ids: string[]) {
     crawlId: id,
   });
   await redisConnection.sadd("crawl:" + id + ":jobs", ...job_ids);
-  await redisConnection.expire("crawl:" + id + ":jobs", 24 * 60 * 60, "NX");
+  await redisConnection.expire("crawl:" + id + ":jobs", 24 * 60 * 60);
 }
 
 export async function addCrawlJobDone(
@@ -87,7 +88,6 @@ export async function addCrawlJobDone(
   await redisConnection.expire(
     "crawl:" + id + ":jobs_done",
     24 * 60 * 60,
-    "NX",
   );
 
   if (success) {
@@ -104,11 +104,11 @@ export async function addCrawlJobDone(
   await redisConnection.expire(
     "crawl:" + id + ":jobs_done_ordered",
     24 * 60 * 60,
-    "NX",
   );
 }
 
 export async function getDoneJobsOrderedLength(id: string): Promise<number> {
+  await redisConnection.expire("crawl:" + id + ":jobs_done_ordered", 24 * 60 * 60);
   return await redisConnection.llen("crawl:" + id + ":jobs_done_ordered");
 }
 
@@ -117,6 +117,7 @@ export async function getDoneJobsOrdered(
   start = 0,
   end = -1,
 ): Promise<string[]> {
+  await redisConnection.expire("crawl:" + id + ":jobs_done_ordered", 24 * 60 * 60);
   return await redisConnection.lrange(
     "crawl:" + id + ":jobs_done_ordered",
     start,
@@ -125,9 +126,18 @@ export async function getDoneJobsOrdered(
 }
 
 export async function isCrawlFinished(id: string) {
+  await redisConnection.expire("crawl:" + id + ":kickoff:finish", 24 * 60 * 60);
   return (
     (await redisConnection.scard("crawl:" + id + ":jobs_done")) ===
-    (await redisConnection.scard("crawl:" + id + ":jobs"))
+      (await redisConnection.scard("crawl:" + id + ":jobs")) &&
+    (await redisConnection.get("crawl:" + id + ":kickoff:finish")) !== null
+  );
+}
+
+export async function isCrawlKickoffFinished(id: string) {
+  await redisConnection.expire("crawl:" + id + ":kickoff:finish", 24 * 60 * 60);
+  return (
+    (await redisConnection.get("crawl:" + id + ":kickoff:finish")) !== null
   );
 }
 
@@ -135,37 +145,54 @@ export async function isCrawlFinishedLocked(id: string) {
   return await redisConnection.exists("crawl:" + id + ":finish");
 }
 
-export async function finishCrawl(id: string) {
+export async function finishCrawlKickoff(id: string) {
+  await redisConnection.set(
+    "crawl:" + id + ":kickoff:finish",
+    "yes",
+    "EX",
+    24 * 60 * 60,
+  );
+}
+
+export async function finishCrawlPre(id: string) {
   if (await isCrawlFinished(id)) {
-    _logger.debug("Marking crawl as finished.", {
+    _logger.debug("Marking crawl as pre-finished.", {
       module: "crawl-redis",
-      method: "finishCrawl",
+      method: "finishCrawlPre",
       crawlId: id,
     });
-    const set = await redisConnection.setnx("crawl:" + id + ":finish", "yes");
-    if (set === 1) {
-      await redisConnection.expire("crawl:" + id + ":finish", 24 * 60 * 60);
-    }
+    const set = await redisConnection.setnx("crawl:" + id + ":finished_pre", "yes");
+    await redisConnection.expire("crawl:" + id + ":finished_pre", 24 * 60 * 60);
     return set === 1;
   } else {
-    _logger.debug("Crawl can not be finished yet, not marking as finished.", {
+    _logger.debug("Crawl can not be pre-finished yet, not marking as finished.", {
       module: "crawl-redis",
-      method: "finishCrawl",
+      method: "finishCrawlPre",
       crawlId: id,
+      jobs_done: await redisConnection.scard("crawl:" + id + ":jobs_done"),
+      jobs: await redisConnection.scard("crawl:" + id + ":jobs"),
+      kickoff_finished:
+        (await redisConnection.get("crawl:" + id + ":kickoff:finish")) !== null,
     });
   }
+}
+
+export async function finishCrawl(id: string) {
+  _logger.debug("Marking crawl as finished.", {
+    module: "crawl-redis",
+    method: "finishCrawl",
+    crawlId: id,
+  });
+  await redisConnection.set("crawl:" + id + ":finish", "yes");
+  await redisConnection.expire("crawl:" + id + ":finish", 24 * 60 * 60);
 }
 
 export async function getCrawlJobs(id: string): Promise<string[]> {
   return await redisConnection.smembers("crawl:" + id + ":jobs");
 }
 
-export async function getThrottledJobs(teamId: string): Promise<string[]> {
-  return await redisConnection.zrangebyscore(
-    "concurrency-limiter:" + teamId + ":throttled",
-    Date.now(),
-    Infinity,
-  );
+export async function getCrawlJobCount(id: string): Promise<number> {
+  return await redisConnection.scard("crawl:" + id + ":jobs");
 }
 
 export function normalizeURL(url: string, sc: StoredCrawl): string {
@@ -205,7 +232,35 @@ export function generateURLPermutations(url: string | URL): URL[] {
     return [urlWithHTTP, urlWithHTTPS];
   });
 
-  return permutations;
+  // Construct more versions for index.html/index.php
+  permutations = permutations.flatMap((urlO) => {
+    const urlWithHTML = new URL(urlO);
+    const urlWithPHP = new URL(urlO);
+    const urlWithBare = new URL(urlO);
+    const urlWithSlash = new URL(urlO);
+
+    if (urlO.pathname.endsWith("/")) {
+      urlWithBare.pathname = urlWithBare.pathname.length === 1 ? urlWithBare.pathname : urlWithBare.pathname.slice(0, -1);
+      urlWithHTML.pathname += "index.html";
+      urlWithPHP.pathname += "index.php";
+    } else if (urlO.pathname.endsWith("/index.html")) {
+      urlWithPHP.pathname = urlWithPHP.pathname.slice(0, -"index.html".length) + "index.php";
+      urlWithSlash.pathname = urlWithSlash.pathname.slice(0, -"index.html".length);
+      urlWithBare.pathname = urlWithBare.pathname.slice(0, -"/index.html".length);
+    } else if (urlO.pathname.endsWith("/index.php")) {
+      urlWithHTML.pathname = urlWithHTML.pathname.slice(0, -"index.php".length) + "index.html";
+      urlWithSlash.pathname = urlWithSlash.pathname.slice(0, -"index.php".length);
+      urlWithBare.pathname = urlWithBare.pathname.slice(0, -"/index.php".length);
+    } else {
+      urlWithSlash.pathname += "/";
+      urlWithHTML.pathname += "/index.html";
+      urlWithPHP.pathname += "/index.php";
+    }
+
+    return [urlWithHTML, urlWithPHP, urlWithSlash, urlWithBare];
+  });
+
+  return [...new Set(permutations.map(x => x.href))].map(x => new URL(x));
 }
 
 export async function lockURL(
@@ -250,20 +305,19 @@ export async function lockURL(
     res = x === permutations.length;
   }
 
-  await redisConnection.expire("crawl:" + id + ":visited", 24 * 60 * 60, "NX");
+  await redisConnection.expire("crawl:" + id + ":visited", 24 * 60 * 60);
 
   if (res) {
     await redisConnection.sadd("crawl:" + id + ":visited_unique", url);
     await redisConnection.expire(
       "crawl:" + id + ":visited_unique",
       24 * 60 * 60,
-      "NX",
     );
   }
 
-  logger.debug("Locking URL " + JSON.stringify(url) + "... result: " + res, {
-    res,
-  });
+  // logger.debug("Locking URL " + JSON.stringify(url) + "... result: " + res, {
+  //   res,
+  // });
   return res;
 }
 
@@ -290,7 +344,6 @@ export async function lockURLs(
   await redisConnection.expire(
     "crawl:" + id + ":visited_unique",
     24 * 60 * 60,
-    "NX",
   );
 
   let res: boolean;
@@ -309,23 +362,40 @@ export async function lockURLs(
     res = x === allPermutations.length;
   }
 
-  await redisConnection.expire("crawl:" + id + ":visited", 24 * 60 * 60, "NX");
+  await redisConnection.expire("crawl:" + id + ":visited", 24 * 60 * 60);
 
   logger.debug("lockURLs final result: " + res, { res });
   return res;
+}
+
+export async function lockURLsIndividually(
+  id: string,
+  sc: StoredCrawl,
+  jobs: { id: string; url: string }[],
+) {
+  const out: typeof jobs = [];
+
+  for (const job of jobs) {
+    if (await lockURL(id, sc, job.url)) {
+      out.push(job);
+    }
+  }
+
+  return out;
 }
 
 export function crawlToCrawler(
   id: string,
   sc: StoredCrawl,
   newBase?: string,
+  crawlerOptions?: any,
 ): WebCrawler {
   const crawler = new WebCrawler({
     jobId: id,
     initialUrl: sc.originUrl!,
     baseUrl: newBase ? new URL(newBase).origin : undefined,
-    includes: sc.crawlerOptions?.includes ?? [],
-    excludes: sc.crawlerOptions?.excludes ?? [],
+    includes: (sc.crawlerOptions?.includes ?? []).filter(x => x.trim().length > 0),
+    excludes: (sc.crawlerOptions?.excludes ?? []).filter(x => x.trim().length > 0),
     maxCrawledLinks: sc.crawlerOptions?.maxCrawledLinks ?? 1000,
     maxCrawledDepth: getAdjustedMaxDepth(
       sc.originUrl!,
@@ -338,6 +408,9 @@ export function crawlToCrawler(
       sc.crawlerOptions?.allowExternalContentLinks ?? false,
     allowSubdomains: sc.crawlerOptions?.allowSubdomains ?? false,
     ignoreRobotsTxt: sc.crawlerOptions?.ignoreRobotsTxt ?? false,
+    regexOnFullURL: sc.crawlerOptions?.regexOnFullURL ?? false,
+    maxDiscoveryDepth: sc.crawlerOptions?.maxDiscoveryDepth,
+    currentDiscoveryDepth: crawlerOptions?.currentDiscoveryDepth ?? 0,
   });
 
   if (sc.robots !== undefined) {

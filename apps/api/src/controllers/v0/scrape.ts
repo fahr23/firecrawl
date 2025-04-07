@@ -21,7 +21,7 @@ import {
   defaultOrigin,
 } from "../../lib/default-values";
 import { addScrapeJob, waitForJob } from "../../services/queue-jobs";
-import { getScrapeQueue } from "../../services/queue-service";
+import { getScrapeQueue, redisConnection } from "../../services/queue-service";
 import { v4 as uuidv4 } from "uuid";
 import { logger } from "../../lib/logger";
 import * as Sentry from "@sentry/node";
@@ -66,6 +66,7 @@ export async function scrapeHelper(
     extractorOptions,
     timeout,
     crawlerOptions,
+    team_id,
   );
 
   await addScrapeJob(
@@ -181,6 +182,9 @@ export async function scrapeController(req: Request, res: Response) {
 
     const { team_id, plan, chunk } = auth;
 
+    redisConnection.sadd("teams_using_v0", team_id)
+      .catch(error => logger.error("Failed to add team to teams_using_v0", { error, team_id }));
+
     const crawlerOptions = req.body.crawlerOptions ?? {};
     const pageOptions = { ...defaultPageOptions, ...req.body.pageOptions };
     const extractorOptions = {
@@ -294,6 +298,7 @@ export async function scrapeController(req: Request, res: Response) {
       pageOptions,
       extractorOptions,
       timeout,
+      team_id,
     );
 
     logJob({
