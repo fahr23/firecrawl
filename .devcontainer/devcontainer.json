@@ -1,6 +1,7 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the
 // README at: https://github.com/devcontainers/templates/tree/main/src/docker-existing-docker-compose
 {
+	// "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
 	"name": "Existing Docker Compose (Extend)",
 
 	// Update the 'dockerComposeFile' list if you have more compose files or use different names.
@@ -30,11 +31,11 @@
 	// Uncomment the next line if you want to keep your containers running after VS Code shuts down.
 	// "shutdownAction": "none",
 
-	"postCreateCommand": "apt-get update && \
-	  (dpkg -l | grep -qw git || apt-get install -y git) && \
-	  (dpkg -l | grep -qw python3 || apt-get install -y python3) && \
-	  (dpkg -l | grep -qw python3-venv || apt-get install -y python3-venv) && \
-	  (dpkg -l | grep -qw python3-pip || apt-get install -y python3-pip)",
+	// "postCreateCommand": "apt-get update && \
+	//   (dpkg -l | grep -qw git || apt-get install -y git) && \
+	//   (dpkg -l | grep -qw python3 || apt-get install -y python3) && \
+	//   (dpkg -l | grep -qw python3-venv || apt-get install -y python3-venv) && \
+	//   (dpkg -l | grep -qw python3-pip || apt-get install -y python3-pip)",
 	// Configure tool-specific properties.
 	// "customizations": {},
 
