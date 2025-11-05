@@ -1,5 +1,6 @@
 import { TokenUsage } from "../../../controllers/v1/types";
 import { logger } from "../../../lib/logger";
+import { CostTracking } from "../../cost-tracking";
 import { modelPrices } from "./model-prices";
 
 interface ModelPricing {
@@ -8,8 +9,12 @@ interface ModelPricing {
   input_cost_per_request?: number;
   mode: string;
 }
-const tokenPerCharacter = 4;
+const tokenPerCharacter = 0.5;
 const baseTokenCost = 300;
+
+export function calculateThinkingCost(costTracking: CostTracking): number {
+  return Math.ceil(costTracking.toJSON().totalCost * 20000);
+}
 
 export function calculateFinalResultCost(data: any): number {
   return Math.floor(
@@ -23,7 +28,7 @@ export function estimateTotalCost(tokenUsage: TokenUsage[]): number {
   }, 0);
 }
 
-export function estimateCost(tokenUsage: TokenUsage): number {
+function estimateCost(tokenUsage: TokenUsage): number {
   let totalCost = 0;
   try {
     let model = tokenUsage.model ?? (process.env.MODEL_NAME || "gpt-4o-mini");

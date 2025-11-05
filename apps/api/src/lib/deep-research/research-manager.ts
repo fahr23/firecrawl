@@ -5,8 +5,14 @@ import {
   DeepResearchSource,
   updateDeepResearch,
 } from "./deep-research-redis";
-import { generateCompletions, trimToTokenLimit } from "../../scraper/scrapeURL/transformers/llmExtract";
+import {
+  generateCompletions,
+  trimToTokenLimit,
+} from "../../scraper/scrapeURL/transformers/llmExtract";
 import { ExtractOptions } from "../../controllers/v1/types";
+
+import { getModel } from "../generic-ai";
+import { CostTracking } from "../cost-tracking";
 interface AnalysisResult {
   gaps: string[];
   nextSteps: string[];
@@ -29,7 +35,6 @@ export class ResearchStateManager {
   constructor(
     private readonly researchId: string,
     private readonly teamId: string,
-    private readonly plan: string,
     private readonly maxDepth: number,
     private readonly logger: Logger,
     private readonly topic: string,
@@ -148,13 +153,14 @@ export class ResearchLLMService {
   async generateSearchQueries(
     topic: string,
     findings: DeepResearchFinding[] = [],
+    costTracking: CostTracking,
+    metadata: { teamId: string; functionId?: string; deepResearchId?: string },
   ): Promise<{ query: string; researchGoal: string }[]> {
     const { extract } = await generateCompletions({
       logger: this.logger.child({
         method: "generateSearchQueries",
       }),
       options: {
-        mode: "llm",
         systemPrompt:
           "You are an expert research agent that generates search queries (SERP) to explore topics deeply and thoroughly. Do not generate repeated queries. Today's date is " +
           new Date().toISOString().split("T")[0],
@@ -181,7 +187,7 @@ export class ResearchLLMService {
           },
         },
         prompt: `Generate a list of 3-5 search queries to deeply research this topic: "${topic}"
-          ${findings.length > 0 ? `\nBased on these previous findings, generate more specific queries:\n${trimToTokenLimit(findings.map((f) => `- ${f.text}`).join("\n"), 10000).text}` : ""}
+          ${findings.length > 0 ? `\nBased on these previous findings, generate more specific queries:\n${trimToTokenLimit(findings.map(f => `- ${f.text}`).join("\n"), 10000).text}` : ""}
           
           Each query should be specific and focused on a particular aspect.
           Build upon previous findings when available.
@@ -189,7 +195,20 @@ export class ResearchLLMService {
           Every search query is a new SERP query so make sure the whole context is added without overwhelming the search engine.
           The first SERP query you generate should be a very concise, simple version of the topic. `,
       },
-      markdown: ""
+      markdown: "",
+      costTrackingOptions: {
+        costTracking,
+        metadata: {
+          module: "deep-research",
+          method: "generateSearchQueries",
+        },
+      },
+      metadata: {
+        ...metadata,
+        functionId: metadata.functionId
+          ? metadata.functionId + "/generateSearchQueries"
+          : "generateSearchQueries",
+      },
     });
 
     return extract.queries;
@@ -200,6 +219,8 @@ export class ResearchLLMService {
     currentTopic: string,
     timeRemaining: number,
     systemPrompt: string,
+    costTracking: CostTracking,
+    metadata: { teamId: string; functionId?: string; deepResearchId?: string },
   ): Promise<AnalysisResult | null> {
     try {
       const timeRemainingMinutes =
@@ -210,7 +231,6 @@ export class ResearchLLMService {
           method: "analyzeAndPlan",
         }),
         options: {
-          mode: "llm",
           systemPrompt:
             systemPrompt +
             "You are an expert research agent that is analyzing findings. Your goal is to synthesize information and identify gaps for further research. Today's date is " +
@@ -233,7 +253,7 @@ export class ResearchLLMService {
           prompt: trimToTokenLimit(
             `You are researching: ${currentTopic}
               You have ${timeRemainingMinutes} minutes remaining to complete the research but you don't need to use all of it.
-              Current findings: ${findings.map((f) => `[From ${f.source}]: ${f.text}`).join("\n")}
+              Current findings: ${findings.map(f => `[From ${f.source}]: ${f.text}`).join("\n")}
               What has been learned? What gaps remain, if any? What specific aspects should be investigated next if any?
               If you need to search for more information inside the same topic pick a sub-topic by including a nextSearchTopic -which should be highly related to the original topic/users'query.
               Important: If less than 1 minute remains, set shouldContinue to false to allow time for final synthesis.
@@ -242,6 +262,19 @@ export class ResearchLLMService {
           ).text,
         },
         markdown: "",
+        costTrackingOptions: {
+          costTracking,
+          metadata: {
+            module: "deep-research",
+            method: "analyzeAndPlan",
+          },
+        },
+        metadata: {
+          ...metadata,
+          functionId: metadata.functionId
+            ? metadata.functionId + "/analyzeAndPlan"
+            : "analyzeAndPlan",
+        },
       });
 
       return extract.analysis;
@@ -256,39 +289,41 @@ export class ResearchLLMService {
     findings: DeepResearchFinding[],
     summaries: string[],
     analysisPrompt: string,
+    costTracking: CostTracking,
+    metadata: { teamId: string; functionId?: string; deepResearchId?: string },
     formats?: string[],
     jsonOptions?: ExtractOptions,
   ): Promise<any> {
-    if(!formats) {
-      formats = ['markdown'];
+    if (!formats) {
+      formats = ["markdown"];
     }
-    if(!jsonOptions) {
+    if (!jsonOptions) {
       jsonOptions = undefined;
     }
-    
+
     const { extract } = await generateCompletions({
       logger: this.logger.child({
         method: "generateFinalAnalysis",
       }),
-      mode: formats.includes('json') ? 'object' : 'no-object',
+      mode: formats.includes("json") ? "object" : "no-object",
       options: {
         mode: "llm",
-        ...(formats.includes('json') && {
-          ...jsonOptions
+        ...(formats.includes("json") && {
+          ...jsonOptions,
         }),
-        systemPrompt: formats.includes('json') 
+        systemPrompt: formats.includes("json")
           ? "You are an expert research analyst who creates comprehensive, structured analysis following the provided JSON schema exactly."
-          : "You are an expert research analyst who creates comprehensive, well-structured reports. Your reports are detailed, properly formatted in Markdown, and include clear sections with citations. Today's date is " +
+          : "You are an expert research analyst who creates comprehensive, well-structured reports.  Don't begin the report by saying 'Here is the report', nor 'Below is the report', nor something similar. ALWAYS start with a great title that reflects the research topic and findings. Your reports are detailed, properly formatted in Markdown, and include clear sections with citations. Today's date is " +
             new Date().toISOString().split("T")[0],
         prompt: trimToTokenLimit(
           analysisPrompt
-            ? `${analysisPrompt}\n\nResearch data:\n${findings.map((f) => `[From ${f.source}]: ${f.text}`).join("\n")}`
-            : formats.includes('json')
-              ? `Analyze the following research data on "${topic}" and structure the output according to the provided schema: Schema: ${JSON.stringify(jsonOptions?.schema)}\n\nFindings:\n\n${findings.map((f) => `[From ${f.source}]: ${f.text}`).join("\n")}`
+            ? `${analysisPrompt}\n\nResearch data:\n${findings.map(f => `[From ${f.source}]: ${f.text}`).join("\n")}`
+            : formats.includes("json")
+              ? `Analyze the following research data on "${topic}" and structure the output according to the provided schema: Schema: ${JSON.stringify(jsonOptions?.schema)}\n\nFindings:\n\n${findings.map(f => `[From ${f.source}]: ${f.text}`).join("\n")}`
               : `Create a comprehensive research report on "${topic}" based on the collected findings and analysis.
   
                 Research data:
-                ${findings.map((f) => `[From ${f.source}]: ${f.text}`).join("\n")}
+                ${findings.map(f => `[From ${f.source}]: ${f.text}`).join("\n")}
     
                 Requirements:
                 - Format the report in Markdown with proper headers and sections
@@ -297,11 +332,30 @@ export class ResearchLLMService {
                 - Make it comprehensive and thorough (aim for 4+ pages worth of content)
                 - Include all relevant findings and insights from the research
                 - Cite sources
-                - Use bullet points and lists where appropriate for readability`,
+                - Cite sources throughout the report
+                - Use bullet points and lists where appropriate for readability
+                - Don't begin the report by saying "Here is the report", nor "Below is the report", nor something similar.
+                - ALWAYS Start with a great title that reflects the research topic and findings - concise and to the point. That's the first thing you should output.
+                
+                Begin!`,
           100000,
         ).text,
       },
       markdown: "",
+      model: getModel("o3-mini"),
+      costTrackingOptions: {
+        costTracking,
+        metadata: {
+          module: "deep-research",
+          method: "generateFinalAnalysis",
+        },
+      },
+      metadata: {
+        ...metadata,
+        functionId: metadata.functionId
+          ? metadata.functionId + "/generateFinalAnalysis"
+          : "generateFinalAnalysis",
+      },
     });
 
     return extract;

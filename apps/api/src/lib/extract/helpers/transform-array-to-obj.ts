@@ -65,7 +65,7 @@ export function transformArrayToObject(
 
   // Initialize the array in the transformed result
   let currentLevel = transformedResult;
-  arrayKeyParts.forEach((part) => {
+  arrayKeyParts.forEach(part => {
     if (!currentLevel[part]) {
       currentLevel[part] = {};
     }
@@ -75,12 +75,12 @@ export function transformArrayToObject(
 
   // Helper function to check if an object is already in the array
   function isDuplicateObject(array: any[], obj: any): boolean {
-    return array.some((existingItem) => isEqual(existingItem, obj));
+    return array.some(existingItem => isEqual(existingItem, obj));
   }
 
   // Helper function to validate if an object follows the schema
   function isValidObject(obj: any, schema: any): boolean {
-    return Object.keys(schema.properties).every((key) => {
+    return Object.keys(schema.properties).every(key => {
       return (
         obj.hasOwnProperty(key) &&
         typeof obj[key] === schema.properties[key].type
@@ -89,13 +89,24 @@ export function transformArrayToObject(
   }
 
   // Iterate over each item in the arrayData
-  arrayData.forEach((item) => {
+  arrayData.forEach(item => {
     let currentItem = item;
-    arrayKeyParts.forEach((part) => {
-      if (currentItem[part]) {
+    // Skip null items
+    if (currentItem === null) {
+      return;
+    }
+    arrayKeyParts.forEach(part => {
+      if (currentItem && currentItem[part]) {
         currentItem = currentItem[part];
+      } else {
+        currentItem = null;
       }
     });
+
+    // Skip if we couldn't find the nested path
+    if (currentItem === null) {
+      return;
+    }
 
     // Copy non-array properties from the parent object
     for (const key in parentSchema.properties) {
@@ -108,8 +119,12 @@ export function transformArrayToObject(
       }
     }
 
-    // Ensure that the currentItem[arrayKey] is an array before mapping
-    if (Array.isArray(currentItem[arrayKey])) {
+    // Ensure that the currentItem[arrayKey] exists and is an array before mapping
+    if (
+      currentItem &&
+      currentItem[arrayKey] &&
+      Array.isArray(currentItem[arrayKey])
+    ) {
       currentItem[arrayKey].forEach((subItem: any) => {
         if (
           typeof subItem === "object" &&
@@ -138,14 +153,20 @@ export function transformArrayToObject(
     } else {
       console.warn(
         `Expected an array at ${arrayKey}, but found:`,
-        currentItem[arrayKey],
+        currentItem ? currentItem[arrayKey] : "undefined",
       );
+
+      // create an array if it doesn't exist
+      if (currentLevel[arrayKey] === undefined) {
+        currentLevel[arrayKey] = [];
+      }
     }
 
     // Handle merging of array properties
     for (const key in parentSchema.properties) {
       if (
         parentSchema.properties[key].type === "array" &&
+        currentItem &&
         Array.isArray(currentItem[key])
       ) {
         if (!currentLevel[key]) {

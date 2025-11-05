@@ -15,7 +15,6 @@ env:
   PLAYWRIGHT_MICROSERVICE_URL: ${{ secrets.PLAYWRIGHT_MICROSERVICE_URL }}
   PORT: ${{ secrets.PORT }}
   REDIS_URL: ${{ secrets.REDIS_URL }}
-  SCRAPING_BEE_API_KEY: ${{ secrets.SCRAPING_BEE_API_KEY }}
   SUPABASE_ANON_TOKEN: ${{ secrets.SUPABASE_ANON_TOKEN }}
   SUPABASE_SERVICE_TOKEN: ${{ secrets.SUPABASE_SERVICE_TOKEN }}
   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -64,5 +63,5 @@ jobs:
         working-directory: ./apps/python-sdk
       - name: Run E2E tests for Python SDK  
         run: |  
-          pytest firecrawl/__tests__/e2e_withAuth/test.py 
+          python -m pytest firecrawl/__tests__/e2e/v2
         working-directory: ./apps/python-sdk

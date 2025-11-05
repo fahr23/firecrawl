@@ -1,6 +1,5 @@
-import { MapDocument, URLTrace } from "../../controllers/v1/types";
+import { MapDocument, TeamFlags, URLTrace } from "../../controllers/v1/types";
 import { getMapResults } from "../../controllers/v1/map";
-import { PlanType } from "../../types";
 import { removeDuplicateUrls } from "../validateUrl";
 import { isUrlBlocked } from "../../scraper/WebScraper/utils/blocklist";
 import { buildPreRerankPrompt, buildRefrasedPrompt } from "./build-prompts";
@@ -9,25 +8,137 @@ import { extractConfig } from "./config";
 import type { Logger } from "winston";
 import { generateText } from "ai";
 import { getModel } from "../generic-ai";
+import { calculateCost } from "../../scraper/scrapeURL/transformers/llmExtract";
+import type { CostTracking } from "../cost-tracking";
 
-export async function generateBasicCompletion(prompt: string) {
-  const { text } = await generateText({
-    model: getModel("gpt-4o"),
-    prompt: prompt,
-    temperature: 0
-  });
-  return text;
+export async function generateBasicCompletion(
+  prompt: string,
+  costTracking: CostTracking,
+  metadata: { teamId: string; extractId?: string },
+): Promise<{ text: string } | null> {
+  try {
+    const result = await generateText({
+      model: getModel("gpt-4o", "openai"),
+      prompt: prompt,
+      providerOptions: {
+        anthropic: {
+          thinking: { type: "enabled", budgetTokens: 12000 },
+        },
+        google: {
+          labels: {
+            functionId: "generateBasicCompletion",
+            teamId: metadata.teamId,
+            extractId: metadata.extractId ?? "unspecified",
+          },
+        },
+      },
+      experimental_telemetry: {
+        isEnabled: true,
+        functionId: "generateBasicCompletion",
+        metadata: {
+          ...(metadata.extractId
+            ? {
+                langfuseTraceId: "extract:" + metadata.extractId,
+                extractId: metadata.extractId,
+              }
+            : {}),
+          teamId: metadata.teamId,
+        },
+      },
+    });
+    costTracking.addCall({
+      type: "other",
+      metadata: {
+        module: "extract",
+        method: "generateBasicCompletion",
+      },
+      model: "openai/gpt-4o",
+      cost: calculateCost(
+        "openai/gpt-4o",
+        result.usage?.promptTokens ?? 0,
+        result.usage?.completionTokens ?? 0,
+      ),
+      tokens: {
+        input: result.usage?.promptTokens ?? 0,
+        output: result.usage?.completionTokens ?? 0,
+      },
+    });
+    return { text: result.text };
+  } catch (error) {
+    console.error("Error generating basic completion:", error);
+    if (error?.type == "rate_limit_error") {
+      try {
+        const result = await generateText({
+          model: getModel("gpt-4o-mini", "openai"),
+          prompt: prompt,
+          providerOptions: {
+            anthropic: {
+              thinking: { type: "enabled", budgetTokens: 12000 },
+            },
+            google: {
+              labels: {
+                teamId: metadata.teamId,
+                extractId: metadata.extractId ?? "unspecified",
+              },
+            },
+          },
+          experimental_telemetry: {
+            isEnabled: true,
+            metadata: {
+              ...(metadata.extractId
+                ? {
+                    langfuseTraceId: "extract:" + metadata.extractId,
+                    extractId: metadata.extractId,
+                  }
+                : {}),
+              teamId: metadata.teamId,
+            },
+          },
+        });
+        costTracking.addCall({
+          type: "other",
+          metadata: {
+            module: "extract",
+            method: "generateBasicCompletion",
+          },
+          model: "openai/gpt-4o-mini",
+          cost: calculateCost(
+            "openai/gpt-4o-mini",
+            result.usage?.promptTokens ?? 0,
+            result.usage?.completionTokens ?? 0,
+          ),
+          tokens: {
+            input: result.usage?.promptTokens ?? 0,
+            output: result.usage?.completionTokens ?? 0,
+          },
+        });
+        return { text: result.text };
+      } catch (fallbackError) {
+        console.error(
+          "Error generating basic completion with fallback model:",
+          fallbackError,
+        );
+        return null;
+      }
+    }
+    return null;
+  }
 }
 interface ProcessUrlOptions {
   url: string;
   prompt?: string;
   schema?: any;
   teamId: string;
-  plan: PlanType;
   allowExternalLinks?: boolean;
   origin?: string;
   limit?: number;
   includeSubdomains?: boolean;
+  log?: any;
+  isMultiEntity: boolean;
+  reasoning: string;
+  multiEntityKeys: string[];
+  keyIndicators: string[];
+  extractId?: string;
 }
 
 export async function processUrl(
@@ -35,6 +146,8 @@ export async function processUrl(
   urlTraces: URLTrace[],
   updateExtractCallback: (links: string[]) => void,
   logger: Logger,
+  costTracking: CostTracking,
+  teamFlags: TeamFlags,
 ): Promise<string[]> {
   const trace: URLTrace = {
     url: options.url,
@@ -46,7 +159,7 @@ export async function processUrl(
   urlTraces.push(trace);
 
   if (!options.url.includes("/*") && !options.allowExternalLinks) {
-    if (!isUrlBlocked(options.url)) {
+    if (!isUrlBlocked(options.url, teamFlags)) {
       trace.usedInCompletion = true;
       return [options.url];
     }
@@ -62,14 +175,16 @@ export async function processUrl(
 
   let searchQuery = options.prompt;
   if (options.prompt) {
-    searchQuery =
-      (
-        await generateBasicCompletion(
-          buildRefrasedPrompt(options.prompt, baseUrl),
-        )
-      )
-        ?.replace('"', "")
-        .replace("/", "") ?? options.prompt;
+    const res = await generateBasicCompletion(
+      buildRefrasedPrompt(options.prompt, baseUrl),
+      costTracking,
+      { teamId: options.teamId, extractId: options.extractId },
+    );
+
+    if (res) {
+      searchQuery =
+        res.text.replace('"', "").replace("/", "") ?? options.prompt;
+    }
   }
 
   try {
@@ -80,26 +195,27 @@ export async function processUrl(
       url: baseUrl,
       search: searchQuery,
       teamId: options.teamId,
-      plan: options.plan,
       allowExternalLinks: options.allowExternalLinks,
       origin: options.origin,
       limit: options.limit,
       ignoreSitemap: false,
       includeMetadata: true,
       includeSubdomains: options.includeSubdomains,
+      flags: teamFlags,
     });
 
     let mappedLinks = mapResults.mapResults as MapDocument[];
-    let allUrls = [...mappedLinks.map((m) => m.url), ...mapResults.links];
+    let allUrls = [...mappedLinks.map(m => m.url), ...mapResults.links];
     let uniqueUrls = removeDuplicateUrls(allUrls);
     logger.debug("Map finished.", {
       linkCount: allUrls.length,
       uniqueLinkCount: uniqueUrls.length,
     });
+    options.log["uniqueUrlsLength-1"] = uniqueUrls.length;
 
     // Track all discovered URLs
-    uniqueUrls.forEach((discoveredUrl) => {
-      if (!urlTraces.some((t) => t.url === discoveredUrl)) {
+    uniqueUrls.forEach(discoveredUrl => {
+      if (!urlTraces.some(t => t.url === discoveredUrl)) {
         urlTraces.push({
           url: discoveredUrl,
           status: "mapped",
@@ -117,17 +233,17 @@ export async function processUrl(
       const retryMapResults = await getMapResults({
         url: baseUrl,
         teamId: options.teamId,
-        plan: options.plan,
         allowExternalLinks: options.allowExternalLinks,
         origin: options.origin,
         limit: options.limit,
         ignoreSitemap: false,
         includeMetadata: true,
         includeSubdomains: options.includeSubdomains,
+        flags: teamFlags,
       });
 
       mappedLinks = retryMapResults.mapResults as MapDocument[];
-      allUrls = [...mappedLinks.map((m) => m.url), ...mapResults.links];
+      allUrls = [...mappedLinks.map(m => m.url), ...mapResults.links];
       uniqueUrls = removeDuplicateUrls(allUrls);
       logger.debug("Map finished. (pass 2)", {
         linkCount: allUrls.length,
@@ -135,8 +251,8 @@ export async function processUrl(
       });
 
       // Track all discovered URLs
-      uniqueUrls.forEach((discoveredUrl) => {
-        if (!urlTraces.some((t) => t.url === discoveredUrl)) {
+      uniqueUrls.forEach(discoveredUrl => {
+        if (!urlTraces.some(t => t.url === discoveredUrl)) {
           urlTraces.push({
             url: discoveredUrl,
             status: "mapped",
@@ -150,9 +266,11 @@ export async function processUrl(
       });
     }
 
+    options.log["uniqueUrlsLength-2"] = uniqueUrls.length;
+
     // Track all discovered URLs
-    uniqueUrls.forEach((discoveredUrl) => {
-      if (!urlTraces.some((t) => t.url === discoveredUrl)) {
+    uniqueUrls.forEach(discoveredUrl => {
+      if (!urlTraces.some(t => t.url === discoveredUrl)) {
         urlTraces.push({
           url: discoveredUrl,
           status: "mapped",
@@ -164,12 +282,12 @@ export async function processUrl(
       }
     });
 
-    const existingUrls = new Set(mappedLinks.map((m) => m.url));
-    const newUrls = uniqueUrls.filter((url) => !existingUrls.has(url));
+    const existingUrls = new Set(mappedLinks.map(m => m.url));
+    const newUrls = uniqueUrls.filter(url => !existingUrls.has(url));
 
     mappedLinks = [
       ...mappedLinks,
-      ...newUrls.map((url) => ({ url, title: "", description: "" })),
+      ...newUrls.map(url => ({ url, title: "", description: "" })),
     ];
 
     if (mappedLinks.length === 0) {
@@ -182,16 +300,23 @@ export async function processUrl(
       extractConfig.RERANKING.MAX_INITIAL_RANKING_LIMIT,
     );
 
-    updateExtractCallback(mappedLinks.map((x) => x.url));
+    updateExtractCallback(mappedLinks.map(x => x.url));
 
     let rephrasedPrompt = options.prompt ?? searchQuery;
     try {
-      rephrasedPrompt =
-        (await generateBasicCompletion(
-          buildPreRerankPrompt(rephrasedPrompt, options.schema, baseUrl),
-        )) ??
-        "Extract the data according to the schema: " +
+      const res = await generateBasicCompletion(
+        buildPreRerankPrompt(rephrasedPrompt, options.schema, baseUrl),
+        costTracking,
+        { teamId: options.teamId, extractId: options.extractId },
+      );
+
+      if (res) {
+        rephrasedPrompt = res.text;
+      } else {
+        rephrasedPrompt =
+          "Extract the data according to the schema: " +
           JSON.stringify(options.schema, null, 2);
+      }
     } catch (error) {
       console.error("Error generating search query from schema:", error);
       rephrasedPrompt =
@@ -215,13 +340,23 @@ export async function processUrl(
       links: mappedLinks,
       searchQuery: rephrasedPrompt,
       urlTraces,
+      isMultiEntity: options.isMultiEntity,
+      reasoning: options.reasoning,
+      multiEntityKeys: options.multiEntityKeys,
+      keyIndicators: options.keyIndicators,
+      costTracking,
+      metadata: {
+        teamId: options.teamId,
+        functionId: "processUrl/pass1",
+        extractId: options.extractId,
+      },
     });
     mappedLinks = rerankerResult.mapDocument;
     let tokensUsed = rerankerResult.tokensUsed;
     logger.info("Reranked! (pass 1)", {
       linkCount: mappedLinks.length,
     });
-
+    options.log["rerankerResult-1"] = mappedLinks.length;
     // 2nd Pass, useful for when the first pass returns too many links
     if (mappedLinks.length > 100) {
       logger.info("Reranking (pass 2)...");
@@ -229,6 +364,16 @@ export async function processUrl(
         links: mappedLinks,
         searchQuery: rephrasedPrompt,
         urlTraces,
+        isMultiEntity: options.isMultiEntity,
+        reasoning: options.reasoning,
+        multiEntityKeys: options.multiEntityKeys,
+        keyIndicators: options.keyIndicators,
+        costTracking,
+        metadata: {
+          teamId: options.teamId,
+          functionId: "processUrl/pass2",
+          extractId: options.extractId,
+        },
       });
       mappedLinks = rerankerResult.mapDocument;
       tokensUsed += rerankerResult.tokensUsed;
@@ -236,6 +381,7 @@ export async function processUrl(
         linkCount: mappedLinks.length,
       });
     }
+    options.log["rerankerResult-2"] = mappedLinks.length;
 
     // dumpToFile(
     //   "llm-links.txt",
@@ -243,8 +389,8 @@ export async function processUrl(
     //   (link, index) => `${index + 1}. URL: ${link.url}, Title: ${link.title}, Description: ${link.description}`
     // );
     // Remove title and description from mappedLinks
-    mappedLinks = mappedLinks.map((link) => ({ url: link.url }));
-    return mappedLinks.map((x) => x.url);
+    mappedLinks = mappedLinks.map(link => ({ url: link.url }));
+    return mappedLinks.map(x => x.url);
   } catch (error) {
     trace.status = "error";
     trace.error = error.message;
