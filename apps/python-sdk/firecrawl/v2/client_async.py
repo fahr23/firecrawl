@@ -10,6 +10,7 @@ from .types import (
     ScrapeOptions,
     CrawlRequest,
     WebhookConfig,
+    AgentWebhookConfig,
     SearchRequest,
     SearchData,
     SourceOption,
@@ -44,6 +45,7 @@ from .methods.aio import search as async_search  # type: ignore[attr-defined]
 from .methods.aio import map as async_map # type: ignore[attr-defined]
 from .methods.aio import usage as async_usage # type: ignore[attr-defined]
 from .methods.aio import extract as async_extract  # type: ignore[attr-defined]
+from .methods.aio import agent as async_agent  # type: ignore[attr-defined]
 
 from .watcher_async import AsyncWatcher
 
@@ -309,6 +311,73 @@ class AsyncFirecrawlClient:
             ignore_invalid_urls=ignore_invalid_urls,
             integration=integration,
         )
+
+    # Agent
+    async def agent(
+        self,
+        urls: Optional[List[str]] = None,
+        *,
+        prompt: str,
+        schema: Optional[Any] = None,
+        integration: Optional[str] = None,
+        poll_interval: int = 2,
+        timeout: Optional[int] = None,
+        max_credits: Optional[int] = None,
+        strict_constrain_to_urls: Optional[bool] = None,
+        model: Optional[Literal["spark-1-pro", "spark-1-mini"]] = None,
+        webhook: Optional[Union[str, AgentWebhookConfig]] = None,
+    ):
+        return await async_agent.agent(
+            self.async_http_client,
+            urls,
+            prompt=prompt,
+            schema=schema,
+            integration=integration,
+            poll_interval=poll_interval,
+            timeout=timeout,
+            max_credits=max_credits,
+            strict_constrain_to_urls=strict_constrain_to_urls,
+            model=model,
+            webhook=webhook,
+        )
+
+    async def get_agent_status(self, job_id: str):
+        return await async_agent.get_agent_status(self.async_http_client, job_id)
+
+    async def start_agent(
+        self,
+        urls: Optional[List[str]] = None,
+        *,
+        prompt: str,
+        schema: Optional[Any] = None,
+        integration: Optional[str] = None,
+        max_credits: Optional[int] = None,
+        strict_constrain_to_urls: Optional[bool] = None,
+        model: Optional[Literal["spark-1-pro", "spark-1-mini"]] = None,
+        webhook: Optional[Union[str, AgentWebhookConfig]] = None,
+    ):
+        return await async_agent.start_agent(
+            self.async_http_client,
+            urls,
+            prompt=prompt,
+            schema=schema,
+            integration=integration,
+            max_credits=max_credits,
+            strict_constrain_to_urls=strict_constrain_to_urls,
+            model=model,
+            webhook=webhook,
+        )
+
+    async def cancel_agent(self, job_id: str) -> bool:
+        """Cancel a running agent job.
+
+        Args:
+            job_id: Agent job ID
+
+        Returns:
+            True if the agent was cancelled
+        """
+        return await async_agent.cancel_agent(self.async_http_client, job_id)
 
     # Usage endpoints
     async def get_concurrency(self):

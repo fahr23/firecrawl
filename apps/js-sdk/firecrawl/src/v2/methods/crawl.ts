@@ -6,10 +6,12 @@ import {
   type Document,
   type CrawlOptions,
   type PaginationConfig,
+  JobTimeoutError,
+  SdkError,
 } from "../types";
 import { HttpClient } from "../utils/httpClient";
 import { ensureValidScrapeOptions } from "../utils/validation";
-import { normalizeAxiosError, throwForBadResponse } from "../utils/errorHandler";
+import { normalizeAxiosError, throwForBadResponse, isRetryableError } from "../utils/errorHandler";
 import type { HttpClient as _Http } from "../utils/httpClient";
 import { fetchAllPages } from "../utils/pagination";
 
@@ -72,6 +74,7 @@ export async function getCrawlStatus(
     const auto = pagination?.autoPaginate ?? true;
     if (!auto || !body.next) {
       return {
+        id: jobId,
         status: body.status,
         completed: body.completed ?? 0,
         total: body.total ?? 0,
@@ -85,6 +88,7 @@ export async function getCrawlStatus(
     const aggregated = await fetchAllPages(http, body.next, initialDocs, pagination);
 
     return {
+      id: jobId,
       status: body.status,
       completed: body.completed ?? 0,
       total: body.total ?? 0,
@@ -112,12 +116,37 @@ export async function cancelCrawl(http: HttpClient, jobId: string): Promise<bool
 
 export async function waitForCrawlCompletion(http: HttpClient, jobId: string, pollInterval = 2, timeout?: number): Promise<CrawlJob> {
   const start = Date.now();
+  
   while (true) {
-    const status = await getCrawlStatus(http, jobId);
-    if (["completed", "failed", "cancelled"].includes(status.status)) return status;
-    if (timeout != null && Date.now() - start > timeout * 1000) {
-      throw new Error(`Crawl job ${jobId} did not complete within ${timeout} seconds`);
+    try {
+      const status = await getCrawlStatus(http, jobId);
+      
+      if (["completed", "failed", "cancelled"].includes(status.status)) {
+        return status;
+      }
+    } catch (err: any) {
+      // Don't retry on permanent errors (4xx) - re-throw immediately with jobId context
+      if (!isRetryableError(err)) {
+        // Create new error with jobId for better debugging (non-retryable errors like 404)
+        if (err instanceof SdkError) {
+          const errorWithJobId = new SdkError(
+            err.message,
+            err.status,
+            err.code,
+            err.details,
+            jobId
+          );
+          throw errorWithJobId;
+        }
+        throw err;
+      }
+      // Otherwise, retry after delay - error might be transient (network issue, timeout, 5xx, etc.)
     }
+
+    if (timeout != null && Date.now() - start > timeout * 1000) {
+      throw new JobTimeoutError(jobId, timeout, 'crawl');
+    }
+    
     await new Promise((r) => setTimeout(r, Math.max(1000, pollInterval * 1000)));
   }
 }

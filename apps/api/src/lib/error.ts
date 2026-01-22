@@ -16,6 +16,10 @@ export type ErrorCodes =
   | "SCRAPE_UNSUPPORTED_FILE_ERROR"
   | "SCRAPE_ACTION_ERROR"
   | "SCRAPE_RACED_REDIRECT_ERROR"
+  | "SCRAPE_NO_CACHED_DATA"
+  | "SCRAPE_SITEMAP_ERROR"
+  | "SCRAPE_ACTIONS_NOT_SUPPORTED"
+  | "CRAWL_DENIAL"
   | "BAD_REQUEST_INVALID_JSON"
   | "BAD_REQUEST";
 
@@ -126,5 +130,76 @@ export class RacedRedirectError extends TransportableError {
     const x = new RacedRedirectError();
     x.stack = data.stack;
     return x;
+  }
+}
+
+export class SitemapError extends TransportableError {
+  constructor(message: string, cause?: unknown) {
+    super("SCRAPE_SITEMAP_ERROR", message, { cause });
+  }
+
+  serialize() {
+    return super.serialize();
+  }
+
+  static deserialize(
+    _: ErrorCodes,
+    data: ReturnType<typeof this.prototype.serialize>,
+  ) {
+    const x = new SitemapError(data.message, data.cause);
+    x.stack = data.stack;
+    return x;
+  }
+}
+
+export class CrawlDenialError extends TransportableError {
+  constructor(public reason: string) {
+    super("CRAWL_DENIAL", reason);
+  }
+
+  serialize() {
+    return {
+      ...super.serialize(),
+      reason: this.reason,
+    };
+  }
+
+  static deserialize(
+    _: ErrorCodes,
+    data: ReturnType<typeof this.prototype.serialize> & { reason: string },
+  ) {
+    const x = new CrawlDenialError(data.reason);
+    x.stack = data.stack;
+    return x;
+  }
+}
+
+export class ActionsNotSupportedError extends TransportableError {
+  constructor(message: string) {
+    super("SCRAPE_ACTIONS_NOT_SUPPORTED", message);
+  }
+
+  serialize() {
+    return super.serialize();
+  }
+
+  static deserialize(
+    _: ErrorCodes,
+    data: ReturnType<typeof this.prototype.serialize>,
+  ) {
+    const x = new ActionsNotSupportedError(data.message);
+    x.stack = data.stack;
+    return x;
+  }
+}
+
+/**
+ * Error thrown when a job is cancelled (expected flow control, not a real error)
+ * This should not be sent to Sentry as it's expected behavior when a crawl/batch is cancelled
+ */
+export class JobCancelledError extends Error {
+  constructor() {
+    super("Parent crawl/batch scrape was cancelled");
+    this.name = "JobCancelledError";
   }
 }

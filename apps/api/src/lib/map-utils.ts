@@ -1,4 +1,4 @@
-import { v4 as uuidv4 } from "uuid";
+import { v7 as uuidv7 } from "uuid";
 import {
   TeamFlags,
   MapDocument,
@@ -11,6 +11,7 @@ import {
   checkAndUpdateURLForMap,
   isSameDomain,
   isSameSubdomain,
+  resolveRedirects,
 } from "./validateUrl";
 import { fireEngineMap } from "../search/fireEngine";
 import { redisEvictConnection } from "../services/redis";
@@ -89,8 +90,11 @@ export async function getMapResults({
   filterByPath = true,
   flags,
   useIndex = true,
+  ignoreCache = false,
   location,
+  headers,
   maxFireEngineResults = MAX_FIRE_ENGINE_RESULTS,
+  id: providedId,
 }: {
   url: string;
   search?: string;
@@ -106,14 +110,27 @@ export async function getMapResults({
   filterByPath?: boolean;
   flags: TeamFlags | null;
   useIndex?: boolean;
+  ignoreCache?: boolean;
   location?: ScrapeOptions["location"];
+  headers?: Record<string, string>;
   maxFireEngineResults?: number;
+  id?: string;
 }): Promise<MapResult> {
   const functionStartTime = Date.now();
 
-  const id = uuidv4();
+  const resolvedUrl = await resolveRedirects(url, abort);
+
+  // If the resolved URL is on a different domain, replace the hostname
+  if (!isSameDomain(url, resolvedUrl)) {
+    const urlObj = new URL(url);
+    urlObj.hostname = new URL(resolvedUrl).hostname;
+
+    url = urlObj.toString();
+  }
+
+  const id = providedId ?? uuidv7();
   let mapResults: MapDocument[] = [];
-  const zeroDataRetention = flags?.forceZDR ?? false;
+  const zeroDataRetention = flags?.forceZDR || false;
 
   const sc: StoredCrawl = {
     originUrl: url,
@@ -124,6 +141,7 @@ export async function getMapResults({
     },
     scrapeOptions: scrapeOptions.parse({
       ...(location ? { location } : {}),
+      ...(headers ? { headers } : {}),
     }),
     internalOptions: { teamId },
     team_id: teamId,
@@ -155,6 +173,7 @@ export async function getMapResults({
       crawlerOptions.timeout ?? 30000,
       abort,
       crawlerOptions.useMock,
+      ignoreCache ? 0 : undefined,
     );
 
     if (sitemap > 0) {
@@ -187,7 +206,9 @@ export async function getMapResults({
     );
 
     const cacheKey = `fireEngineMap:${mapUrl}`;
-    const cachedResult = await redisEvictConnection.get(cacheKey);
+    const cachedResult = ignoreCache
+      ? null
+      : await redisEvictConnection.get(cacheKey);
 
     let pagePromises: (Promise<any> | any)[];
 
@@ -242,6 +263,8 @@ export async function getMapResults({
           false,
           crawlerOptions.timeout ?? 30000,
           abort,
+          undefined,
+          ignoreCache ? 0 : undefined,
         );
       } catch (e) {
         // Silently handle sitemap errors

@@ -2,7 +2,7 @@ import { Logger } from "winston";
 import * as Sentry from "@sentry/node";
 import { z } from "zod";
 
-import { Action } from "../../../../controllers/v1/types";
+import { InternalAction } from "../../../../controllers/v1/types";
 import { robustFetch } from "../../lib/fetch";
 import { MockState } from "../../lib/mock";
 import { getDocFromGCS } from "../../../../lib/gcs-jobs";
@@ -18,7 +18,9 @@ import {
 } from "../../error";
 import { Meta } from "../..";
 import { abTestFireEngine } from "../../../../services/ab-test";
+import { scheduleABComparison } from "../../../../services/ab-test-comparison";
 
+import { config } from "../../../../config";
 export type FireEngineScrapeRequestCommon = {
   url: string;
 
@@ -49,7 +51,7 @@ export type FireEngineScrapeRequestCommon = {
 export type FireEngineScrapeRequestChromeCDP = {
   engine: "chrome-cdp";
   skipTlsVerification?: boolean;
-  actions?: Action[];
+  actions?: InternalAction[];
   blockMedia?: boolean;
   mobile?: boolean;
   disableSmartWaitCache?: boolean;
@@ -73,6 +75,8 @@ export type FireEngineScrapeRequestTLSClient = {
 };
 
 const successSchema = z.object({
+  jobId: z.string().optional(), // only defined if we are deferring deletion
+
   timeTaken: z.number(),
   content: z.string(),
   url: z.string().optional(),
@@ -152,6 +156,7 @@ const successSchema = z.object({
 
   usedMobileProxy: z.boolean().optional(),
   youtubeTranscriptContent: z.any().optional(),
+  timezone: z.string().optional(),
 });
 
 type FireEngineCheckStatusSuccess = z.infer<typeof successSchema>;
@@ -166,9 +171,9 @@ const failedSchema = z.object({
 });
 
 export const fireEngineURL =
-  process.env.FIRE_ENGINE_BETA_URL ?? "<mock-fire-engine-url>";
+  config.FIRE_ENGINE_BETA_URL ?? "<mock-fire-engine-url>";
 export const fireEngineStagingURL =
-  process.env.FIRE_ENGINE_STAGING_URL ?? "<mock-fire-engine-url>";
+  config.FIRE_ENGINE_STAGING_URL ?? "<mock-fire-engine-url>";
 
 export async function fireEngineScrape<
   Engine extends
@@ -183,7 +188,8 @@ export async function fireEngineScrape<
   abort?: AbortSignal,
   production = true,
 ): Promise<z.infer<typeof processingSchema> | FireEngineCheckStatusSuccess> {
-  abTestFireEngine(request);
+  const abTest = abTestFireEngine(request);
+  const productionStartTime = Date.now();
 
   let status = await robustFetch({
     url: `${production ? fireEngineURL : fireEngineStagingURL}/scrape`,
@@ -212,6 +218,22 @@ export async function fireEngineScrape<
 
   if (successParse.success) {
     logger.debug("Scrape succeeded!");
+
+    // Schedule A/B comparison if enabled (fire-and-forget)
+    if (abTest.shouldCompare && abTest.mirrorPromise) {
+      const productionTimeTaken = Date.now() - productionStartTime;
+      scheduleABComparison(
+        meta.url,
+        {
+          content: successParse.data.content,
+          pageStatusCode: successParse.data.pageStatusCode,
+        },
+        productionTimeTaken,
+        abTest.mirrorPromise,
+        logger,
+      );
+    }
+
     return successParse.data;
   } else if (processingParse.success) {
     return processingParse.data;

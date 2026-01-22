@@ -17,13 +17,27 @@ import { BLOCKLISTED_URL_MESSAGE } from "../lib/strings";
 import { addDomainFrequencyJob } from "../services";
 import * as geoip from "geoip-country";
 import { isSelfHosted } from "../lib/deployment";
+import { validate as isUuid } from "uuid";
 
+import { config } from "../config";
+import { supabase_service } from "../services/supabase";
 export function checkCreditsMiddleware(
   _minimum?: number,
 ): (req: RequestWithAuth, res: Response, next: NextFunction) => void {
   return (req, res, next) => {
     let minimum = _minimum;
     (async () => {
+      if (
+        config.AGENT_INTEROP_SECRET &&
+        req.body &&
+        (req.body as any).__agentInterop &&
+        (req.body as any).__agentInterop.auth &&
+        (req.body as any).__agentInterop.auth === config.AGENT_INTEROP_SECRET &&
+        (req.body as any).__agentInterop.shouldBill === false
+      ) {
+        return next();
+      }
+
       if (!minimum && req.body) {
         minimum = Number(
           (req.body as any)?.limit ?? (req.body as any)?.urls?.length ?? 1,
@@ -32,6 +46,29 @@ export function checkCreditsMiddleware(
           minimum = undefined;
         }
       }
+
+      if (req.path.startsWith("/agent")) {
+        if (config.USE_DB_AUTHENTICATION) {
+          const { data, error: freeRequestError } = await supabase_service.rpc(
+            "get_agent_free_requests_left",
+            {
+              i_team_id: req.auth.team_id,
+            },
+          );
+
+          if (freeRequestError) {
+            logger.warn("Failed to get agent free requests left", {
+              error: freeRequestError,
+              teamId: req.auth.team_id,
+            });
+          } else {
+            if (data?.[0]?.free_requests_left !== 0) {
+              return next();
+            }
+          }
+        }
+      }
+
       const { success, remainingCredits, chunk } = await checkTeamCredits(
         req.acuc ?? null,
         req.auth.team_id,
@@ -110,7 +147,7 @@ export function authMiddleware(
         // Use the URL from the request body if available
         const urlToTrack = (req.body as any)?.url;
         if (urlToTrack) {
-          await addDomainFrequencyJob(urlToTrack);
+          // await addDomainFrequencyJob(urlToTrack);
         }
       } catch (error) {
         // Log error without meta.logger since it's not available in this context
@@ -212,7 +249,8 @@ export function countryCheck(
         Object.keys(req.body.scrapeOptions.headers).length > 0) ||
       req.body.scrapeOptions?.agent ||
       req.body.scrapeOptions?.jsonOptions?.agent ||
-      req.body.scrapeOptions?.extract?.agent);
+      req.body.scrapeOptions?.extract?.agent ||
+      req.path.startsWith("/v2/agent"));
 
   if (!couldBeRestricted) {
     return next();
@@ -229,8 +267,7 @@ export function countryCheck(
     return next();
   }
 
-  const restricted = process.env.RESTRICTED_COUNTRIES?.split(",") ?? [];
-  if (restricted.includes(country.country)) {
+  if (config.RESTRICTED_COUNTRIES?.includes(country.country)) {
     logger.warn("Denied access to restricted country", {
       ip: req.ip,
       country: country.country,
@@ -241,6 +278,25 @@ export function countryCheck(
       error: isSelfHosted()
         ? "Use of headers, actions, and the FIRE-1 agent is not allowed by default in your country. Please check your server configuration."
         : "Use of headers, actions, and the FIRE-1 agent is not allowed by default in your country. Please contact us at help@firecrawl.com",
+    });
+  }
+
+  next();
+}
+
+export function isValidJobId(jobId: string | undefined): jobId is string {
+  return typeof jobId === "string" && isUuid(jobId);
+}
+
+export function validateJobIdParam(
+  req: Request<{ jobId?: string }>,
+  res: Response,
+  next: NextFunction,
+) {
+  if (!isValidJobId(req.params.jobId)) {
+    return res.status(400).json({
+      success: false,
+      error: "Invalid job ID format. Job ID must be a valid UUID.",
     });
   }
 

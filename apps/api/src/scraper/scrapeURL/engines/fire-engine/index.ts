@@ -29,7 +29,7 @@ import { fireEngineDelete } from "./delete";
 import { MockState } from "../../lib/mock";
 import { getInnerJson } from "@mendable/firecrawl-rs";
 import { hasFormatOfType } from "../../../../lib/format-utils";
-import { Action } from "../../../../controllers/v1/types";
+import { InternalAction } from "../../../../controllers/v1/types";
 import { AbortManagerThrownError } from "../../lib/abortManager";
 import { youtubePostprocessor } from "../../postprocessors/youtube";
 import { withSpan, setSpanAttributes } from "../../../../lib/otel-tracer";
@@ -92,7 +92,9 @@ async function performFireEngineScrape<
             mock,
             undefined,
             production,
-          );
+          ).catch(e => {
+            logger.error("Failed to delete job from Fire Engine", { error: e });
+          });
           throw new Error("Error limit hit. See e.cause.errors for errors.", {
             cause: { errors },
           });
@@ -132,7 +134,11 @@ async function performFireEngineScrape<
               mock,
               undefined,
               production,
-            );
+            ).catch(e => {
+              logger.error("Failed to delete job from Fire Engine", {
+                error: e,
+              });
+            });
             logger.debug("Fire-engine scrape job failed.", {
               error,
               jobId: (scrape as any).jobId,
@@ -148,7 +154,11 @@ async function performFireEngineScrape<
               mock,
               undefined,
               production,
-            );
+            ).catch(e => {
+              logger.error("Failed to delete job from Fire Engine", {
+                error: e,
+              });
+            });
             throw error;
           } else {
             errors.push(error);
@@ -159,9 +169,9 @@ async function performFireEngineScrape<
             Sentry.captureException(error);
           }
         }
-      }
 
-      await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
     } else {
       status = scrape as FireEngineCheckStatusSuccess;
     }
@@ -197,7 +207,9 @@ async function performFireEngineScrape<
       mock,
       undefined,
       production,
-    );
+    ).catch(e => {
+      logger.error("Failed to delete job from Fire Engine", { error: e });
+    });
 
     setSpanAttributes(span, {
       "fire-engine.poll_count": pollCount,
@@ -222,7 +234,7 @@ export async function scrapeURLWithFireEngineChromeCDP(
       "engine.url": meta.url,
       "engine.team_id": meta.internalOptions.teamId,
     });
-    const actions: Action[] = [
+    const actions: InternalAction[] = [
       // Transform waitFor option into an action (unsupported by chrome-cdp)
       ...(meta.options.waitFor !== 0
         ? [
@@ -235,7 +247,10 @@ export async function scrapeURLWithFireEngineChromeCDP(
         : []),
 
       // Include specified actions
-      ...(meta.options.actions ?? []),
+      ...(meta.options.actions ?? []).map(action => {
+        const { metadata: _, ...rest } = action as InternalAction;
+        return rest;
+      }),
 
       // Transform screenshot format into an action (unsupported by chrome-cdp)
       ...(hasFormatOfType(meta.options.formats, "screenshot")
@@ -261,6 +276,7 @@ export async function scrapeURLWithFireEngineChromeCDP(
             {
               type: "executeJavascript" as const,
               script: getBrandingScript(),
+              metadata: { __firecrawl_internal: true },
             },
           ]
         : []),
@@ -399,6 +415,7 @@ export async function scrapeURLWithFireEngineChromeCDP(
 
       proxyUsed: response.usedMobileProxy ? "stealth" : "basic",
       youtubeTranscriptContent: response.youtubeTranscriptContent,
+      timezone: response.timezone,
     };
   });
 }
@@ -475,6 +492,7 @@ export async function scrapeURLWithFireEnginePlaywright(
         : {}),
 
       proxyUsed: response.usedMobileProxy ? "stealth" : "basic",
+      timezone: response.timezone,
     };
   });
 }
@@ -540,6 +558,7 @@ export async function scrapeURLWithFireEngineTLSClient(
         ) ?? [])[1] ?? undefined,
 
       proxyUsed: response.usedMobileProxy ? "stealth" : "basic",
+      timezone: response.timezone,
     };
   });
 }
