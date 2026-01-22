@@ -94,6 +94,8 @@ services:
       WORKER_PORT: ${WORKER_PORT:-3005}
       NUQ_RABBITMQ_URL: amqp://rabbitmq:5672
       ENV: local
+      NUQ_WORKER_COUNT: 0
+      NUM_WORKERS_PER_QUEUE: 1
     depends_on:
       redis:
         condition: service_started
@@ -151,8 +153,15 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_INITDB_ARGS: "-c listen_addresses='*'"
     networks:
       - backend
+    ports:
+      - "5433:5432"
+    command: 
+      - "postgres"
+      - "-c"
+      - "listen_addresses=*"
     logging:
       driver: "json-file"
       options:

@@ -11,7 +11,7 @@ from requests.exceptions import RequestException, JSONDecodeError
 # Database connection parameters
 # engine now support this feature beaceuse it gets other data for run
 db_params = {
-    "host": "timescaledb",
+    "host": "localhost",
     "database": "backtofuture",
     "user": "backtofuture",
     "password": "back2future"

@@ -2,7 +2,7 @@ module html-to-markdown.go
 
 go 1.23.0
 
-toolchain go1.24.0
+toolchain go1.23.12
 
 require (
 	github.com/PuerkitoBio/goquery v1.10.3

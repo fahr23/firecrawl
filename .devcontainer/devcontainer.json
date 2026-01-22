@@ -23,19 +23,15 @@
 	// "features": {},
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	// "forwardPorts": [],
+	"forwardPorts": [3002, 3000, 5433],
 
-	// Uncomment the next line if you want start specific services in your Docker Compose config.
-	// "runServices": [],
+	// Start supporting services so the stack is usable inside the dev container.
+	"runServices": ["api", "playwright-service", "redis", "nuq-postgres"],
 
 	// Uncomment the next line if you want to keep your containers running after VS Code shuts down.
 	// "shutdownAction": "none",
 
-	// "postCreateCommand": "apt-get update && \
-	//   (dpkg -l | grep -qw git || apt-get install -y git) && \
-	//   (dpkg -l | grep -qw python3 || apt-get install -y python3) && \
-	//   (dpkg -l | grep -qw python3-venv || apt-get install -y python3-venv) && \
-	//   (dpkg -l | grep -qw python3-pip || apt-get install -y python3-pip)",
+	"postCreateCommand": "apt-get update && (dpkg -l | grep -qw git || apt-get install -y git) && (dpkg -l | grep -qw python3 || apt-get install -y python3) && (dpkg -l | grep -qw python3-venv || apt-get install -y python3-venv) && (dpkg -l | grep -qw python3-pip || apt-get install -y python3-pip)",
 	// Configure tool-specific properties.
 	// "customizations": {},
 
