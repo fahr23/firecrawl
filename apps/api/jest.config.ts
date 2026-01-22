@@ -1,7 +1,16 @@
-import { createDefaultEsmPreset, type JestConfigWithTsJest } from "ts-jest";
+import type { JestConfigWithTsJest } from "ts-jest";
 
 const config: JestConfigWithTsJest = {
-  ...createDefaultEsmPreset(),
+  preset: "ts-jest/presets/default-esm",
+  extensionsToTreatAsEsm: [".ts"],
+  transform: {
+    "^.+\\.tsx?$": [
+      "ts-jest",
+      {
+        useESM: true,
+      },
+    ],
+  },
   verbose: true,
   testPathIgnorePatterns: ["<rootDir>/dist/"],
   forceExit: true,

@@ -26,7 +26,7 @@
 	"forwardPorts": [3002, 3000, 5433],
 
 	// Start supporting services so the stack is usable inside the dev container.
-	"runServices": ["api", "playwright-service", "redis", "nuq-postgres"],
+	"runServices": ["api", "playwright-service", "redis", "nuq-postgres", "rabbitmq"],
 
 	// Uncomment the next line if you want to keep your containers running after VS Code shuts down.
 	// "shutdownAction": "none",
