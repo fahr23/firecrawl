@@ -3,7 +3,7 @@ Base scraper class using Firecrawl
 """
 import asyncio
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable
 from abc import ABC, abstractmethod
 from firecrawl import FirecrawlApp
 from config import config
@@ -256,6 +256,95 @@ class BaseScraper(ABC):
             Scraped data
         """
         pass
+    
+    async def scrape_paginated_parallel(
+        self,
+        base_url: str,
+        pagination_schema: Dict[str, Any],
+        extraction_schema: Dict[str, Any],
+        max_pages: Optional[int] = None,
+        concurrency: int = 5
+    ) -> List[Dict[str, Any]]:
+        """
+        Scrape paginated content in parallel
+        
+        Args:
+            base_url: Starting URL
+            pagination_schema: Schema to extract pagination links
+            extraction_schema: Schema to extract data from each page
+            max_pages: Maximum number of pages to scrape
+            concurrency: Number of concurrent requests
+            
+        Returns:
+            List of extracted items from all pages
+        """
+        try:
+            # Step 1: Extract pagination links
+            logger.info(f"Extracting pagination links from {base_url}")
+            pagination_result = await self.extract_with_schema(
+                base_url,
+                schema=pagination_schema,
+                prompt="Extract all pagination links from this page"
+            )
+            
+            if not pagination_result or not pagination_result.get("success"):
+                logger.warning("Failed to extract pagination links, scraping base URL only")
+                # Fallback to single page
+                result = await self.extract_with_schema(
+                    base_url,
+                    schema=extraction_schema
+                )
+                return result.get("data", {}).get("items", []) if result.get("success") else []
+            
+            # Get page links
+            page_links = pagination_result.get("data", {}).get("page_links", [])
+            if not page_links:
+                logger.warning("No pagination links found")
+                page_links = [base_url]
+            
+            # Limit pages if specified
+            if max_pages:
+                page_links = page_links[:max_pages]
+            
+            logger.info(f"Found {len(page_links)} pages to scrape")
+            
+            # Step 2: Scrape all pages in parallel with concurrency limit
+            semaphore = asyncio.Semaphore(concurrency)
+            
+            async def scrape_page(link: str) -> List[Dict[str, Any]]:
+                async with semaphore:
+                    try:
+                        result = await self.extract_with_schema(
+                            link,
+                            schema=extraction_schema
+                        )
+                        if result.get("success"):
+                            return result.get("data", {}).get("items", [])
+                        return []
+                    except Exception as e:
+                        logger.error(f"Error scraping page {link}: {e}")
+                        return []
+            
+            # Create tasks for all pages
+            tasks = [scrape_page(link) for link in page_links]
+            
+            # Execute in parallel
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Flatten results and filter exceptions
+            all_items = []
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(f"Task raised exception: {result}")
+                elif isinstance(result, list):
+                    all_items.extend(result)
+            
+            logger.info(f"Scraped {len(all_items)} items from {len(page_links)} pages")
+            return all_items
+            
+        except Exception as e:
+            logger.error(f"Error in parallel pagination scraping: {e}", exc_info=True)
+            return []
     
     def save_to_db(self, data: Dict[str, Any], table_name: str):
         """

@@ -3,11 +3,15 @@ LLM Analysis utilities for financial data
 Supports local and cloud LLM providers with Strategy Pattern
 """
 import logging
+import json
+import re
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from openai import OpenAI
 from fpdf import FPDF
+from pydantic import BaseModel, Field
+from datetime import datetime
 import os
 
 logger = logging.getLogger(__name__)
@@ -247,6 +251,18 @@ class PDFReportGenerator:
             return False
 
 
+class SentimentResult(BaseModel):
+    """Structured sentiment analysis result"""
+    overall_sentiment: str = Field(description="positive, neutral, or negative")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence score 0-1")
+    impact_horizon: str = Field(description="short_term, medium_term, or long_term")
+    key_drivers: List[str] = Field(default_factory=list, description="Key positive/negative factors")
+    risk_flags: List[str] = Field(default_factory=list, description="Risk indicators")
+    tone_descriptors: List[str] = Field(default_factory=list, description="Tone adjectives")
+    target_audience: Optional[str] = Field(default=None, description="Target investor type")
+    analysis_text: str = Field(description="Detailed analysis in Turkish")
+
+
 class LLMAnalyzer:
     """Main analyzer class using dependency injection"""
     
@@ -316,3 +332,144 @@ class LLMAnalyzer:
             Success status
         """
         return self.report_generator.generate_report(analyses, output_path)
+    
+    def analyze_sentiment(
+        self,
+        content: str,
+        report_id: Optional[int] = None,
+        custom_prompt: Optional[str] = None
+    ) -> Optional[SentimentResult]:
+        """
+        Analyze sentiment with structured JSON output
+        
+        Args:
+            content: Text content to analyze
+            report_id: Optional report ID for tracking
+            custom_prompt: Optional custom analysis prompt
+            
+        Returns:
+            SentimentResult object or None if parsing fails
+        """
+        try:
+            # Create sentiment-specific prompt
+            if not custom_prompt:
+                prompt = """
+                Sen bir Türk finansal analiz uzmanısın. KAP (Kamu Aydınlatma Platformu) bildirimlerini analiz edip 
+                yapılandırılmış bir duygu analizi yapmalısın.
+                
+                LÜTFEN SADECE GEÇERLİ JSON DÖNDÜR, BAŞKA HİÇBİR ŞEY EKLEME. JSON'u backtick veya kod bloğu içine alma.
+                
+                JSON formatı şu şekilde olmalı:
+                {
+                    "overall_sentiment": "positive" veya "neutral" veya "negative",
+                    "confidence": 0.0 ile 1.0 arasında bir sayı,
+                    "impact_horizon": "short_term" veya "medium_term" veya "long_term",
+                    "key_drivers": ["faktör1", "faktör2", ...],
+                    "risk_flags": ["risk1", "risk2", ...] veya boş liste,
+                    "tone_descriptors": ["iyimser", "ihtiyatlı", ...],
+                    "target_audience": "retail_investors" veya "institutional" veya null,
+                    "analysis_text": "Detaylı analiz metni Türkçe olarak"
+                }
+                
+                Analiz yaparken:
+                - Finansal göstergeleri (gelir, kar, borç) değerlendir
+                - Piyasa etkisini tahmin et
+                - Yatırımcılar için riskleri belirle
+                - Kısa, orta ve uzun vadeli etkileri değerlendir
+                
+                SADECE JSON DÖNDÜR, BAŞKA HİÇBİR ŞEY YOK.
+                """
+            else:
+                prompt = custom_prompt
+            
+            # Get LLM response
+            response = self.provider.analyze(content, prompt)
+            
+            if not response:
+                logger.error("Empty response from LLM")
+                return None
+            
+            # Extract JSON from response (handle cases where LLM adds extra text)
+            json_match = re.search(r'\{.*\}', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                # Try to parse entire response as JSON
+                json_str = response.strip()
+            
+            # Remove markdown code blocks if present
+            json_str = re.sub(r'```json\s*', '', json_str)
+            json_str = re.sub(r'```\s*', '', json_str)
+            json_str = json_str.strip()
+            
+            # Parse JSON
+            try:
+                data = json.loads(json_str)
+                
+                # Validate and create SentimentResult
+                result = SentimentResult(
+                    overall_sentiment=data.get("overall_sentiment", "neutral").lower(),
+                    confidence=float(data.get("confidence", 0.5)),
+                    impact_horizon=data.get("impact_horizon", "medium_term"),
+                    key_drivers=data.get("key_drivers", []),
+                    risk_flags=data.get("risk_flags", []),
+                    tone_descriptors=data.get("tone_descriptors", []),
+                    target_audience=data.get("target_audience"),
+                    analysis_text=data.get("analysis_text", response)
+                )
+                
+                logger.info(f"Successfully parsed sentiment: {result.overall_sentiment} (confidence: {result.confidence})")
+                return result
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON from LLM response: {e}")
+                logger.debug(f"Response was: {response[:500]}")
+                return None
+            except Exception as e:
+                logger.error(f"Error creating SentimentResult: {e}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error in sentiment analysis: {e}", exc_info=True)
+            return None
+    
+    def analyze_sentiment_batch(
+        self,
+        reports: List[Dict[str, Any]],
+        custom_prompt: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Analyze sentiment for multiple reports
+        
+        Args:
+            reports: List of reports with 'content' and optionally 'id' keys
+            custom_prompt: Optional custom prompt
+            
+        Returns:
+            List of sentiment results with report metadata
+        """
+        results = []
+        
+        for i, report in enumerate(reports):
+            logger.info(f"Analyzing sentiment for report {i + 1}/{len(reports)}")
+            
+            content = report.get('content', '')
+            report_id = report.get('id')
+            
+            if not content:
+                logger.warning(f"Empty content in report {i + 1}")
+                continue
+            
+            sentiment = self.analyze_sentiment(content, report_id, custom_prompt)
+            
+            if sentiment:
+                results.append({
+                    'report_id': report_id,
+                    'report_title': report.get('title', f'Report {i + 1}'),
+                    'sentiment': sentiment.dict(),
+                    'analyzed_at': datetime.now().isoformat()
+                })
+            else:
+                logger.warning(f"Failed to analyze sentiment for report {i + 1}")
+        
+        return results

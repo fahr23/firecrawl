@@ -11,6 +11,12 @@ An enterprise-level financial data scraper for Turkish markets using Firecrawl. 
 - 🔄 **Scheduled Tasks**: Automated daily/hourly data collection
 - 🛡️ **Error Handling**: Robust retry logic and error recovery
 - 📈 **Commodity Prices**: Gold, silver, platinum, palladium price tracking
+- 🌐 **REST API**: Full REST API for programmatic access
+- 🧠 **Sentiment Analysis**: Structured sentiment analysis with LLM (NEW!)
+- ⚡ **Batch Processing**: Async batch scraping with job status tracking (NEW!)
+- 🔔 **Webhook Notifications**: Real-time Discord/Slack notifications (NEW!)
+- 🚀 **Parallel Pagination**: Concurrent scraping for better performance (NEW!)
+- 🏗️ **DDD Architecture**: Domain-Driven Design for maintainability and testability (NEW!)
 
 ## Data Sources
 
@@ -52,7 +58,59 @@ RATE_LIMIT_PER_MINUTE=30
 
 ## Usage
 
-### 1. Basic Usage - Single Scraper
+### 1. REST API (Recommended)
+
+Start the API server:
+
+```bash
+python api_server.py
+```
+
+The API will be available at:
+- **API Base**: http://localhost:8000
+- **Interactive Docs**: http://localhost:8000/docs
+- **Health Check**: http://localhost:8000/api/v1/health
+
+**Example API calls:**
+
+```bash
+# Health check
+curl http://localhost:8000/api/v1/health
+
+# Scrape KAP reports
+curl -X POST http://localhost:8000/api/v1/scrapers/kap \
+  -H "Content-Type: application/json" \
+  -d '{"days_back": 7, "download_pdfs": true}'
+
+# Query reports
+curl "http://localhost:8000/api/v1/reports/kap?company_code=AKBNK&limit=10"
+```
+
+See [API Documentation](docs/API_DOCUMENTATION.md) for complete API reference.
+
+### Enhanced Features
+
+The API now includes advanced features:
+
+- **Sentiment Analysis**: `POST /api/v1/scrapers/kap/sentiment` - Analyze reports with structured JSON output
+- **Batch Scraping**: `POST /api/v1/scrapers/kap/batch` - Async batch jobs with status tracking
+- **Webhooks**: `POST /api/v1/scrapers/webhook/configure` - Real-time notifications
+- **Sentiment Queries**: `GET /api/v1/reports/kap/sentiment/query` - Query sentiment data
+
+## 📖 Documentation
+
+- **[Complete User Guide](docs/USER_GUIDE.md)** - Comprehensive guide with examples for all features
+- **[Quick Start Guide](docs/QUICK_START_GUIDE.md)** - Get started in 5 minutes
+- **[API Quick Reference](docs/API_QUICK_REFERENCE.md)** - Quick reference for all endpoints
+- **[Features Overview](docs/FEATURES_OVERVIEW.md)** - Overview of all features and use cases
+- **[Enhanced Features Guide](docs/API_ENHANCED_FEATURES.md)** - Detailed documentation for advanced features
+- **[API Documentation](docs/API_DOCUMENTATION.md)** - Complete API reference
+- **[Architecture Guide](docs/DDD_ARCHITECTURE.md)** - System architecture and design
+- **[Testing Guide](docs/TESTING_GUIDE.md)** - Testing instructions
+
+### 2. CLI Usage
+
+#### Basic Usage - Single Scraper
 
 ```python
 from scrapers.kap_scraper import KAPScraper
@@ -60,37 +118,37 @@ from database.db_manager import DatabaseManager
 
 # Initialize
 db_manager = DatabaseManager()
-scraper = KAPScraper(firecrawl_api_key="your_key", db_manager=db_manager)
+scraper = KAPScraper(db_manager=db_manager)
 
 # Scrape KAP reports
-await scraper.scrape_recent_reports(days_back=7)
+await scraper.scrape(days_back=7)
 ```
 
-### 2. Full System with All Scrapers
+#### Full System with All Scrapers
 
-```python
+```bash
 python main.py --all
 ```
 
-### 3. Individual Scrapers
+#### Individual Scrapers
 
-```python
+```bash
 # KAP Reports
 python main.py --scraper kap --days 7
 
 # BIST Companies
-python main.py --scraper bist-companies
+python main.py --scraper bist --data-type companies
 
 # TradingView Sectors
-python main.py --scraper tradingview-sectors
+python main.py --scraper tradingview --data-type sectors
 
 # Commodity Prices
-python main.py --scraper commodities
+python main.py --scraper bist --data-type commodities
 ```
 
-### 4. Scheduled Execution
+### 3. Scheduled Execution
 
-```python
+```bash
 python scheduler.py
 ```
 
@@ -107,29 +165,59 @@ turkish-financial-data-scraper/
 ├── README.md
 ├── requirements.txt
 ├── .env.example
-├── main.py                          # Main entry point
+├── main.py                          # Main CLI entry point
 ├── scheduler.py                     # Scheduled task runner
+├── api_server.py                    # REST API server (NEW!)
 ├── config.py                        # Configuration management
-├── scrapers/
-│   ├── __init__.py
-│   ├── base_scraper.py             # Base scraper class with Firecrawl
-│   ├── kap_scraper.py              # KAP reports scraper
-│   ├── bist_scraper.py             # BIST company listings
-│   ├── tradingview_scraper.py      # TradingView sectors/industries
-│   └── commodity_scraper.py        # BIST commodity prices
-├── database/
-│   ├── __init__.py
-│   ├── db_manager.py               # Database operations
-│   └── schema.sql                  # Database schema
-├── utils/
-│   ├── __init__.py
-│   ├── pdf_extractor.py            # PDF table extraction
-│   ├── text_utils.py               # Text processing utilities
-│   └── logger.py                   # Logging configuration
-└── examples/
-    ├── scrape_kap_example.py
-    ├── scrape_bist_example.py
-    └── full_pipeline_example.py
+├── api/                             # REST API (NEW!)
+│   ├── main.py                      # FastAPI application
+│   ├── dependencies.py              # Shared dependencies
+│   ├── models.py                    # Pydantic models
+│   └── routers/                     # API route handlers
+│       ├── scrapers.py              # Scraping endpoints
+│       ├── reports.py               # Report query endpoints
+│       └── health.py                # Health check
+├── domain/                          # Domain Layer (DDD)
+│   ├── entities/                    # Business entities
+│   ├── value_objects/               # Immutable value objects
+│   ├── repositories/                # Repository interfaces
+│   └── services/                     # Domain service interfaces
+│
+├── application/                      # Application Layer (DDD)
+│   ├── use_cases/                   # Use cases (single responsibility)
+│   └── dependencies.py              # Dependency injection
+│
+├── infrastructure/                   # Infrastructure Layer (DDD)
+│   ├── repositories/                 # Repository implementations
+│   └── services/                     # Service implementations
+│
+├── api/                              # Presentation Layer
+│   ├── main.py                      # FastAPI application
+│   ├── routers/                     # Thin API controllers
+│   └── models.py                    # Pydantic DTOs
+│
+├── scrapers/                         # Scraper implementations
+│   ├── base_scraper.py              # Base scraper with Firecrawl
+│   ├── kap_scraper.py               # KAP reports scraper
+│   └── bist_scraper.py              # BIST company listings
+│
+├── database/                         # Database layer
+│   └── db_manager.py                # Database operations
+│
+├── utils/                            # Utilities
+│   ├── llm_analyzer.py              # LLM analysis
+│   ├── webhook_notifier.py           # Webhook notifications
+│   └── batch_job_manager.py          # Batch job management
+│
+├── tests/                            # Tests (DDD structure)
+│   ├── domain/                      # Domain tests
+│   ├── application/                 # Use case tests
+│   └── infrastructure/              # Integration tests
+│
+└── docs/                             # Documentation
+    ├── DDD_ARCHITECTURE.md          # DDD architecture guide
+    ├── TESTING_GUIDE.md              # Testing guide
+    └── API_ENHANCED_FEATURES.md      # Enhanced features
 ```
 
 ## Database Schema
@@ -223,6 +311,43 @@ tail -f logs/scraper.log
 python -c "from utils.monitor import get_status; print(get_status())"
 ```
 
+## Architecture
+
+The project follows **Domain-Driven Design (DDD)** principles:
+
+- **Domain Layer**: Core business logic (entities, value objects)
+- **Application Layer**: Use cases (single responsibility)
+- **Infrastructure Layer**: Technical implementations (repositories, services)
+- **Presentation Layer**: API controllers (thin, delegates to use cases)
+
+**Benefits:**
+- ✅ Maintainable - Clear separation of concerns
+- ✅ Testable - Easy to test with mocks
+- ✅ Single Responsibility - Each class has one job
+- ✅ Extensible - Easy to add new features
+
+See [DDD Architecture Guide](docs/DDD_ARCHITECTURE.md) for details.
+
+## Testing
+
+The codebase is fully testable:
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run domain tests (no dependencies)
+pytest tests/domain/ -v
+
+# Run use case tests (mocked dependencies)
+pytest tests/application/ -v
+
+# Run integration tests
+pytest tests/infrastructure/ -v --integration
+```
+
+See [Testing Guide](docs/TESTING_GUIDE.md) for details.
+
 ## Troubleshooting
 
 ### Common Issues
@@ -235,6 +360,12 @@ python -c "from utils.monitor import get_status; print(get_status())"
 
 3. **PDF Extraction Fails**
    - Solution: Ensure `pdfplumber` is installed correctly
+
+4. **API Server Won't Start**
+   - Solution: Check port 8000 is available, install FastAPI/uvicorn
+
+5. **Import Errors After Refactoring**
+   - Solution: Ensure all new packages are installed: `pip install -r requirements.txt`
 
 ## Contributing
 
@@ -252,6 +383,7 @@ This project is licensed under the MIT License.
 
 - **Firecrawl**: Web scraping API
 - **TimescaleDB**: Time-series database
+- **FastAPI**: Modern REST API framework
 - **Turkish Financial Markets**: KAP, BIST, TradingView
 
 ## Disclaimer

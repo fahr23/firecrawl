@@ -25,6 +25,7 @@ x-common-env: &common-env
   REDIS_URL: ${REDIS_URL:-redis://redis:6379}
   REDIS_RATE_LIMIT_URL: ${REDIS_URL:-redis://redis:6379}
   PLAYWRIGHT_MICROSERVICE_URL: ${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}
+  HTML_TO_MARKDOWN_SERVICE_URL: ${HTML_TO_MARKDOWN_SERVICE_URL:-http://go-html-to-md-service:8080}
   POSTGRES_USER: ${POSTGRES_USER:-postgres}
   POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
   POSTGRES_DB: ${POSTGRES_DB:-postgres}
@@ -84,6 +85,35 @@ services:
     tmpfs:
       - /tmp/.cache:noexec,nosuid,size=1g
 
+  go-html-to-md-service:
+    # NOTE: If you don't want to build the service locally,
+    # comment out the build: statement and uncomment the image: statement
+    # image: ghcr.io/firecrawl/go-html-to-md-service:latest
+    build: apps/go-html-to-md-service
+    environment:
+      PORT: 8080
+      ENV: ${ENV:-local}
+    networks:
+      - backend
+    ports:
+      - "8080:8080"
+    # healthcheck:
+    #   test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+    #   interval: 30s
+    #   timeout: 3s
+    #   retries: 3
+    #   start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
+    # Resource limits for Docker Compose (not Swarm)
+    cpus: 1.0
+    mem_limit: 512M
+    memswap_limit: 512M
+
   api:
     <<: *common-service
     environment:
@@ -101,10 +131,14 @@ services:
         condition: service_started
       playwright-service:
         condition: service_started
+      go-html-to-md-service:
+        condition: service_started
       rabbitmq:
         condition: service_healthy
     ports:
       - "${PORT:-3002}:${INTERNAL_PORT:-3002}"
+      # Expose Turkish Financial Data Scraper FastAPI (running inside this container) on host 8000
+      - "8000:8000"
     command: node dist/src/harness.js --start-docker
     # Resource limits for Docker Compose (not Swarm)
     # Increase if you have more CPU cores/RAM available

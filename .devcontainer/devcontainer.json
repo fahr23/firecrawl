@@ -23,10 +23,10 @@
 	// "features": {},
 
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
-	"forwardPorts": [3002, 3000, 5433],
+	"forwardPorts": [3002, 3000, 5433, 8080, 8000],
 
 	// Start supporting services so the stack is usable inside the dev container.
-	"runServices": ["api", "playwright-service", "redis", "nuq-postgres", "rabbitmq"],
+	"runServices": ["api", "playwright-service", "go-html-to-md-service", "redis", "nuq-postgres", "rabbitmq"],
 
 	// Uncomment the next line if you want to keep your containers running after VS Code shuts down.
 	// "shutdownAction": "none",

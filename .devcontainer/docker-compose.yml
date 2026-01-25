@@ -15,10 +15,11 @@ services:
       # Update this to wherever you want VS Code to mount the folder of your project
       - ..:/workspaces:cached
     
-    # Override dependencies to remove RabbitMQ for development
+    # Override dependencies to include all required services for development
     depends_on:
       - redis
       - playwright-service
+      - go-html-to-md-service
 
     # Uncomment the next four lines if you will use a ptrace-based debugger like C++, Go, and Rust.
     # cap_add:
