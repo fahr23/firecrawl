@@ -14,6 +14,14 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 import os
 
+# Try to import Google Generative AI (optional dependency)
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    genai = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -160,6 +168,159 @@ class OpenAIProvider(LLMProvider):
         except Exception as e:
             logger.error(f"Error with OpenAI API: {e}")
             return ""
+
+
+class GeminiProvider(LLMProvider):
+    """Google Gemini API provider - uses REST API v1 for compatibility"""
+    
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gemini-pro",
+        temperature: float = 0.7,
+        chunk_size: int = 30000  # Gemini has larger context window
+    ):
+        self.api_key = api_key
+        self.model_name = model
+        self.temperature = temperature
+        self.chunk_size = chunk_size
+        self.base_url = "https://generativelanguage.googleapis.com/v1"
+        
+        # Try SDK first, fallback to REST API
+        self.use_rest_api = False
+        if GEMINI_AVAILABLE:
+            try:
+                genai.configure(api_key=api_key)
+                # Try to create model - if it fails, we'll use REST API
+                test_model = genai.GenerativeModel(model)
+                self.model = test_model
+                logger.info(f"Using Gemini SDK with model: {model}")
+            except Exception as e:
+                logger.warning(f"Gemini SDK failed ({e}), will use REST API instead")
+                self.use_rest_api = True
+        else:
+            logger.info("google-generativeai not available, using REST API")
+            self.use_rest_api = True
+    
+    def analyze(self, content: str, prompt: Optional[str] = None) -> str:
+        """Analyze content using Google Gemini API (REST API v1 for compatibility)"""
+        try:
+            import requests
+            
+            # Use default Turkish financial analysis prompt if none provided
+            if not prompt:
+                prompt = (
+                    "Kamu Aydınlatma Platformu (KAP) verilerini sana göndereceğim. "
+                    "Türkçe olarak cevaplarını hazırla. "
+                    "Verilen bildirimlerden yola çıkarak kısa ve orta vadeli yatırım yorumları yap. "
+                    "Yatırım fırsatlarını değerlendir ve her yorumun yanında yatırımcılara yönelik "
+                    "net tavsiyelerde bulun. Tavsiyelerinin dayandığı nedenleri açıkça belirt. "
+                    "Cevaplarını Türkçe olarak hazırla ve finansal fırsatları detaylandır."
+                )
+            
+            # Combine prompt and content
+            full_prompt = f"{prompt}\n\n{content}"
+            
+            # Use REST API v1 (more reliable than SDK)
+            # Try different model names if the default fails
+            model_to_try = self.model_name
+            models_to_try = [
+                self.model_name,
+                "gemini-1.5-flash",
+                "gemini-1.5-pro", 
+                "gemini-pro",
+                "models/gemini-1.5-flash",
+                "models/gemini-1.5-pro"
+            ]
+            
+            last_error = None
+            for model_to_try in models_to_try:
+                url = f"{self.base_url}/models/{model_to_try}:generateContent"
+            
+            payload = {
+                "contents": [{
+                    "parts": [{
+                        "text": full_prompt
+                    }]
+                }],
+                "generationConfig": {
+                    "temperature": self.temperature
+                }
+            }
+            
+            headers = {"Content-Type": "application/json"}
+            params = {"key": self.api_key}
+            
+            # Try different model names - use available models from API
+            models_to_try = [
+                "models/gemini-2.0-flash",  # Fast and available
+                "models/gemini-2.5-flash",  # Latest flash
+                "models/gemini-1.5-flash",  # Fallback
+                "models/gemini-2.0-flash-lite",  # Lightweight option
+                self.model_name  # User-specified
+            ]
+            
+            last_error = None
+            for model_to_try in models_to_try:
+                url = f"{self.base_url}/{model_to_try}:generateContent"
+                
+                logger.info(f"Trying Gemini REST API v1 with model: {model_to_try}")
+                
+                try:
+                    response = requests.post(url, json=payload, headers=headers, params=params, timeout=60)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if 'candidates' in data and data['candidates']:
+                            text = data['candidates'][0]['content']['parts'][0]['text']
+                            logger.info(f"✅ Successfully got {len(text)} chars from Gemini using model: {model_to_try}")
+                            return text
+                        else:
+                            logger.warning(f"No candidates in Gemini response for {model_to_try}")
+                            continue
+                    else:
+                        error_text = response.text[:300]
+                        last_error = f"{response.status_code}: {error_text}"
+                        logger.debug(f"Model {model_to_try} failed: {last_error}")
+                        continue
+                except Exception as e:
+                    last_error = str(e)
+                    logger.debug(f"Exception with {model_to_try}: {e}")
+                    continue
+            
+            # If all models failed, log the last error
+            logger.error(f"All Gemini models failed. Last error: {last_error}")
+            return ""
+            
+            # If all models failed, log the last error
+            logger.error(f"All Gemini models failed. Last error: {last_error}")
+            return ""
+            
+        except ImportError:
+            logger.error("requests library required for Gemini REST API")
+            return ""
+        except Exception as e:
+            logger.error(f"Error analyzing content with Gemini API: {e}", exc_info=True)
+            return ""
+    
+    def _chunk_content(self, content: str) -> List[str]:
+        """
+        Split content into chunks to fit model context
+        
+        Args:
+            content: Text to split
+            
+        Returns:
+            List of content chunks
+        """
+        if len(content) <= self.chunk_size:
+            return [content]
+        
+        chunks = []
+        for i in range(0, len(content), self.chunk_size):
+            chunks.append(content[i:i + self.chunk_size])
+        
+        return chunks
 
 
 class PDFReportGenerator:
@@ -383,11 +544,16 @@ class LLMAnalyzer:
                 prompt = custom_prompt
             
             # Get LLM response
+            logger.debug(f"Calling LLM provider with {len(content)} chars of content")
             response = self.provider.analyze(content, prompt)
             
             if not response:
-                logger.error("Empty response from LLM")
+                logger.error("Empty response from LLM - check API key and network connection")
+                logger.debug(f"Provider type: {type(self.provider).__name__}")
                 return None
+            
+            logger.debug(f"LLM response length: {len(response)} chars")
+            logger.debug(f"LLM response preview: {response[:200]}...")
             
             # Extract JSON from response (handle cases where LLM adds extra text)
             json_match = re.search(r'\{.*\}', response, re.DOTALL)

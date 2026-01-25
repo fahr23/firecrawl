@@ -29,9 +29,9 @@ class ScrapeTradingViewRequest(BaseModel):
 
 class LLMConfigRequest(BaseModel):
     """Request model for LLM configuration"""
-    provider_type: str = Field(default="local", description="Provider: local or openai")
+    provider_type: str = Field(default="local", description="Provider: local, openai, or gemini")
     base_url: Optional[str] = Field(default="http://localhost:1234/v1", description="Local LLM base URL")
-    api_key: Optional[str] = Field(default=None, description="API key for OpenAI")
+    api_key: Optional[str] = Field(default=None, description="API key for OpenAI or Gemini")
     model: Optional[str] = Field(default=None, description="Model name")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 
@@ -114,6 +114,13 @@ class BatchScrapeRequest(BaseModel):
     urls: List[str] = Field(description="List of URLs to scrape")
     formats: List[str] = Field(default=["markdown"], description="Output formats")
     max_pages: Optional[int] = Field(default=None, description="Maximum pages to scrape")
+
+
+class KAPBatchScrapeRequest(BaseModel):
+    """Request model for KAP batch scraping"""
+    days_back: int = Field(default=7, ge=1, le=365, description="Number of days to look back")
+    company_symbols: Optional[List[str]] = Field(default=None, description="Specific company symbols to scrape")
+    download_pdfs: bool = Field(default=False, description="Download PDF attachments")
 
 
 class BatchJobResponse(BaseModel):

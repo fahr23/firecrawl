@@ -36,6 +36,16 @@ cp .env.example .env
 # Edit .env with your credentials
 ```
 
+### LLM Provider Setup
+
+The scraper supports multiple LLM providers for analysis:
+
+- **Local LLM** (LM Studio, Ollama): Set `LOCAL_LLM_BASE_URL` in `.env`
+- **OpenAI**: Set `OPENAI_API_KEY` in `.env`
+- **Google Gemini** (NEW!): Set `GEMINI_API_KEY` or `GOOGLE_API_KEY` in `.env`
+
+Get your Gemini API key from: https://aistudio.google.com/
+
 ## Configuration
 
 Create a `.env` file with:

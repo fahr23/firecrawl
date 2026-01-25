@@ -1,6 +1,20 @@
 """
-KAP (Kamuyu Aydınlatma Platformu) Scraper using Firecrawl
-Turkish Public Disclosure Platform scraper for financial reports
+KAP (Kamuyu Aydınlatma Platformu) Scraper
+
+IMPORTANT: KAP is a Single Page Application (SPA) that loads data dynamically via API.
+The HTML interface doesn't contain the actual report links - they're generated from JSON responses.
+
+STRATEGY:
+1. Bypass HTML interface and use API endpoint directly: /tr/api/memberDisclosureQuery
+2. POST request with JSON payload (date range, filters)
+3. Parse JSON response to extract disclosureIndex
+4. Construct PDF URL: /tr/BildirimPdf/{disclosureIndex}
+5. Download and process PDFs as needed
+
+This approach is much more efficient than HTML crawling because:
+- API returns 500+ records in seconds
+- No need to render JavaScript or scroll infinitely
+- Direct access to structured data
 """
 import logging
 import asyncio
@@ -13,7 +27,7 @@ import re
 from scrapers.base_scraper import BaseScraper
 from utils.text_extractor import TextExtractorFactory
 from utils.pdf_downloader import PDFDownloader
-from utils.llm_analyzer import LLMAnalyzer, LocalLLMProvider, OpenAIProvider
+from utils.llm_analyzer import LLMAnalyzer, LocalLLMProvider, OpenAIProvider, GeminiProvider
 import csv
 import os
 
@@ -62,18 +76,215 @@ class KAPScraper(BaseScraper):
         Configure LLM provider for analysis
         
         Args:
-            provider_type: 'local' or 'openai'
+            provider_type: 'local', 'openai', or 'gemini'
             **provider_config: Provider-specific configuration
         """
         if provider_type == "local":
             provider = LocalLLMProvider(**provider_config)
         elif provider_type == "openai":
             provider = OpenAIProvider(**provider_config)
+        elif provider_type == "gemini":
+            provider = GeminiProvider(**provider_config)
         else:
-            raise ValueError(f"Unknown provider type: {provider_type}")
+            raise ValueError(f"Unknown provider type: {provider_type}. Supported: local, openai, gemini")
         
         self.llm_analyzer = LLMAnalyzer(provider)
         logger.info(f"Configured {provider_type} LLM provider")
+    
+    async def scrape_bloomberg_ht(
+        self,
+        days_back: int = 7,
+        company_symbols: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Scrape KAP reports from Bloomberg HT KAP news page (alternative source)
+        
+        Args:
+            days_back: Number of days to look back
+            company_symbols: Specific company symbols to scrape (filters results)
+            
+        Returns:
+            Scraped reports data
+        """
+        logger.info(f"Scraping KAP reports from Bloomberg HT for last {days_back} days")
+        
+        # Bloomberg HT KAP news page
+        bloomberg_url = "https://www.bloomberght.com/borsa/hisseler/kap-haberleri"
+        
+        logger.info(f"Scraping Bloomberg HT KAP page: {bloomberg_url}")
+        print(f"🔗 Bloomberg HT URL: {bloomberg_url}")
+        
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days_back)
+        
+        all_reports = []
+        
+        try:
+            # Scrape the main page
+            result = await self.scrape_url(
+                bloomberg_url,
+                wait_for=5000,
+                formats=["markdown", "html"]
+            )
+            
+            if not result.get("success"):
+                logger.error("Failed to scrape Bloomberg HT page")
+                return {
+                    "success": False,
+                    "error": "Failed to access Bloomberg HT page",
+                    "total_companies": 0,
+                    "processed_companies": 0,
+                    "reports": []
+                }
+            
+            # Get HTML content
+            doc = result.get("data")
+            html_content = None
+            if doc:
+                if hasattr(doc, 'html') and doc.html:
+                    html_content = doc.html
+                elif hasattr(doc, 'raw_html') and doc.raw_html:
+                    html_content = doc.raw_html
+            
+            if not html_content:
+                logger.error("No HTML content received")
+                return {
+                    "success": False,
+                    "error": "No HTML content received",
+                    "total_companies": 0,
+                    "processed_companies": 0,
+                    "reports": []
+                }
+            
+            # Parse HTML to extract KAP news items
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Find all KAP news items - they appear to be in links or list items
+            # Pattern: "COMPANY_CODE/COMPANY_NAME - TITLE DATE TIME"
+            news_items = []
+            
+            # Try to find links that contain KAP news
+            links = soup.find_all('a', href=True)
+            for link in links:
+                link_text = link.get_text(strip=True)
+                href = link.get('href', '')
+                
+                # Look for pattern: COMPANY_CODE/COMPANY_NAME - TITLE
+                if '/' in link_text and ' - ' in link_text:
+                    # Extract company code (before first /)
+                    parts = link_text.split('/')
+                    if len(parts) >= 2:
+                        company_code_part = parts[0].strip()
+                        rest = '/'.join(parts[1:])
+                        
+                        # Extract company name and title (after -)
+                        if ' - ' in rest:
+                            company_name = rest.split(' - ')[0].strip()
+                            title_part = ' - '.join(rest.split(' - ')[1:])
+                            
+                            # Extract date and time from title
+                            # Pattern: "TITLE DD.MM.YYYY HH:MM"
+                            date_match = re.search(r'(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})', title_part)
+                            if date_match:
+                                date_str = date_match.group(1)
+                                time_str = date_match.group(2)
+                                title = title_part[:date_match.start()].strip()
+                                
+                                # Parse date
+                                try:
+                                    report_date = datetime.strptime(date_str, "%d.%m.%Y").date()
+                                    
+                                    # Check if date is within range
+                                    days_diff = (end_date.date() - report_date).days
+                                    if days_diff <= days_back and days_diff >= 0:
+                                        # Filter by company symbols if provided
+                                        if company_symbols and company_code_part not in company_symbols:
+                                            continue
+                                        
+                                        news_items.append({
+                                            "company_code": company_code_part,
+                                            "company_name": company_name,
+                                            "title": title,
+                                            "date": date_str,
+                                            "time": time_str,
+                                            "report_date": report_date,
+                                            "url": href if href.startswith('http') else f"https://www.bloomberght.com{href}" if href.startswith('/') else None
+                                        })
+                                except Exception as e:
+                                    logger.debug(f"Error parsing date {date_str}: {e}")
+            
+            logger.info(f"Found {len(news_items)} KAP news items from Bloomberg HT")
+            
+            # Process each news item
+            for item in news_items:
+                report_data = {
+                    "company_code": item["company_code"],
+                    "company_name": item["company_name"],
+                    "report_date": item["report_date"].isoformat(),
+                    "title": item["title"],
+                    "report_type": "",  # Bloomberg HT doesn't provide this directly
+                    "summary": "",
+                    "data": {
+                        "url": item.get("url", bloomberg_url),
+                        "format": "html",
+                        "extracted": True,
+                        "source": "bloomberg_ht",
+                        "time": item["time"],
+                        "original_date_str": item["date"]
+                    },
+                    "scraped_at": datetime.now().isoformat()
+                }
+                
+                # If we have a detail URL, try to scrape it for more info
+                if item.get("url"):
+                    try:
+                        detail_result = await self.scrape_url(
+                            item["url"],
+                            wait_for=3000,
+                            formats=["markdown"]
+                        )
+                        if detail_result.get("success"):
+                            detail_doc = detail_result.get("data")
+                            if detail_doc and hasattr(detail_doc, 'markdown'):
+                                report_data["summary"] = detail_doc.markdown[:500]  # First 500 chars
+                                report_data["data"]["detail_content"] = detail_doc.markdown[:2000]
+                    except Exception as e:
+                        logger.debug(f"Error scraping detail page {item['url']}: {e}")
+                
+                # Save to database
+                if self.db_manager:
+                    try:
+                        self.save_to_db(report_data, "kap_reports")
+                        all_reports.append(report_data)
+                    except Exception as e:
+                        logger.error(f"Error saving report for {item['company_code']}: {e}")
+            
+        except Exception as e:
+            logger.error(f"Error scraping Bloomberg HT: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": f"Error: {str(e)}",
+                "total_companies": 0,
+                "processed_companies": 0,
+                "reports": []
+            }
+        
+        # Get unique companies processed
+        processed_companies = len(set(r.get("company_code") for r in all_reports if r.get("company_code")))
+        
+        return {
+            "success": True,
+            "total_companies": processed_companies,
+            "processed_companies": processed_companies,
+            "reports": all_reports,
+            "total_reports": len(all_reports),
+            "date_range": {
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat()
+            },
+            "source": "bloomberg_ht"
+        }
     
     async def scrape(
         self,
@@ -81,156 +292,221 @@ class KAPScraper(BaseScraper):
         company_symbols: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
-        Scrape recent KAP reports
+        Scrape recent KAP reports - tries API first, falls back to Bloomberg HT
         
         Args:
             days_back: Number of days to look back
-            company_symbols: Specific company symbols to scrape
+            company_symbols: Specific company symbols to scrape (filters results)
             
         Returns:
             Scraped reports data
         """
-        logger.info(f"Scraping KAP reports for last {days_back} days")
+        logger.info(f"Scraping KAP reports for last {days_back} days (trying multiple sources)")
+        
+        # Try Bloomberg HT first (more reliable, no API timeout issues)
+        logger.info("Attempting to scrape from Bloomberg HT...")
+        bloomberg_result = await self.scrape_bloomberg_ht(days_back=days_back, company_symbols=company_symbols)
+        
+        if bloomberg_result.get("success") and bloomberg_result.get("total_reports", 0) > 0:
+            logger.info(f"✅ Successfully scraped {bloomberg_result.get('total_reports', 0)} reports from Bloomberg HT")
+            return bloomberg_result
+        
+        # Fallback to KAP API if Bloomberg HT didn't work
+        logger.info("Bloomberg HT didn't return results, trying KAP API...")
         
         # Calculate date range
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days_back)
         
-        # Scrape company indices page
-        indices_url = f"{self.BASE_URL}/tr/Endeksler"
-        indices_result = await self.retry_with_backoff(
-            self.scrape_url,
-            indices_url,
-            wait_for=3000
-        )
+        # Use KAP API endpoint (same as working getKAPReports.py)
+        # This is the endpoint KAP uses to populate its search results
+        api_url = f"{self.BASE_URL}/tr/api/memberDisclosureQuery"
         
-        if not indices_result.get("success"):
-            return indices_result
+        logger.info(f"KAP API URL: {api_url}")
+        logger.info(f"Date range: {start_date.date()} to {end_date.date()}")
+        print(f"🔗 KAP API URL: {api_url}")
+        print(f"📅 Date range: {start_date.date()} to {end_date.date()}")
         
-        # Extract company codes using LLM extraction
-        schema = {
-            "type": "object",
-            "properties": {
-                "companies": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "code": {"type": "string"},
-                            "name": {"type": "string"},
-                            "index": {"type": "string"}
-                        }
-                    }
-                }
-            }
+        # Prepare payload (matching working implementation)
+        # Note: KAP API accepts YYYY-MM-DD format (verified in getKAPReports.py)
+        # Alternative format DD.MM.YYYY may also work, but YYYY-MM-DD is confirmed working
+        payload = {
+            "fromDate": start_date.strftime("%Y-%m-%d"),
+            "toDate": end_date.strftime("%Y-%m-%d"),
+            "year": "",
+            "prd": "",
+            "term": "",
+            "ruleType": "",
+            "bdkReview": "",
+            "disclosureClass": "",
+            "index": "",
+            "market": "",
+            "isLate": "",
+            "subjectList": [],
+            "mkkMemberOidList": [],
+            "inactiveMkkMemberOidList": [],
+            "bdkMemberOidList": [],
+            "mainSector": "",
+            "sector": "",
+            "subSector": "",
+            "memberType": "IGS",  # BIST companies
+            "fromSrc": "N",
+            "srcCategory": "",
+            "discIndex": []
         }
         
-        companies_data = await self.extract_with_schema(
-            indices_url,
-            schema=schema,
-            prompt="Extract all company codes, names, and their index from the page"
-        )
-
-        if not companies_data.get("success"):
-            logger.warning("Failed to extract companies, using fallback")
-            companies = []
-        else:
-            # Safely extract companies from data
-            data = companies_data.get("data", {})
-            if isinstance(data, dict):
-                companies = data.get("companies", [])
-            elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-                # Firecrawl might return list of results
-                companies = data[0].get("companies", []) if "companies" in data[0] else []
-            else:
-                companies = []
-
-        # Fallback to local CSV if extraction returned empty
-        if not companies:
-            try:
-                root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-                csv_path = os.path.join(root_dir, "bist_companies.csv")
-                with open(csv_path, newline="", encoding="utf-8") as f:
-                    reader = csv.reader(f)
-                    for row in reader:
-                        if not row or len(row) < 1:
-                            continue
-                        sym = row[0].strip().split(",")[0]
-                        if not sym:
-                            continue
-                        code = sym.split(".")[0]
-                        name = row[1].strip() if len(row) > 1 else ""
-                        companies.append({"code": code, "name": name})
-                logger.info(f"Loaded {len(companies)} companies from CSV fallback for KAP")
-            except Exception as e:
-                logger.error(f"CSV fallback failed: {e}")
+        # Headers to mimic browser request
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9,tr;q=0.8",
+            "Referer": "https://www.kap.org.tr/",
+            "Content-Type": "application/json"
+        }
         
-        # Filter by company symbols if provided
-        if company_symbols:
-            companies = [
-                c for c in companies 
-                if c.get("code") in company_symbols
-            ]
-        
-        logger.info(f"Found {len(companies)} companies to process")
-        
-        # Scrape reports for each company
         all_reports = []
-        for company in companies[:5]:  # Limit for demo to reduce load
-            company_code = company.get("code")
-            logger.info(f"Scraping reports for {company_code}")
+        
+        try:
+            # Make POST request to KAP API with timeout
+            timeout = aiohttp.ClientTimeout(total=30)  # 30 second timeout
+            logger.info(f"Making POST request to: {api_url}")
+            print(f"📤 Making POST request to: {api_url}")
+            print(f"📦 Payload: fromDate={payload['fromDate']}, toDate={payload['toDate']}, memberType={payload['memberType']}")
             
-            reports_url = (
-                f"{self.BASE_URL}/tr/api/memberDisclosureQuery"
-                f"?member={company_code}"
-            )
-            
-            reports_result = await self.scrape_url(
-                reports_url,
-                wait_for=2000,
-                formats=["markdown"]
-            )
-            
-            if reports_result.get("success"):
-                # Extract Document content - get markdown or HTML
-                doc = reports_result.get("data")
-                content_text = None
-                if doc:
-                    if hasattr(doc, 'markdown') and doc.markdown:
-                        content_text = doc.markdown
-                    elif hasattr(doc, 'html') and doc.html:
-                        content_text = doc.html
-                    elif hasattr(doc, 'raw_html') and doc.raw_html:
-                        content_text = doc.raw_html
-                
-                # Wrap content in JSON for JSONB column
-                data_json = {
-                    "content": content_text,
-                    "url": reports_url,
-                    "format": "markdown" if (doc and hasattr(doc, 'markdown') and doc.markdown) else "html"
-                }
-                
-                # Save to database
-                report_data = {
-                    "company_code": company_code,
-                    "company_name": company.get("name"),
-                    "data": data_json,
-                    "scraped_at": datetime.now().isoformat()
-                }
-                
-                if self.db_manager:
-                    self.save_to_db(report_data, "kap_reports")
-                
-                # Keep full Document in memory for the return value
-                report_data_full = report_data.copy()
-                report_data_full["data"] = doc
-                all_reports.append(report_data_full)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(api_url, json=payload, headers=headers) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"KAP API returned status {response.status}: {error_text[:200]}")
+                        return {
+                            "success": False,
+                            "error": f"API returned status {response.status}",
+                            "total_companies": 0,
+                            "processed_companies": 0,
+                            "reports": []
+                        }
+                    
+                    data = await response.json()
+                    logger.info(f"KAP API returned {len(data)} disclosures")
+                    
+                    # Process each disclosure
+                    for item in data:
+                        try:
+                            # Extract stock codes (can be comma-separated)
+                            stock_codes_str = item.get("stockCodes", "")
+                            if not stock_codes_str:
+                                continue
+                            
+                            # Parse stock codes (format: "AKBNK,THYAO" or single code)
+                            stock_codes = [code.strip() for code in stock_codes_str.split(",") if code.strip()]
+                            
+                            # Filter by company symbols if provided
+                            if company_symbols:
+                                # Check if any of the stock codes match
+                                if not any(code in company_symbols for code in stock_codes):
+                                    continue
+                            
+                            # Use first stock code as primary company code
+                            company_code = stock_codes[0] if stock_codes else ""
+                            if not company_code:
+                                continue
+                            
+                            # Parse publish date
+                            publish_date_str = item.get("publishDate", "")
+                            report_date = None
+                            if publish_date_str:
+                                try:
+                                    # KAP API returns dates in format: "2026-01-25T00:00:00" or "2026-01-25"
+                                    date_str_clean = publish_date_str.split("T")[0]  # Get date part
+                                    report_date = datetime.strptime(date_str_clean, "%Y-%m-%d").date()
+                                except Exception as e:
+                                    logger.debug(f"Error parsing date {publish_date_str}: {e}")
+                            
+                            # Extract disclosureIndex - this is the key ID for PDF download
+                            disclosure_index = item.get("disclosureIndex")
+                            
+                            # Construct PDF download URL: /tr/BildirimPdf/{disclosureIndex}
+                            pdf_url = f"{self.BASE_URL}/tr/BildirimPdf/{disclosure_index}" if disclosure_index else None
+                            
+                            # Prepare report data (matching database schema)
+                            report_data = {
+                                "company_code": company_code,
+                                "company_name": "",  # API doesn't provide company name directly
+                                "report_date": report_date.isoformat() if report_date else None,
+                                "title": item.get("kapTitle", "").strip() or item.get("subject", "").strip(),
+                                "report_type": item.get("disclosureType", "").strip() or item.get("disclosureClass", "").strip(),
+                                "summary": item.get("summary", "").strip(),
+                                "data": {
+                                    "url": pdf_url,  # PDF download URL
+                                    "format": "api_json",
+                                    "extracted": True,
+                                    "source": "kap_api",
+                                    "disclosure_index": disclosure_index,  # Key ID for PDF retrieval
+                                    "disclosure_class": item.get("disclosureClass"),
+                                    "disclosure_category": item.get("disclosureCategory"),
+                                    "rule_type_term": item.get("ruleTypeTerm"),
+                                    "is_late": item.get("isLate", False),
+                                    "stock_codes": stock_codes_str,
+                                    "attachment_count": item.get("attachmentCount", 0),
+                                    "has_multi_language_support": item.get("hasMultiLanguageSupport", False),
+                                    "api_response": {
+                                        "kapTitle": item.get("kapTitle"),
+                                        "subject": item.get("subject"),
+                                        "publishDate": item.get("publishDate")
+                                    }
+                                },
+                                "scraped_at": datetime.now().isoformat()
+                            }
+                            
+                            # Save to database
+                            if self.db_manager:
+                                try:
+                                    self.save_to_db(report_data, "kap_reports")
+                                    all_reports.append(report_data)
+                                except Exception as e:
+                                    logger.error(f"Error saving report for {company_code}: {e}")
+                        
+                        except Exception as e:
+                            logger.error(f"Error processing disclosure item: {e}")
+                            continue
+                    
+        except asyncio.TimeoutError:
+            logger.error("KAP API request timed out (API may be slow or network issue)")
+            return {
+                "success": False,
+                "error": "API request timed out - KAP API may be slow or unreachable",
+                "total_companies": 0,
+                "processed_companies": 0,
+                "reports": []
+            }
+        except aiohttp.ClientError as e:
+            logger.error(f"HTTP error calling KAP API: {e}")
+            return {
+                "success": False,
+                "error": f"HTTP error: {str(e)}",
+                "total_companies": 0,
+                "processed_companies": 0,
+                "reports": []
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error calling KAP API: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": f"Unexpected error: {str(e)}",
+                "total_companies": 0,
+                "processed_companies": 0,
+                "reports": []
+            }
+        
+        # Get unique companies processed
+        processed_companies = len(set(r.get("company_code") for r in all_reports if r.get("company_code")))
         
         return {
             "success": True,
-            "total_companies": len(companies),
-            "processed_companies": len(all_reports),
+            "total_companies": processed_companies,
+            "processed_companies": processed_companies,
             "reports": all_reports,
+            "total_reports": len(all_reports),
             "date_range": {
                 "start": start_date.isoformat(),
                 "end": end_date.isoformat()

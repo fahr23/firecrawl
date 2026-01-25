@@ -18,16 +18,37 @@ class DatabaseManager:
     def __init__(self):
         """Initialize database connection pool"""
         try:
+            self.schema = config.database.schema
             self.pool = pool.SimpleConnectionPool(
                 minconn=1,
                 maxconn=config.database.pool_size,
                 **config.database.get_connection_params()
             )
-            logger.info("Database connection pool created")
+            logger.info(f"Database connection pool created with schema: {self.schema}")
+            self._create_schema()
             self._create_tables()
         except Exception as e:
             logger.error(f"Failed to create database pool: {e}")
             raise
+    
+    def _create_schema(self):
+        """Create the schema if it doesn't exist"""
+        # Get connection directly from pool (don't use get_connection to avoid circular dependency)
+        conn = self.pool.getconn()
+        try:
+            cursor = conn.cursor()
+            # Create schema if it doesn't exist
+            cursor.execute(sql.SQL("CREATE SCHEMA IF NOT EXISTS {}").format(
+                sql.Identifier(self.schema)
+            ))
+            conn.commit()
+            logger.info(f"Schema '{self.schema}' created/verified")
+        except Exception as e:
+            logger.error(f"Error creating schema: {e}")
+            conn.rollback()
+            raise
+        finally:
+            self.pool.putconn(conn)
     
     def _create_tables(self):
         """Create necessary database tables"""
@@ -35,9 +56,14 @@ class DatabaseManager:
         try:
             cursor = conn.cursor()
             
+            # Set search_path for this connection
+            cursor.execute(sql.SQL("SET search_path TO {}, public").format(
+                sql.Identifier(self.schema)
+            ))
+            
             # KAP Reports table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS kap_reports (
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.kap_reports (
                     id SERIAL PRIMARY KEY,
                     company_code VARCHAR(10),
                     company_name VARCHAR(255),
@@ -49,11 +75,11 @@ class DatabaseManager:
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(company_code, report_date, title)
                 )
-            ''')
+            ''').format(sql.Identifier(self.schema)))
             
             # BIST Companies table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS bist_companies (
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.bist_companies (
                     id SERIAL PRIMARY KEY,
                     code VARCHAR(10) UNIQUE,
                     name VARCHAR(255),
@@ -61,11 +87,11 @@ class DatabaseManager:
                     sector VARCHAR(100),
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            ''')
+            ''').format(sql.Identifier(self.schema)))
             
             # BIST Index Members table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS bist_index_members (
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.bist_index_members (
                     id SERIAL PRIMARY KEY,
                     index_name VARCHAR(100),
                     company_code VARCHAR(10),
@@ -73,11 +99,11 @@ class DatabaseManager:
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(index_name, company_code)
                 )
-            ''')
+            ''').format(sql.Identifier(self.schema)))
             
             # TradingView Sectors table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS tradingview_sectors_tr (
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.tradingview_sectors_tr (
                     id SERIAL PRIMARY KEY,
                     sector_name VARCHAR(255),
                     stock_symbol VARCHAR(50),
@@ -85,11 +111,11 @@ class DatabaseManager:
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(sector_name, stock_symbol)
                 )
-            ''')
+            ''').format(sql.Identifier(self.schema)))
             
             # TradingView Industries table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS tradingview_industry_tr (
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.tradingview_industry_tr (
                     id SERIAL PRIMARY KEY,
                     industry_name VARCHAR(255),
                     stock_symbol VARCHAR(50),
@@ -97,11 +123,11 @@ class DatabaseManager:
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(industry_name, stock_symbol)
                 )
-            ''')
+            ''').format(sql.Identifier(self.schema)))
             
             # Commodity Prices table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS historical_price_emtia (
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.historical_price_emtia (
                     id SERIAL PRIMARY KEY,
                     commodity_type VARCHAR(10),
                     date DATE,
@@ -110,18 +136,58 @@ class DatabaseManager:
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(commodity_type, date)
                 )
-            ''')
+            ''').format(sql.Identifier(self.schema)))
             
             # Cryptocurrency Symbols table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS cryptocurrency_symbols (
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.cryptocurrency_symbols (
                     id SERIAL PRIMARY KEY,
                     symbol VARCHAR(50) UNIQUE,
                     name VARCHAR(255),
                     price REAL,
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            ''')
+            ''').format(sql.Identifier(self.schema)))
+            
+            # Sentiment Analysis table
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.kap_report_sentiment (
+                    id SERIAL PRIMARY KEY,
+                    report_id INTEGER REFERENCES {}.kap_reports(id) ON DELETE CASCADE,
+                    overall_sentiment VARCHAR(20) NOT NULL,
+                    confidence REAL DEFAULT 0.0,
+                    impact_horizon VARCHAR(20),
+                    key_drivers TEXT[],
+                    risk_flags TEXT[],
+                    tone_descriptors TEXT[],
+                    target_audience VARCHAR(50),
+                    analysis_text TEXT,
+                    risk_level VARCHAR(20),
+                    summary TEXT,
+                    raw_analysis JSONB,
+                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(report_id)
+                )
+            ''').format(
+                sql.Identifier(self.schema),
+                sql.Identifier(self.schema)
+            ))
+            
+            # Create indexes for faster queries
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_sentiment_report_id 
+                ON {}.kap_report_sentiment(report_id)
+            ''').format(sql.Identifier(self.schema)))
+            
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_sentiment_overall 
+                ON {}.kap_report_sentiment(overall_sentiment)
+            ''').format(sql.Identifier(self.schema)))
+            
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_sentiment_analyzed_at 
+                ON {}.kap_report_sentiment(analyzed_at)
+            ''').format(sql.Identifier(self.schema)))
             
             conn.commit()
             logger.info("Database tables created/verified")
@@ -134,9 +200,16 @@ class DatabaseManager:
             self.return_connection(conn)
     
     def get_connection(self):
-        """Get a connection from the pool"""
+        """Get a connection from the pool and set search_path"""
         try:
-            return self.pool.getconn()
+            conn = self.pool.getconn()
+            # Set search_path for this connection to use our schema
+            cursor = conn.cursor()
+            cursor.execute(sql.SQL("SET search_path TO {}, public").format(
+                sql.Identifier(self.schema)
+            ))
+            cursor.close()
+            return conn
         except Exception as e:
             logger.error(f"Error getting connection: {e}")
             raise
@@ -228,9 +301,10 @@ class DatabaseManager:
             
             # Build INSERT query
             query = sql.SQL(
-                "INSERT INTO {} ({}) VALUES ({}) "
+                "INSERT INTO {}.{} ({}) VALUES ({}) "
                 "ON CONFLICT DO NOTHING"
             ).format(
+                sql.Identifier(self.schema),
                 sql.Identifier(table_name),
                 sql.SQL(', ').join(map(sql.Identifier, columns)),
                 sql.SQL(', ').join(sql.Placeholder() * len(columns))

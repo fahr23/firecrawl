@@ -83,28 +83,52 @@ class TradingViewScraper(BaseScraper):
         )
         
         if result.get("success"):
-            sectors = result.get("data", {}).get("sectors", [])
+            # Handle different result structures
+            extracted_data = result.get("data", {})
+            if isinstance(extracted_data, dict):
+                sectors = extracted_data.get("sectors", [])
+            elif isinstance(extracted_data, list) and len(extracted_data) > 0:
+                sectors = extracted_data[0].get("sectors", []) if isinstance(extracted_data[0], dict) else []
+            else:
+                sectors = []
+            
             logger.info(f"Found {len(sectors)} sectors")
             
             # Save to database
-            if self.db_manager:
+            saved_count = 0
+            if self.db_manager and sectors:
                 for sector in sectors:
+                    if not isinstance(sector, dict):
+                        continue
                     sector_name = sector.get("sector_name")
-                    for stock in sector.get("stocks", []):
+                    if not sector_name:
+                        continue
+                    stocks = sector.get("stocks", [])
+                    if not stocks:
+                        continue
+                    for stock in stocks:
+                        if not isinstance(stock, dict):
+                            continue
                         data = {
                             "sector_name": sector_name,
                             "stock_symbol": stock.get("symbol"),
                             "stock_name": stock.get("name"),
                             "scraped_at": datetime.now().isoformat()
                         }
-                        self.save_to_db(data, "tradingview_sectors_tr")
+                        try:
+                            self.save_to_db(data, "tradingview_sectors_tr")
+                            saved_count += 1
+                        except Exception as e:
+                            logger.error(f"Error saving sector data: {e}")
             
             return {
                 "success": True,
                 "total_sectors": len(sectors),
+                "saved_records": saved_count,
                 "sectors": sectors
             }
         
+        logger.warning(f"Sector extraction failed: {result.get('error', 'Unknown error')}")
         return result
     
     async def scrape_industries(self) -> Dict[str, Any]:
@@ -150,28 +174,52 @@ class TradingViewScraper(BaseScraper):
         )
         
         if result.get("success"):
-            industries = result.get("data", {}).get("industries", [])
+            # Handle different result structures
+            extracted_data = result.get("data", {})
+            if isinstance(extracted_data, dict):
+                industries = extracted_data.get("industries", [])
+            elif isinstance(extracted_data, list) and len(extracted_data) > 0:
+                industries = extracted_data[0].get("industries", []) if isinstance(extracted_data[0], dict) else []
+            else:
+                industries = []
+            
             logger.info(f"Found {len(industries)} industries")
             
             # Save to database
-            if self.db_manager:
+            saved_count = 0
+            if self.db_manager and industries:
                 for industry in industries:
+                    if not isinstance(industry, dict):
+                        continue
                     industry_name = industry.get("industry_name")
-                    for stock in industry.get("stocks", []):
+                    if not industry_name:
+                        continue
+                    stocks = industry.get("stocks", [])
+                    if not stocks:
+                        continue
+                    for stock in stocks:
+                        if not isinstance(stock, dict):
+                            continue
                         data = {
                             "industry_name": industry_name,
                             "stock_symbol": stock.get("symbol"),
                             "stock_name": stock.get("name"),
                             "scraped_at": datetime.now().isoformat()
                         }
-                        self.save_to_db(data, "tradingview_industry_tr")
+                        try:
+                            self.save_to_db(data, "tradingview_industry_tr")
+                            saved_count += 1
+                        except Exception as e:
+                            logger.error(f"Error saving industry data: {e}")
             
             return {
                 "success": True,
                 "total_industries": len(industries),
+                "saved_records": saved_count,
                 "industries": industries
             }
         
+        logger.warning(f"Industry extraction failed: {result.get('error', 'Unknown error')}")
         return result
     
     async def scrape_crypto_symbols(self) -> Dict[str, Any]:

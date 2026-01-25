@@ -10,20 +10,55 @@ from datetime import datetime, timedelta
 from config import config
 from database.db_manager import DatabaseManager
 from scrapers.kap_scraper import KAPScraper
+from scrapers.bloomberg_ht_kap_scraper import BloombergHTKAPScraper
 from scrapers.bist_scraper import BISTScraper
 from scrapers.tradingview_scraper import TradingViewScraper
 from utils.logger import setup_logging
 
 
 async def scrape_kap(db_manager: DatabaseManager, args):
-    """Scrape KAP reports"""
+    """Scrape KAP reports from Bloomberg HT"""
     logger = logging.getLogger(__name__)
-    logger.info("Starting KAP scraper")
+    logger.info("Starting KAP scraper (Bloomberg HT)")
     
-    scraper = KAPScraper(db_manager=db_manager)
-    result = await scraper.scrape(days_back=args.days)
+    # Use Bloomberg HT scraper (more reliable than KAP API)
+    from scrapers.bloomberg_ht_kap_scraper import BloombergHTKAPScraper
+    import os
+    
+    scraper = BloombergHTKAPScraper(db_manager=db_manager)
+    
+    # Configure LLM for sentiment analysis if API key is available
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        try:
+            scraper.configure_llm(
+                provider_type="gemini",
+                api_key=gemini_key
+            )
+            logger.info("✅ LLM configured for sentiment analysis (Gemini)")
+            print("✅ LLM configured - sentiment analysis will be performed")
+        except Exception as e:
+            logger.warning(f"Failed to configure LLM: {e}")
+            print(f"⚠️  LLM configuration failed: {e}")
+    else:
+        logger.info("LLM not configured - sentiment analysis will be skipped")
+        print("⚠️  GEMINI_API_KEY not set - sentiment analysis will be skipped")
+    
+    # Scrape with sentiment analysis if LLM is configured
+    analyze_sentiment = scraper.llm_analyzer is not None
+    if analyze_sentiment:
+        print("🤖 Sentiment analysis: ENABLED")
+    else:
+        print("🤖 Sentiment analysis: DISABLED (no LLM configured)")
+    
+    result = await scraper.scrape(
+        days_back=args.days,
+        analyze_sentiment=analyze_sentiment
+    )
     
     logger.info(f"KAP scraping completed: {result.get('total_companies')} companies")
+    if analyze_sentiment:
+        logger.info(f"Sentiment analyses: {result.get('sentiment_analyses', 0)}")
     return result
 
 

@@ -9,8 +9,8 @@ from datetime import datetime, timedelta
 
 from api.models import (
     ScrapeKAPRequest, ScrapeBISTRequest, ScrapeTradingViewRequest,
-    ScrapeResponse, LLMConfigRequest, BatchScrapeRequest, BatchJobResponse,
-    JobStatusResponse, SentimentAnalysisRequest, SentimentAnalysisResponse,
+    ScrapeResponse, LLMConfigRequest, BatchScrapeRequest, KAPBatchScrapeRequest,
+    BatchJobResponse, JobStatusResponse, SentimentAnalysisRequest, SentimentAnalysisResponse,
     WebhookConfigRequest
 )
 from api.dependencies import get_db_manager, get_config
@@ -152,13 +152,43 @@ async def scrape_tradingview(
         scraper = TradingViewScraper(db_manager=db_manager)
         result = await scraper.scrape(data_type=request.data_type)
         
+        # Handle result (can be dict or list)
+        if not isinstance(result, dict):
+            logger.error(f"TradingView returned unexpected type: {type(result)}")
+            raise HTTPException(status_code=500, detail=f"Unexpected result type: {type(result)}")
+        
+        if not result.get('success', True):
+            error_msg = result.get('error', 'Unknown error')
+            raise HTTPException(status_code=500, detail=f"Scraping failed: {error_msg}")
+        
+        # Extract summary from result data
+        result_data = result.get('data', {})
+        if isinstance(result_data, dict):
+            sectors = result_data.get('sectors', {})
+            industries = result_data.get('industries', {})
+            
+            # Count records
+            sectors_count = sectors.get('total_scraped', 0) if isinstance(sectors, dict) else 0
+            industries_count = industries.get('total_scraped', 0) if isinstance(industries, dict) else 0
+            total_scraped = sectors_count + industries_count
+        else:
+            total_scraped = 0
+        
+        data_type_name = request.data_type
+        
         return ScrapeResponse(
             success=True,
-            message=f"Successfully scraped TradingView {request.data_type} data",
-            data=result
+            message=f"Successfully scraped TradingView {data_type_name} data",
+            data={
+                "total_scraped": total_scraped,
+                "data_type": data_type_name,
+                "details": result
+            }
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"TradingView scraping failed: {e}", exc_info=True)
+        logger.error(f"TradingView scraping failed: {e}", exc_info=True, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -202,7 +232,7 @@ async def configure_kap_llm(
 
 @router.post("/kap/batch", response_model=BatchJobResponse)
 async def scrape_kap_batch(
-    request: BatchScrapeRequest,
+    request: KAPBatchScrapeRequest,
     background_tasks: BackgroundTasks,
     db_manager: DatabaseManager = Depends(get_db_manager)
 ):
@@ -216,49 +246,47 @@ async def scrape_kap_batch(
         job = job_manager.create_job(
             job_type="kap_batch",
             params={
-                "urls": request.urls,
-                "formats": request.formats,
-                "max_pages": request.max_pages
+                "days_back": request.days_back,
+                "company_symbols": request.company_symbols or [],
+                "download_pdfs": request.download_pdfs
             }
-        )
-        
-        # Update total
-        job_manager.update_job_status(
-            job.job_id,
-            JobStatus.PENDING,
-            total=len(request.urls)
         )
         
         # Start background task
         async def run_batch_scrape():
             scraper = KAPScraper(db_manager=db_manager)
-            results = []
-            
-            for i, url in enumerate(request.urls):
-                try:
-                    result = await scraper.scrape_url(url, formats=request.formats)
-                    results.append(result)
-                    job_manager.update_job_status(
-                        job.job_id,
-                        JobStatus.RUNNING,
-                        progress=i + 1
+            try:
+                result = await scraper.scrape_with_analysis(
+                    days_back=request.days_back,
+                    company_symbols=request.company_symbols,
+                    download_pdfs=request.download_pdfs,
+                    analyze_with_llm=False
+                )
+                
+                reports_count = len(result.get('reports', []))
+                job_manager.update_job_status(
+                    job.job_id,
+                    JobStatus.COMPLETED,
+                    result={
+                        "total_scraped": reports_count,
+                        "companies_processed": result.get('processed_companies', 0),
+                        "success": result.get('success', False)
+                    }
+                )
+                
+                # Send webhook notification if configured
+                global _webhook_notifier
+                if _webhook_notifier:
+                    await _webhook_notifier.send_scraping_complete(
+                        "kap_batch",
+                        {"total_reports": reports_count, "success": True}
                     )
-                except Exception as e:
-                    logger.error(f"Error scraping {url}: {e}")
-                    results.append({"url": url, "success": False, "error": str(e)})
-            
-            job_manager.update_job_status(
-                job.job_id,
-                JobStatus.COMPLETED,
-                result={"total": len(results), "successful": sum(1 for r in results if r.get("success"))}
-            )
-            
-            # Send webhook notification if configured
-            global _webhook_notifier
-            if _webhook_notifier:
-                await _webhook_notifier.send_scraping_complete(
-                    "kap_batch",
-                    {"total_urls": len(request.urls), "successful": sum(1 for r in results if r.get("success"))}
+            except Exception as e:
+                logger.error(f"Batch scraping failed: {e}")
+                job_manager.update_job_status(
+                    job.job_id,
+                    JobStatus.FAILED,
+                    result={"error": str(e)}
                 )
         
         # Schedule background task
@@ -267,7 +295,7 @@ async def scrape_kap_batch(
         return BatchJobResponse(
             job_id=job.job_id,
             status=job.status.value,
-            message="Batch scraping job started",
+            message="KAP batch scraping job started",
             status_url=f"/api/v1/scrapers/jobs/{job.job_id}"
         )
         

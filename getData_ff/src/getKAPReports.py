@@ -42,10 +42,16 @@ def getReportwithDatabaseOps(subject_list=None):
         "password": "back2future"
     }
 
-    db_manager = DatabaseManager(db_params)
+    db_manager = None
+    try:
+        db_manager = DatabaseManager(db_params)
+        print("Database connection established successfully.")
+    except (psycopg2.OperationalError, psycopg2.Error) as e:
+        print(f"Warning: Could not connect to database: {e}")
+        print("Continuing without database operations...")
 
     # Number of days before today you want to calculate
-    days_before = 3  # Example: 5 days before today
+    days_before = 10  # Last 10 days
 
     # Calculate the current day
     current_day = datetime.date.today()
@@ -86,9 +92,34 @@ def getReportwithDatabaseOps(subject_list=None):
     }
 
     # Make the request with headers
-    response = requests.post(url, json=payload, headers=headers)
-    data = response.json()
-    print(f"Total disclosures found: {len(data)}")
+    max_api_retries = 3
+    api_retry_count = 0
+    data = None
+    
+    while api_retry_count < max_api_retries:
+        try:
+            print(f"Attempting to fetch data from KAP API (attempt {api_retry_count + 1}/{max_api_retries})...")
+            response = requests.post(url, json=payload, headers=headers, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            print(f"Total disclosures found: {len(data)}")
+            break
+        except requests.exceptions.Timeout as e:
+            api_retry_count += 1
+            if api_retry_count < max_api_retries:
+                print(f"Request timed out. Retrying in 5 seconds...")
+                time.sleep(5)
+            else:
+                print(f"Error: Request timed out after {max_api_retries} attempts: {e}")
+                return
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching data from KAP API: {e}")
+            print(f"URL: {url}")
+            return
+    
+    if data is None:
+        print("Failed to fetch data from API")
+        return
 
     # Iterate through data to download PDFs
     download_counter = 0  # Initialize a counter for downloads
@@ -102,22 +133,28 @@ def getReportwithDatabaseOps(subject_list=None):
             print("pdfpath", pdf_path)
 
             # Assuming `item` is defined and contains the data to be inserted
-            db_manager.insert_kap_disclosures_data((
-                item.get("publishDate", ''),
-                item.get("kapTitle", ''),
-                item.get("isOldKap", ''),
-                item.get("disclosureClass", ''),
-                item.get("disclosureType", ''),
-                item.get("disclosureCategory", ''),
-                item.get("summary", ''),
-                item.get("subject", ''),
-                item.get("ruleTypeTerm", ''),
-                item.get("disclosureIndex", ''),
-                item.get("isLate", ''),
-                item.get("stockCodes", ''),
-                item.get("hasMultiLanguageSupport", ''),
-                item.get("attachmentCount", '')
-            ))
+            if db_manager:
+                try:
+                    db_manager.insert_kap_disclosures_data((
+                        item.get("publishDate", ''),
+                        item.get("kapTitle", ''),
+                        item.get("isOldKap", ''),
+                        item.get("disclosureClass", ''),
+                        item.get("disclosureType", ''),
+                        item.get("disclosureCategory", ''),
+                        item.get("summary", ''),
+                        item.get("subject", ''),
+                        item.get("ruleTypeTerm", ''),
+                        item.get("disclosureIndex", ''),
+                        item.get("isLate", ''),
+                        item.get("stockCodes", ''),
+                        item.get("hasMultiLanguageSupport", ''),
+                        item.get("attachmentCount", '')
+                    ))
+                except Exception as e:
+                    print(f"Warning: Database insert failed: {e}")
+            else:
+                print(f"Item info: {item.get('kapTitle', 'N/A')} - Index: {item.get('disclosureIndex', 'N/A')}")
 
             if item.get("attachmentCount", 0) != 0:
                 print(f"Attachments found for {pdf_url}")
