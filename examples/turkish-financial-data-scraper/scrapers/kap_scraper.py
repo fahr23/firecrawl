@@ -135,7 +135,15 @@ class KAPScraper(BaseScraper):
             logger.warning("Failed to extract companies, using fallback")
             companies = []
         else:
-            companies = companies_data.get("data", {}).get("companies", [])
+            # Safely extract companies from data
+            data = companies_data.get("data", {})
+            if isinstance(data, dict):
+                companies = data.get("companies", [])
+            elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+                # Firecrawl might return list of results
+                companies = data[0].get("companies", []) if "companies" in data[0] else []
+            else:
+                companies = []
 
         # Fallback to local CSV if extraction returned empty
         if not companies:

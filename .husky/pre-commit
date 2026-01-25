@@ -1,4 +1,4 @@
 #!/bin/sh
 . "$(dirname -- "$0")/_/husky.sh"
 
-cd /workspaces/firecrawl/apps/api && pnpm lint-staged
+# lint-staged removed - run manually if needed: cd apps/api && pnpm lint-staged

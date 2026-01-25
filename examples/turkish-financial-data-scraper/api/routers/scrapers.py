@@ -55,10 +55,41 @@ async def scrape_kap(
             analyze_with_llm=request.analyze_with_llm
         )
         
+        # Extract summary from result (handle both dict and error cases)
+        if not isinstance(result, dict):
+            raise HTTPException(status_code=500, detail=f"Unexpected result type: {type(result)}")
+        
+        if not result.get('success', True):
+            error_msg = result.get('error', 'Unknown error')
+            raise HTTPException(status_code=500, detail=f"Scraping failed: {error_msg}")
+        
+        total_companies = result.get('total_companies', 0)
+        processed_companies = result.get('processed_companies', 0)
+        reports = result.get('reports', [])
+        
+        # Ensure reports is a list
+        if not isinstance(reports, list):
+            reports = []
+        
+        reports_count = len(reports)
+        
+        # Extract company codes safely
+        companies = []
+        for r in reports[:10]:
+            if isinstance(r, dict):
+                code = r.get('company_code')
+                if code:
+                    companies.append(code)
+        
         return ScrapeResponse(
             success=True,
-            message=f"Successfully scraped {result.get('total_reports', 0)} KAP reports",
-            data=result
+            message=f"Successfully scraped {reports_count} reports from {processed_companies}/{total_companies} companies",
+            data={
+                "total_scraped": reports_count,
+                "new_reports": reports_count,  # TODO: track new vs updated
+                "updated_reports": 0,
+                "companies": companies
+            }
         )
     except Exception as e:
         logger.error(f"KAP scraping failed: {e}", exc_info=True)
