@@ -11,7 +11,7 @@ from api.models import (
     ScrapeKAPRequest, ScrapeBISTRequest, ScrapeTradingViewRequest,
     ScrapeResponse, LLMConfigRequest, BatchScrapeRequest, KAPBatchScrapeRequest,
     BatchJobResponse, JobStatusResponse, SentimentAnalysisRequest, SentimentAnalysisResponse,
-    WebhookConfigRequest
+    AutoSentimentRequest, WebhookConfigRequest
 )
 from api.dependencies import get_db_manager, get_config
 from scrapers.kap_scraper import KAPScraper
@@ -188,7 +188,7 @@ async def scrape_tradingview(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"TradingView scraping failed: {e}", exc_info=True, exc_info=True)
+        logger.error(f"TradingView scraping failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -358,6 +358,90 @@ async def analyze_sentiment(
         raise
     except Exception as e:
         logger.error(f"Sentiment analysis failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/kap/sentiment/auto", response_model=SentimentAnalysisResponse)
+async def analyze_recent_sentiment(
+    request: AutoSentimentRequest,
+    background_tasks: BackgroundTasks,
+    db_manager: DatabaseManager = Depends(get_db_manager)
+):
+    """
+    Automatically analyze sentiment for recent KAP reports
+    
+    Finds reports from the last N days that don't have sentiment analysis
+    and processes them automatically.
+    """
+    try:
+        from application.dependencies import get_analyze_sentiment_use_case
+        from psycopg2.extras import RealDictCursor
+        
+        # Get reports that need sentiment analysis
+        conn = db_manager.get_connection()
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            
+            # Build query for recent reports without sentiment
+            query = """
+                SELECT r.id, r.company_code, r.title
+                FROM turkish_financial.kap_reports r
+                LEFT JOIN turkish_financial.kap_report_sentiment s ON r.id = s.report_id
+                WHERE r.scraped_at >= NOW() - INTERVAL '%s days'
+                AND r.data IS NOT NULL
+                AND LENGTH(r.data::text) > 100
+            """
+            
+            params = [request.days_back]
+            
+            if not request.force_reanalyze:
+                query += " AND s.report_id IS NULL"
+            
+            if request.company_codes:
+                placeholders = ','.join(['%s'] * len(request.company_codes))
+                query += f" AND r.company_code IN ({placeholders})"
+                params.extend(request.company_codes)
+            
+            query += " ORDER BY r.scraped_at DESC LIMIT 50"
+            
+            cursor.execute(query, params)
+            reports_to_analyze = cursor.fetchall()
+            
+        finally:
+            db_manager.return_connection(conn)
+        
+        if not reports_to_analyze:
+            return SentimentAnalysisResponse(
+                total_analyzed=0,
+                successful=0,
+                failed=0,
+                results=[]
+            )
+        
+        # Extract report IDs
+        report_ids = [row['id'] for row in reports_to_analyze]
+        
+        logger.info(f"Auto-analyzing sentiment for {len(report_ids)} reports")
+        
+        # Use the existing sentiment analysis use case
+        use_case = get_analyze_sentiment_use_case(db_manager)
+        result = await use_case.execute(report_ids=report_ids)
+        
+        # Send webhook notification if configured
+        global _webhook_notifier
+        if _webhook_notifier:
+            positive = sum(1 for r in result["results"] if r['sentiment']['overall_sentiment'] == 'positive')
+            neutral = sum(1 for r in result["results"] if r['sentiment']['overall_sentiment'] == 'neutral')
+            negative = sum(1 for r in result["results"] if r['sentiment']['overall_sentiment'] == 'negative')
+            
+            await _webhook_notifier.send_sentiment_analysis_complete(
+                len(result["results"]), positive, neutral, negative
+            )
+        
+        return SentimentAnalysisResponse(**result)
+        
+    except Exception as e:
+        logger.error(f"Auto sentiment analysis failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

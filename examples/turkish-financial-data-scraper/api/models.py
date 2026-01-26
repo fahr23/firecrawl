@@ -160,6 +160,13 @@ class SentimentAnalysisResponse(BaseModel):
     results: List[Dict[str, Any]]
 
 
+class AutoSentimentRequest(BaseModel):
+    """Request for automatic sentiment analysis of recent reports"""
+    days_back: int = Field(default=7, ge=1, le=30, description="Days to look back for reports")
+    company_codes: Optional[List[str]] = Field(default=None, description="Specific companies to analyze")
+    force_reanalyze: bool = Field(default=False, description="Re-analyze reports that already have sentiment")
+
+
 class WebhookConfigRequest(BaseModel):
     """Webhook configuration request"""
     webhook_url: str = Field(description="Webhook URL (Discord, Slack, or custom)")
