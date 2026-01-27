@@ -251,12 +251,12 @@ class GeminiProvider(LLMProvider):
             headers = {"Content-Type": "application/json"}
             params = {"key": self.api_key}
             
-            # Try different model names - use available models from API
+            # Try different model names - COST OPTIMIZED ORDER (cheapest first)
             models_to_try = [
-                "models/gemini-2.0-flash",  # Fast and available
-                "models/gemini-2.5-flash",  # Latest flash
-                "models/gemini-1.5-flash",  # Fallback
-                "models/gemini-2.0-flash-lite",  # Lightweight option
+                "models/gemini-1.5-flash",  # COST OPTIMIZED: 75-80% cheaper than 2.5
+                "models/gemini-2.0-flash",  # Fallback option 
+                "models/gemini-2.5-flash",  # Expensive - only if others fail
+                "models/gemini-2.0-flash-lite",  # Lightweight backup
                 self.model_name  # User-specified
             ]
             

@@ -69,11 +69,24 @@ class BaseScraper(ABC):
                 **kwargs
             )
             
+            # Handle new Document object format
+            data = {}
+            if hasattr(result, 'html'):
+                data['html'] = result.html
+            if hasattr(result, 'markdown'):
+                data['markdown'] = result.markdown
+            if hasattr(result, 'metadata'):
+                data['metadata'] = result.metadata
+            
+            # Fallback for dict format (backward compatibility)
+            if not data and isinstance(result, dict):
+                data = result
+            
             logger.info(f"Successfully scraped: {url}")
             return {
                 "success": True,
                 "url": url,
-                "data": result,
+                "data": data,
                 "scraper": self.__class__.__name__
             }
             

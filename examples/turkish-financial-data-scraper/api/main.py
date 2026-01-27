@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from api.routers import scrapers, reports, health
+from api.routers import scrapers, reports, health, sentiment
 from utils.logger import setup_logging
 
 # Setup logging
@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 # Create FastAPI app
 app = FastAPI(
     title="Turkish Financial Data Scraper API",
-    description="REST API for scraping and analyzing Turkish financial data from KAP, BIST, and TradingView",
-    version="1.0.0",
+    description="REST API for scraping and analyzing Turkish financial data from KAP, BIST, and TradingView with AI-powered sentiment analysis",
+    version="1.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -35,16 +35,19 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(scrapers.router)
 app.include_router(reports.router)
+app.include_router(sentiment.router)
 
 
 @app.get("/")
 async def root():
     """Root endpoint"""
     return {
-        "message": "Turkish Financial Data Scraper API",
-        "version": "1.0.0",
+        "message": "Turkish Financial Data Scraper API with AI Sentiment Analysis",
+        "version": "1.1.0",
         "docs": "/docs",
-        "health": "/api/v1/health"
+        "health": "/api/v1/health",
+        "sentiment_api": "/api/v1/sentiment/",
+        "documentation": "See API_DOCUMENTATION.md for detailed usage guide"
     }
 
 
