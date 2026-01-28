@@ -2,9 +2,12 @@
 FastAPI application for Turkish Financial Data Scraper REST API
 """
 import logging
-from fastapi import FastAPI
+import json
+import time
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.routers import scrapers, reports, health, sentiment
 from utils.logger import setup_logging
@@ -12,6 +15,69 @@ from utils.logger import setup_logging
 # Setup logging
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# Request/Response logging middleware
+class RequestResponseLoggerMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Log request
+        logger.info(f"\n{'='*80}")
+        logger.info(f"📥 INCOMING REQUEST")
+        logger.info(f"   Method: {request.method}")
+        logger.info(f"   Path: {request.url.path}")
+        logger.info(f"   Query: {request.url.query}")
+        
+        # Log request body if present
+        if request.method in ["POST", "PUT", "PATCH"]:
+            try:
+                body = await request.body()
+                if body:
+                    try:
+                        body_json = json.loads(body)
+                        logger.info(f"   Payload: {json.dumps(body_json, indent=6)}")
+                    except:
+                        logger.info(f"   Body: {body.decode()}")
+            except:
+                pass
+        
+        # Measure response time
+        start_time = time.time()
+        
+        # Get response
+        response = await call_next(request)
+        
+        process_time = time.time() - start_time
+        
+        # Log response
+        logger.info(f"\n📤 OUTGOING RESPONSE")
+        logger.info(f"   Status Code: {response.status_code}")
+        logger.info(f"   Process Time: {process_time:.3f}s")
+        
+        # Try to read response body
+        try:
+            body = b""
+            async for chunk in response.body_iterator:
+                body += chunk
+            
+            try:
+                body_json = json.loads(body)
+                logger.info(f"   Payload: {json.dumps(body_json, indent=6)}")
+            except:
+                logger.info(f"   Body: {body.decode()[:500]}")
+            
+            # Return response with body
+            from starlette.responses import Response
+            return Response(
+                content=body,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.media_type
+            )
+        except Exception as e:
+            logger.info(f"   (Response body logging skipped)")
+        
+        logger.info(f"{'='*80}")
+        
+        return response
 
 # Create FastAPI app
 app = FastAPI(
@@ -21,6 +87,9 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
+
+# Add request/response logging middleware
+app.add_middleware(RequestResponseLoggerMiddleware)
 
 # CORS middleware
 app.add_middleware(

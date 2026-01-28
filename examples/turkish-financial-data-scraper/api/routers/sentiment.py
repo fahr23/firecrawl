@@ -44,11 +44,11 @@ async def get_sentiment_overview(
             SELECT 
                 COUNT(*) as total_analyses,
                 COUNT(DISTINCT disclosure_id) as unique_disclosures,
-                AVG(confidence) as avg_confidence,
+                AVG(sentiment_score) as avg_sentiment_score,
                 COUNT(CASE WHEN overall_sentiment = 'positive' THEN 1 END) as positive_count,
                 COUNT(CASE WHEN overall_sentiment = 'neutral' THEN 1 END) as neutral_count,
                 COUNT(CASE WHEN overall_sentiment = 'negative' THEN 1 END) as negative_count,
-                MAX(analyzed_at) as latest_analysis
+                MAX(created_at) as latest_analysis
             FROM kap_disclosure_sentiment
         """)
         
@@ -57,12 +57,12 @@ async def get_sentiment_overview(
         # Get recent sentiment trends
         cursor.execute("""
             SELECT 
-                DATE(analyzed_at) as analysis_date,
+                DATE(created_at) as analysis_date,
                 overall_sentiment,
                 COUNT(*) as count
             FROM kap_disclosure_sentiment
-            WHERE analyzed_at >= CURRENT_DATE - INTERVAL '30 days'
-            GROUP BY DATE(analyzed_at), overall_sentiment
+            WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'
+            GROUP BY DATE(created_at), overall_sentiment
             ORDER BY analysis_date DESC, overall_sentiment
             LIMIT 90
         """)
@@ -74,8 +74,8 @@ async def get_sentiment_overview(
             SELECT 
                 d.company_name,
                 COUNT(*) as analysis_count,
-                AVG(s.confidence) as avg_confidence,
-                MAX(s.analyzed_at) as latest_analysis
+                AVG(s.sentiment_score) as avg_sentiment_score,
+                MAX(s.created_at) as latest_analysis
             FROM kap_disclosure_sentiment s
             JOIN kap_disclosures d ON s.disclosure_id = d.id
             GROUP BY d.company_name
@@ -94,7 +94,7 @@ async def get_sentiment_overview(
                 "overview": {
                     "total_analyses": stats[0],
                     "unique_disclosures": stats[1],
-                    "average_confidence": round(stats[2] or 0, 3),
+                    "average_sentiment_score": round(stats[2] or 0, 3),
                     "sentiment_distribution": {
                         "positive": stats[3],
                         "neutral": stats[4], 
@@ -113,7 +113,7 @@ async def get_sentiment_overview(
                     {
                         "company_name": company[0],
                         "analysis_count": company[1],
-                        "avg_confidence": round(company[2], 3),
+                        "avg_sentiment_score": round(company[2], 3),
                         "latest_analysis": company[3]
                     } for company in top_companies
                 ]
@@ -154,15 +154,10 @@ async def get_disclosure_sentiment(
                 d.disclosure_date,
                 d.content,
                 s.overall_sentiment,
-                s.confidence,
-                s.impact_horizon,
-                s.key_drivers,
-                s.risk_flags,
-                s.tone_descriptors,
-                s.target_audience,
-                s.analysis_text,
-                s.risk_level,
-                s.analyzed_at
+                s.sentiment_score,
+                s.key_sentiments,
+                s.analysis_notes,
+                s.created_at
             FROM kap_disclosures d
             LEFT JOIN kap_disclosure_sentiment s ON d.id = s.disclosure_id
             WHERE d.id = %s
@@ -188,15 +183,10 @@ async def get_disclosure_sentiment(
                 },
                 "sentiment": {
                     "overall_sentiment": result[5],
-                    "confidence": result[6],
-                    "impact_horizon": result[7],
-                    "key_drivers": result[8],
-                    "risk_flags": result[9],
-                    "tone_descriptors": result[10],
-                    "target_audience": result[11],
-                    "analysis_text": result[12],
-                    "risk_level": result[13],
-                    "analyzed_at": result[14]
+                    "sentiment_score": result[6],
+                    "key_sentiments": result[7],
+                    "analysis_notes": result[8],
+                    "analyzed_at": result[9]
                 } if result[5] else None
             },
             "timestamp": datetime.now().isoformat()
@@ -242,18 +232,15 @@ async def get_company_sentiment_history(
                 d.disclosure_type,
                 d.disclosure_date,
                 s.overall_sentiment,
-                s.confidence,
-                s.impact_horizon,
-                s.key_drivers,
-                s.risk_flags,
-                s.risk_level,
-                s.analysis_text,
-                s.analyzed_at
+                s.sentiment_score,
+                s.key_sentiments,
+                s.analysis_notes,
+                s.created_at
             FROM kap_disclosures d
             JOIN kap_disclosure_sentiment s ON d.id = s.disclosure_id
             WHERE d.company_name = %s 
-                AND s.analyzed_at >= CURRENT_DATE - INTERVAL '%s days'
-            ORDER BY s.analyzed_at DESC
+                AND s.created_at >= CURRENT_DATE - INTERVAL '%s days'
+            ORDER BY s.created_at DESC
             LIMIT %s
         """, (company_name, days_back, limit))
         
@@ -263,14 +250,14 @@ async def get_company_sentiment_history(
         cursor.execute("""
             SELECT 
                 COUNT(*) as total_analyses,
-                AVG(confidence) as avg_confidence,
+                AVG(sentiment_score) as avg_sentiment_score,
                 COUNT(CASE WHEN overall_sentiment = 'positive' THEN 1 END) as positive_count,
                 COUNT(CASE WHEN overall_sentiment = 'neutral' THEN 1 END) as neutral_count,
                 COUNT(CASE WHEN overall_sentiment = 'negative' THEN 1 END) as negative_count
             FROM kap_disclosures d
             JOIN kap_disclosure_sentiment s ON d.id = s.disclosure_id
             WHERE d.company_name = %s 
-                AND s.analyzed_at >= CURRENT_DATE - INTERVAL '%s days'
+                AND s.created_at >= CURRENT_DATE - INTERVAL '%s days'
         """, (company_name, days_back))
         
         summary = cursor.fetchone()
@@ -285,7 +272,7 @@ async def get_company_sentiment_history(
                 "period": f"Last {days_back} days",
                 "summary": {
                     "total_analyses": summary[0],
-                    "average_confidence": round(summary[1] or 0, 3),
+                    "average_sentiment_score": round(summary[1] or 0, 3),
                     "sentiment_distribution": {
                         "positive": summary[2],
                         "neutral": summary[3],
@@ -299,13 +286,10 @@ async def get_company_sentiment_history(
                         "disclosure_date": result[2],
                         "sentiment": {
                             "overall_sentiment": result[3],
-                            "confidence": result[4],
-                            "impact_horizon": result[5],
-                            "key_drivers": result[6],
-                            "risk_flags": result[7],
-                            "risk_level": result[8],
-                            "analysis_text": result[9][:200] + "..." if len(result[9]) > 200 else result[9],
-                            "analyzed_at": result[10]
+                            "sentiment_score": result[4],
+                            "key_sentiments": result[5],
+                            "analysis_notes": result[6],
+                            "analyzed_at": result[7]
                         }
                     } for result in results
                 ]
@@ -605,14 +589,14 @@ async def get_sentiment_trends(
         # Base query for trends
         base_query = """
             SELECT 
-                DATE(s.analyzed_at) as trend_date,
+                DATE(s.created_at) as trend_date,
                 s.overall_sentiment,
                 COUNT(*) as count,
-                AVG(s.confidence) as avg_confidence,
+                AVG(s.sentiment_score) as avg_sentiment_score,
                 COUNT(DISTINCT d.company_name) as unique_companies
             FROM kap_disclosure_sentiment s
             JOIN kap_disclosures d ON s.disclosure_id = d.id
-            WHERE s.analyzed_at >= CURRENT_DATE - INTERVAL %s
+            WHERE s.created_at >= CURRENT_DATE - INTERVAL %s
         """
         
         params = [f"{days_back} days"]
@@ -622,7 +606,7 @@ async def get_sentiment_trends(
             params.append(company_name)
         
         base_query += """
-            GROUP BY DATE(s.analyzed_at), s.overall_sentiment
+            GROUP BY DATE(s.created_at), s.overall_sentiment
             ORDER BY trend_date DESC, s.overall_sentiment
         """
         
@@ -634,13 +618,13 @@ async def get_sentiment_trends(
             SELECT 
                 COUNT(*) as total_analyses,
                 COUNT(DISTINCT d.company_name) as total_companies,
-                AVG(s.confidence) as overall_confidence,
+                AVG(s.sentiment_score) as overall_sentiment_score,
                 COUNT(CASE WHEN s.overall_sentiment = 'positive' THEN 1 END) as positive_total,
                 COUNT(CASE WHEN s.overall_sentiment = 'neutral' THEN 1 END) as neutral_total,
                 COUNT(CASE WHEN s.overall_sentiment = 'negative' THEN 1 END) as negative_total
             FROM kap_disclosure_sentiment s
             JOIN kap_disclosures d ON s.disclosure_id = d.id
-            WHERE s.analyzed_at >= CURRENT_DATE - INTERVAL %s
+            WHERE s.created_at >= CURRENT_DATE - INTERVAL %s
         """
         
         summary_params = [f"{days_back} days"]
@@ -662,7 +646,7 @@ async def get_sentiment_trends(
                 "summary": {
                     "total_analyses": summary[0],
                     "total_companies": summary[1],
-                    "overall_confidence": round(summary[2] or 0, 3),
+                    "overall_sentiment_score": round(summary[2] or 0, 3),
                     "sentiment_totals": {
                         "positive": summary[3],
                         "neutral": summary[4],

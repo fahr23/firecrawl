@@ -228,15 +228,10 @@ async def get_report_sentiment(
             cursor.execute("""
                 SELECT 
                     s.overall_sentiment,
-                    s.confidence,
-                    s.impact_horizon,
-                    s.key_drivers,
-                    s.risk_flags,
-                    s.tone_descriptors,
-                    s.target_audience,
-                    s.analysis_text,
-                    s.risk_level,
-                    s.analyzed_at
+                    s.sentiment_score,
+                    s.key_sentiments,
+                    s.analysis_notes,
+                    s.created_at
                 FROM kap_disclosure_sentiment s
                 WHERE s.disclosure_id = %s
             """, (report_id,))
@@ -248,15 +243,10 @@ async def get_report_sentiment(
             return {
                 "report_id": report_id,
                 "overall_sentiment": sentiment[0],
-                "confidence": sentiment[1],
-                "impact_horizon": sentiment[2],
-                "key_drivers": list(sentiment[3]) if sentiment[3] else [],
-                "risk_flags": list(sentiment[4]) if sentiment[4] else [],
-                "tone_descriptors": list(sentiment[5]) if sentiment[5] else [],
-                "target_audience": sentiment[6],
-                "analysis_text": sentiment[7],
-                "risk_level": sentiment[8],
-                "analyzed_at": sentiment[9].isoformat() if sentiment[9] else None
+                "sentiment_score": sentiment[1],
+                "key_sentiments": sentiment[2],
+                "analysis_notes": sentiment[3],
+                "analyzed_at": sentiment[4].isoformat() if sentiment[4] else None
             }
         finally:
             db_manager.return_connection(conn)
@@ -328,15 +318,14 @@ async def query_sentiment(
                     d.company_name,
                     d.disclosure_date,
                     s.overall_sentiment,
-                    s.confidence,
-                    s.impact_horizon,
-                    s.key_drivers,
-                    s.risk_flags,
-                    s.analyzed_at
+                    s.sentiment_score,
+                    s.key_sentiments,
+                    s.analysis_notes,
+                    s.created_at
                 FROM kap_disclosures d
                 JOIN kap_disclosure_sentiment s ON d.id = s.disclosure_id
                 WHERE {where_clause}
-                ORDER BY s.analyzed_at DESC
+                ORDER BY s.created_at DESC
                 LIMIT %s
             """
             params.append(limit)
@@ -352,11 +341,10 @@ async def query_sentiment(
                     "company_name": row[1],
                     "report_date": row[2].isoformat() if row[2] else None,
                     "overall_sentiment": row[3],
-                    "confidence": row[4],
-                    "impact_horizon": row[5],
-                    "key_drivers": list(row[6]) if row[6] else [],
-                    "risk_flags": list(row[7]) if row[7] else [],
-                    "analyzed_at": row[8].isoformat() if row[8] else None
+                    "sentiment_score": row[4],
+                    "key_sentiments": row[5],
+                    "analysis_notes": row[6],
+                    "analyzed_at": row[7].isoformat() if row[7] else None
                 })
 
             return {
