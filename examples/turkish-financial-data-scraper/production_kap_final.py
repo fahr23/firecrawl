@@ -160,10 +160,13 @@ class ProductionKAPScraper:
         try:
             logger.info(f"Scraping: {url}")
             
+            # For KAP homepage, use much longer wait to allow dynamic loading
+            wait_time = 15000 if url == self.disclosures_url else 5000
+            
             payload = {
                 "url": url,
-                "wait_after_load": 5000,  # Wait 5 seconds for JavaScript to render
-                "timeout": 30000          # 30 second timeout
+                "wait_after_load": wait_time,  # 15 seconds for all dynamic content to load
+                "timeout": 60000,  # 60 second timeout
             }
             
             async with aiohttp.ClientSession() as session:
@@ -190,6 +193,96 @@ class ProductionKAPScraper:
         except Exception as e:
             logger.error(f"Scraping failed {url}: {e}")
             return {"success": False, "url": url, "error": str(e)}
+    
+    async def get_pdf_attachments_from_detail(self, detail_url: str) -> list:
+        """Extract PDF attachment URLs from disclosure detail page"""
+        import aiohttp
+        from bs4 import BeautifulSoup
+        
+        if not detail_url:
+            return []
+        
+        try:
+            # Scrape the detail page
+            result = await self.scrape_url(detail_url)
+            if not result.get('success'):
+                return []
+            
+            content = result.get('data', {}).get('html', '')
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Find all download links for PDF files
+            pdf_attachments = []
+            download_links = soup.find_all('a', href=lambda x: x and '/api/file/download/' in x)
+            
+            for link in download_links:
+                href = link.get('href', '')
+                text = link.get_text(strip=True)
+                
+                if href and ('pdf' in text.lower() or href):
+                    full_url = f"https://kap.org.tr{href}" if href.startswith('/') else href
+                    pdf_attachments.append({
+                        'url': full_url,
+                        'filename': text
+                    })
+            
+            logger.info(f"Found {len(pdf_attachments)} PDF attachments on {detail_url}")
+            return pdf_attachments
+            
+        except Exception as e:
+            logger.error(f"Error extracting PDF attachments from {detail_url}: {e}")
+            return []
+    
+    async def scrape_pdf(self, pdf_url: str) -> dict:
+        """Scrape PDF content using pdfplumber for direct PDF parsing"""
+        import io
+        import aiohttp
+        import pdfplumber
+        
+        if not pdf_url:
+            return {"success": False, "error": "No PDF URL provided"}
+        
+        try:
+            logger.info(f"Fetching PDF: {pdf_url}")
+            
+            # Download PDF file directly
+            async with aiohttp.ClientSession() as session:
+                async with session.get(pdf_url, timeout=aiohttp.ClientTimeout(total=60)) as response:
+                    if response.status != 200:
+                        logger.warning(f"PDF fetch failed {pdf_url}: {response.status}")
+                        return {"success": False, "error": f"Status {response.status}"}
+                    
+                    # Read PDF content
+                    pdf_content = await response.read()
+                    
+                    # Parse PDF using pdfplumber
+                    pdf_file = io.BytesIO(pdf_content)
+                    
+                    try:
+                        with pdfplumber.open(pdf_file) as pdf:
+                            # Extract text from all pages
+                            text_parts = []
+                            for page in pdf.pages:
+                                page_text = page.extract_text()
+                                if page_text:
+                                    text_parts.append(page_text)
+                            
+                            full_text = '\n\n'.join(text_parts)
+                            
+                            if len(full_text) > 100:  # If we got substantial content
+                                logger.info(f"Extracted PDF text: {len(full_text):,} chars from {len(pdf.pages)} pages")
+                                return {"success": True, "text": full_text, "length": len(full_text), "pages": len(pdf.pages)}
+                            else:
+                                logger.warning(f"PDF extraction returned minimal content: {len(full_text)} chars")
+                                return {"success": False, "error": "Minimal content extracted", "text": full_text}
+                    
+                    except Exception as pdf_error:
+                        logger.error(f"PDF parsing error {pdf_url}: {pdf_error}")
+                        return {"success": False, "error": f"PDF parse error: {str(pdf_error)}"}
+            
+        except Exception as e:
+            logger.error(f"PDF scraping failed {pdf_url}: {e}")
+            return {"success": False, "error": str(e)}
 
     
     def parse_kap_disclosures(self, html: str, markdown: str) -> list:
@@ -639,16 +732,18 @@ class ProductionKAPScraper:
                 try:
                     # Generate PDF URL from detail URL
                     pdf_url = self.generate_pdf_url(item.get('detail_url', ''))
+                    pdf_text = item.get('pdf_text', '')
                     
                     cursor.execute("""
                         INSERT INTO kap_disclosures 
                         (disclosure_id, company_name, disclosure_type, disclosure_date, 
-                         timestamp, language_info, has_attachment, detail_url, pdf_url, content, data, scraped_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         timestamp, language_info, has_attachment, detail_url, pdf_url, pdf_text, content, data, scraped_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (disclosure_id) DO UPDATE SET
                             content = EXCLUDED.content,
                             data = EXCLUDED.data,
                             pdf_url = EXCLUDED.pdf_url,
+                            pdf_text = EXCLUDED.pdf_text,
                             scraped_at = EXCLUDED.scraped_at
                     """, (
                         item['disclosure_id'],
@@ -660,6 +755,7 @@ class ProductionKAPScraper:
                         item['has_attachment'],
                         item['detail_url'],
                         pdf_url,
+                        pdf_text,
                         item['content'],
                         json.dumps(item['data']),
                         datetime.now()
@@ -843,6 +939,43 @@ class ProductionKAPScraper:
                             "markdown_chars": len(markdown)
                         }
                     }
+            
+            # Step 4.5: Fetch PDF attachments and content for items with detail URLs
+            logger.info("Fetching PDF content for disclosures...")
+            pdf_fetch_count = 0
+            total_pdf_chars = 0
+            
+            for item in items:
+                detail_url = item.get('detail_url', '')
+                if detail_url:
+                    # Get PDF attachments from detail page
+                    attachments = await self.get_pdf_attachments_from_detail(detail_url)
+                    
+                    if attachments:
+                        # Extract text from all PDF attachments
+                        pdf_texts = []
+                        for attachment in attachments:
+                            pdf_result = await self.scrape_pdf(attachment['url'])
+                            if pdf_result.get('success'):
+                                text = pdf_result.get('text', '')
+                                if text:
+                                    pdf_texts.append(f"=== {attachment['filename']} ===\n{text}")
+                                    pdf_fetch_count += 1
+                        
+                        # Combine all PDF texts
+                        combined_text = '\n\n'.join(pdf_texts)
+                        item['pdf_text'] = combined_text
+                        total_pdf_chars += len(combined_text)
+                        
+                        if combined_text:
+                            logger.info(f"PDF extracted for {item['company_name']}: {len(combined_text):,} chars from {len(attachments)} files")
+                    else:
+                        item['pdf_text'] = ''
+                        logger.debug(f"No PDF attachments found for {item['company_name']}")
+                else:
+                    item['pdf_text'] = ''
+            
+            logger.info(f"Successfully fetched {pdf_fetch_count} PDF files, total {total_pdf_chars:,} chars extracted")
             
             # Step 5: Save to database
             saved_count = await self.save_to_database(items)
