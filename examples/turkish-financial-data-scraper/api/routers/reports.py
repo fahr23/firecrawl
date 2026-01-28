@@ -2,6 +2,7 @@
 Report query endpoints
 """
 import logging
+import json
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
 from datetime import date
@@ -111,7 +112,111 @@ async def get_kap_reports(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/kap/pdf-urls")
+async def get_pdf_urls(
+    company_name: Optional[str] = Query(None, description="Filter by company name"),
+    start_date: Optional[date] = Query(None, description="Start date filter"),
+    end_date: Optional[date] = Query(None, description="End date filter"),
+    limit: int = Query(100, ge=1, le=1000, description="Number of results"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
+    db_manager: DatabaseManager = Depends(get_db_manager)
+):
+    """
+    Get PDF URLs for KAP disclosures
+    
+    Returns PDF download links for financial disclosures.
+    Supports filtering by company name and date range.
+    
+    Example response:
+    ```json
+    {
+        "total": 10,
+        "results": [
+            {
+                "report_id": 1,
+                "disclosure_id": "12345",
+                "company_name": "ABC Corp",
+                "disclosure_type": "Financial Results",
+                "disclosure_date": "2026-01-28",
+                "pdf_url": "https://kap.org.tr/tr/BildirimPdf/12345",
+                "has_pdf": true
+            }
+        ]
+    }
+    ```
+    """
+    try:
+        conn = db_manager.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SET search_path TO turkish_financial,public;")
+            
+            # Build WHERE conditions
+            conditions = []
+            params = []
+            
+            if company_name:
+                conditions.append("company_name ILIKE %s")
+                params.append(f"%{company_name}%")
+            
+            if start_date:
+                conditions.append("disclosure_date >= %s")
+                params.append(start_date)
+            
+            if end_date:
+                conditions.append("disclosure_date <= %s")
+                params.append(end_date)
+            
+            where_clause = " AND ".join(conditions) if conditions else "1=1"
+            
+            # Get PDF information
+            query = f"""
+                SELECT 
+                    id,
+                    disclosure_id,
+                    company_name,
+                    disclosure_type,
+                    disclosure_date,
+                    pdf_url,
+                    CASE 
+                        WHEN pdf_url IS NOT NULL AND pdf_url != '' THEN true 
+                        ELSE false 
+                    END as has_pdf
+                FROM kap_disclosures
+                WHERE {where_clause}
+                ORDER BY disclosure_date DESC, scraped_at DESC
+                LIMIT %s OFFSET %s
+            """
+            params.extend([limit, offset])
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            results = []
+            for row in rows:
+                results.append({
+                    "report_id": row[0],
+                    "disclosure_id": row[1],
+                    "company_name": row[2],
+                    "disclosure_type": row[3],
+                    "disclosure_date": row[4].isoformat() if row[4] else None,
+                    "pdf_url": row[5],
+                    "has_pdf": row[6]
+                })
+            
+            return {
+                "total": len(results),
+                "results": results
+            }
+        finally:
+            db_manager.return_connection(conn)
+    except Exception as e:
+        logger.error(f"Failed to get PDF URLs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/kap/{report_id}", response_model=ReportResponse)
+
 async def get_kap_report(
     report_id: int,
     db_manager: DatabaseManager = Depends(get_db_manager)
@@ -317,6 +422,8 @@ async def query_sentiment(
                     d.id,
                     d.company_name,
                     d.disclosure_date,
+                    d.disclosure_type,
+                    d.pdf_url,
                     s.overall_sentiment,
                     s.sentiment_score,
                     s.key_sentiments,
@@ -340,11 +447,14 @@ async def query_sentiment(
                     "company_code": "",
                     "company_name": row[1],
                     "report_date": row[2].isoformat() if row[2] else None,
-                    "overall_sentiment": row[3],
-                    "sentiment_score": row[4],
-                    "key_sentiments": row[5],
-                    "analysis_notes": row[6],
-                    "analyzed_at": row[7].isoformat() if row[7] else None
+                    "disclosure_type": row[3],
+                    "pdf_url": row[4],
+                    "has_pdf": bool(row[4] and row[4] != ''),
+                    "overall_sentiment": row[5],
+                    "sentiment_score": row[6],
+                    "key_sentiments": json.loads(row[7]) if row[7] and row[7].startswith('[') else (row[7].split(', ') if row[7] else []),
+                    "analysis_notes": row[8],
+                    "analyzed_at": row[9].isoformat() if row[9] else None
                 })
 
             return {
@@ -358,3 +468,4 @@ async def query_sentiment(
     except Exception as e:
         logger.error(f"Failed to query sentiment: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+

@@ -377,7 +377,7 @@ async def analyze_sentiment_bulk(
                     """, (
                         sentiment_data['overall_sentiment'],
                         sentiment_data.get('confidence', sentiment_data.get('sentiment_score', 0.5)),
-                        json.dumps(sentiment_data.get('key_sentiments', [])),
+                        ', '.join(sentiment_data.get('key_sentiments', [])) if isinstance(sentiment_data.get('key_sentiments'), list) else str(sentiment_data.get('key_sentiments', '')),
                         sentiment_data.get('analysis_notes', sentiment_data.get('analysis_text', '')),
                         datetime.now(),
                         disclosure[0]
@@ -518,7 +518,7 @@ async def analyze_recent_sentiment(
                     """, (
                         sentiment_data['overall_sentiment'],
                         sentiment_data.get('confidence', sentiment_data.get('sentiment_score', 0.5)),
-                        json.dumps(sentiment_data.get('key_sentiments', [])),
+                        ', '.join(sentiment_data.get('key_sentiments', [])) if isinstance(sentiment_data.get('key_sentiments'), list) else str(sentiment_data.get('key_sentiments', '')),
                         sentiment_data.get('analysis_notes', sentiment_data.get('analysis_text', '')),
                         datetime.now(),
                         disclosure[0]
@@ -533,7 +533,7 @@ async def analyze_recent_sentiment(
                         disclosure[0],
                         sentiment_data['overall_sentiment'],
                         sentiment_data.get('confidence', sentiment_data.get('sentiment_score', 0.5)),
-                        json.dumps(sentiment_data.get('key_sentiments', [])),
+                        ', '.join(sentiment_data.get('key_sentiments', [])) if isinstance(sentiment_data.get('key_sentiments'), list) else str(sentiment_data.get('key_sentiments', '')),
                         sentiment_data.get('analysis_notes', sentiment_data.get('analysis_text', '')),
                         datetime.now()
                     ))
