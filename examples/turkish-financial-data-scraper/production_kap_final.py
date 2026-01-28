@@ -320,6 +320,9 @@ class ProductionKAPScraper:
         """Extract Turkish company name"""
         import re
         
+        # Remove common prefixes like "1-", "2-", "3-" etc. from summary tables
+        text = re.sub(r'^\d+-', '', text)
+        
         patterns = [
             r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s\.\-]{2,}(?:A\.Ş\.?|A\.S\.?))',
             r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s\.\-]{2,}BANKASI)',
@@ -589,6 +592,24 @@ class ProductionKAPScraper:
             logger.error(f"Error during sentiment analysis for {company_name}: {e}", exc_info=True)
             return {}
 
+    def generate_pdf_url(self, detail_url: str) -> str:
+        """Generate PDF URL from detail URL
+        
+        Converts: https://kap.org.tr/tr/Bildirim/1537677
+        To:       https://kap.org.tr/tr/api/BildirimPdf/1537677
+        """
+        if not detail_url:
+            return ""
+        
+        import re
+        # Extract ID from detail URL
+        match = re.search(r'/Bildirim/(\d+)', detail_url)
+        if match:
+            disclosure_id = match.group(1)
+            return f"https://kap.org.tr/tr/api/BildirimPdf/{disclosure_id}"
+        
+        return ""
+
     async def save_to_database(self, items: list) -> int:
         """Save items to PostgreSQL database"""
         try:
@@ -616,14 +637,18 @@ class ProductionKAPScraper:
                     continue
                     
                 try:
+                    # Generate PDF URL from detail URL
+                    pdf_url = self.generate_pdf_url(item.get('detail_url', ''))
+                    
                     cursor.execute("""
                         INSERT INTO kap_disclosures 
                         (disclosure_id, company_name, disclosure_type, disclosure_date, 
-                         timestamp, language_info, has_attachment, detail_url, content, data, scraped_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (disclosure_id, company_name, disclosure_type) DO UPDATE SET
+                         timestamp, language_info, has_attachment, detail_url, pdf_url, content, data, scraped_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (disclosure_id) DO UPDATE SET
                             content = EXCLUDED.content,
                             data = EXCLUDED.data,
+                            pdf_url = EXCLUDED.pdf_url,
                             scraped_at = EXCLUDED.scraped_at
                     """, (
                         item['disclosure_id'],
@@ -634,6 +659,7 @@ class ProductionKAPScraper:
                         item['language_info'],
                         item['has_attachment'],
                         item['detail_url'],
+                        pdf_url,
                         item['content'],
                         json.dumps(item['data']),
                         datetime.now()
