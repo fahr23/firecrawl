@@ -17,6 +17,15 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Try to import Firecrawl API
+try:
+    from firecrawl import FirecrawlApp
+    FIRECRAWL_AVAILABLE = True
+except ImportError:
+    FIRECRAWL_AVAILABLE = False
+    logger_temp = logging.getLogger(__name__)
+    logger_temp.warning("Firecrawl SDK not available, using direct Playwright service")
+
 # Try to import LLM analyzer for advanced sentiment analysis
 try:
     from utils.llm_analyzer import (
@@ -42,12 +51,23 @@ load_dotenv()
 
 
 class ProductionKAPScraper:
-    """Production-ready KAP scraper with Playwright service"""
+    """Production-ready KAP scraper with Firecrawl API"""
     
     def __init__(self, use_test_data=False, use_llm=False, llm_provider: str | None = None):
         """Initialize production scraper"""
-        # Use Playwright service directly for JavaScript rendering
+        # Initialize Firecrawl API client for advanced scraping with actions
+        self.firecrawl_api_key = os.getenv("FIRECRAWL_API_KEY", "test-api-key")
+        self.firecrawl_api_url = os.getenv("FIRECRAWL_API_URL", "http://localhost:3002")
+        
+        # Always set playwright_url as fallback
         self.playwright_url = "http://playwright-service:3000/scrape"
+        
+        if FIRECRAWL_AVAILABLE:
+            self.firecrawl = FirecrawlApp(api_key=self.firecrawl_api_key, api_url=self.firecrawl_api_url)
+            logger.info(f"Firecrawl API initialized: {self.firecrawl_api_url}")
+        else:
+            self.firecrawl = None
+            logger.warning("Using Playwright service as fallback")
         
         self.base_url = "https://kap.org.tr"
         self.disclosures_url = f"{self.base_url}/tr/"  # Turkish homepage
@@ -154,20 +174,179 @@ class ProductionKAPScraper:
         return HuggingFaceLocalProvider(model_name=model_name)
     
     async def scrape_url(self, url: str) -> dict:
-        """Scrape URL using Playwright service for JavaScript rendering"""
+        """Scrape URL using Firecrawl API for details, Playwright with button clicking for homepage"""
         import aiohttp
         
         try:
             logger.info(f"Scraping: {url}")
             
-            # For KAP homepage, use much longer wait to allow dynamic loading
-            wait_time = 15000 if url == self.disclosures_url else 5000
+            # For KAP homepage, use Playwright service with button clicking
+            if url == self.disclosures_url:
+                logger.info("Using Playwright service for KAP homepage (with button clicking for pagination)")
+                return await self._click_and_scrape_homepage(url)
+            
+            # For detail pages and other URLs, use Firecrawl API when available
+            elif self.firecrawl:
+                logger.info("Using Firecrawl API for detail page scraping")
+                try:
+                    result = self.firecrawl.scrape(
+                        url,
+                        formats=["html"],
+                        wait_for=3000
+                    )
+                    
+                    # Result is a Document object, access attributes directly
+                    if result and result.html:
+                        html_content = result.html
+                        logger.info(f"Scraped {url}: {len(html_content):,} chars HTML")
+                        
+                        return {
+                            "success": True,
+                            "url": url,
+                            "data": {
+                                "html": html_content,
+                                "markdown": result.markdown or "",
+                                "metadata": {"statusCode": 200, "error": None, "source": "firecrawl_api"}
+                            }
+                        }
+                    else:
+                        logger.warning(f"Firecrawl API failed for {url}")
+                        return await self._fallback_scrape_url(url)
+                
+                except Exception as e:
+                    logger.error(f"Firecrawl API error for {url}: {e}")
+                    return await self._fallback_scrape_url(url)
+            
+            # Fallback to direct Playwright service if Firecrawl not available
+            else:
+                return await self._fallback_scrape_url(url)
+            
+        except Exception as e:
+            logger.error(f"Scraping failed {url}: {e}")
+            return {"success": False, "url": url, "error": str(e)}
+    
+    async def _click_and_scrape_homepage(self, url: str) -> dict:
+        """Click 'Daha Fazla Göster' button repeatedly and scrape all items"""
+        import aiohttp
+        import time
+        
+        try:
+            logger.info(f"Starting interactive scraping of {url} with button clicking")
             
             payload = {
                 "url": url,
-                "wait_after_load": wait_time,  # 15 seconds for all dynamic content to load
-                "timeout": 60000,  # 60 second timeout
+                "wait_after_load": 5000,
+                "timeout": 180000,  # 3 minutes for interactive scraping
             }
+            
+            async with aiohttp.ClientSession() as session:
+                # First load the page
+                async with session.post(self.playwright_url, json=payload) as response:
+                    if response.status != 200:
+                        raise Exception(f"Initial page load failed: {response.status}")
+                    
+                    result = await response.json()
+                    html_content = result.get('content', '')
+                    logger.info(f"Initial page loaded: {len(html_content):,} chars")
+                
+                # Now repeatedly click the "Daha Fazla Göster" button
+                click_payload = {
+                    "url": url,
+                    "wait_after_load": 3000,  # Shorter wait between clicks
+                    "timeout": 180000,
+                    "action": "click",
+                    "selector": "button:has-text('Daha Fazla Göster')"  # Click "Show More" button
+                }
+                
+                max_clicks = 20  # Increased from 10 to 20 to ensure we load all items
+                clicks = 0
+                previous_size = 0
+                stable_count = 0  # Count how many times size hasn't changed
+                max_stable_count = 3  # If size hasn't changed 3 times in a row, we're done
+                
+                while clicks < max_clicks:
+                    try:
+                        # Try to click the button
+                        async with session.post(self.playwright_url, json=click_payload) as response:
+                            if response.status != 200:
+                                logger.info(f"Button click {clicks + 1}: No more button or click failed (status {response.status})")
+                                break
+                            
+                            result = await response.json()
+                            html_content = result.get('content', '')
+                            current_size = len(html_content)
+                            
+                            # Check if content size changed
+                            if current_size == previous_size:
+                                stable_count += 1
+                                logger.info(f"Click {clicks + 1}: Size unchanged (stable_count={stable_count}/{max_stable_count})")
+                                
+                                if stable_count >= max_stable_count:
+                                    logger.info(f"Content size stable after {stable_count} stable clicks, stopping")
+                                    break
+                            else:
+                                stable_count = 0  # Reset counter if size changed
+                            
+                            clicks += 1
+                            previous_size = current_size
+                            size_delta = current_size - previous_size if clicks > 1 else 0
+                            logger.info(f"Click {clicks}: page size: {current_size:,} chars (delta: {size_delta:+,})")
+                            
+                            # Very short delay between clicks
+                            await asyncio.sleep(0.2)
+                    
+                    except Exception as e:
+                        logger.warning(f"Error during button click {clicks + 1}: {e}")
+                        break
+                
+                logger.info(f"Finished clicking button: {clicks} total clicks, Final HTML size: {len(html_content):,} chars")
+                
+                return {
+                    "success": True,
+                    "url": url,
+                    "data": {
+                        "html": html_content,
+                        "markdown": "",
+                        "metadata": {
+                            "statusCode": 200,
+                            "error": None,
+                            "source": "playwright_button_clicking",
+                            "button_clicks": clicks,
+                            "final_html_size": len(html_content)
+                        }
+                    }
+                }
+        
+        except Exception as e:
+            logger.error(f"Button clicking scrape failed for {url}: {e}")
+            # Fallback to simple scrape without clicking
+            return await self._fallback_scrape_url(url)
+    
+    async def _fallback_scrape_url(self, url: str) -> dict:
+        """Fallback scraping using direct Playwright service"""
+        import aiohttp
+        
+        try:
+            logger.info(f"Using Playwright service fallback for: {url}")
+            
+            # For homepage, use much longer wait to allow JavaScript pagination to auto-load
+            # Try waiting for the "Daha Fazla" button to disappear (indicating all items loaded)
+            if url == self.disclosures_url:
+                wait_time = 60000  # 60 second wait for pagination to complete
+                selector = "button:has-text('Daha Fazla')"  # Check if button still exists
+            else:
+                wait_time = 5000
+                selector = None
+            
+            payload = {
+                "url": url,
+                "wait_after_load": wait_time,
+                "timeout": 120000,  # 120 second timeout for homepage
+            }
+            
+            if selector and url == self.disclosures_url:
+                # Try to wait for the button to disappear (all items loaded)
+                payload["check_selector"] = ".disclosure-list-container"  # Generic selector to ensure page loaded
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(self.playwright_url, json=payload) as response:
@@ -180,18 +359,19 @@ class ProductionKAPScraper:
                     
                     data = {
                         "html": html_content,
-                        "markdown": "",  # Playwright service doesn't return markdown
+                        "markdown": "",
                         "metadata": {
                             "statusCode": result.get('pageStatusCode', 200),
-                            "error": result.get('pageError')
+                            "error": result.get('pageError'),
+                            "source": "playwright_service_fallback"
                         }
                     }
                     
-                    logger.info(f"Scraped {url}: {len(html_content):,} chars HTML")
+                    logger.info(f"Scraped {url}: {len(html_content):,} chars HTML (fallback)")
                     return {"success": True, "url": url, "data": data}
             
         except Exception as e:
-            logger.error(f"Scraping failed {url}: {e}")
+            logger.error(f"Fallback scraping failed {url}: {e}")
             return {"success": False, "url": url, "error": str(e)}
     
     async def get_pdf_attachments_from_detail(self, detail_url: str) -> list:

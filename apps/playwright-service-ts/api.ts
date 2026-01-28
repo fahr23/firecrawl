@@ -81,6 +81,9 @@ interface UrlModel {
   headers?: { [key: string]: string };
   check_selector?: string;
   skip_tls_verification?: boolean;
+  action?: string; // 'click', 'write', 'press', etc.
+  selector?: string; // selector for the action
+  value?: string; // value for write/type actions
 }
 
 let browser: Browser;
@@ -220,7 +223,7 @@ app.get('/health', async (req: Request, res: Response) => {
 });
 
 app.post('/scrape', async (req: Request, res: Response) => {
-  const { url, wait_after_load = 0, timeout = 15000, headers, check_selector, skip_tls_verification = false }: UrlModel = req.body;
+  const { url, wait_after_load = 0, timeout = 15000, headers, check_selector, skip_tls_verification = false, action, selector, value }: UrlModel = req.body;
 
   console.log(`================= Scrape Request =================`);
   console.log(`URL: ${url}`);
@@ -229,6 +232,11 @@ app.post('/scrape', async (req: Request, res: Response) => {
   console.log(`Headers: ${headers ? JSON.stringify(headers) : 'None'}`);
   console.log(`Check Selector: ${check_selector ? check_selector : 'None'}`);
   console.log(`Skip TLS Verification: ${skip_tls_verification}`);
+  if (action) {
+    console.log(`Action: ${action}`);
+    console.log(`Selector: ${selector}`);
+    console.log(`Value: ${value || 'None'}`);
+  }
   console.log(`==================================================`);
 
   if (!url) {
@@ -261,6 +269,40 @@ app.post('/scrape', async (req: Request, res: Response) => {
     }
 
     const result = await scrapePage(page, url, 'load', wait_after_load, timeout, check_selector);
+    
+    // If an action is requested, perform it
+    if (action && selector && result.status === 200) {
+      try {
+        switch (action.toLowerCase()) {
+          case 'click':
+            console.log(`Clicking selector: ${selector}`);
+            await page.click(selector);
+            await page.waitForTimeout(wait_after_load || 1000);
+            break;
+          case 'write':
+          case 'type':
+            console.log(`Writing to selector: ${selector}, value: ${value}`);
+            await page.fill(selector, value || '');
+            await page.waitForTimeout(wait_after_load || 1000);
+            break;
+          case 'press':
+            console.log(`Pressing key: ${value} on selector: ${selector}`);
+            await page.press(selector, value || 'Enter');
+            await page.waitForTimeout(wait_after_load || 1000);
+            break;
+          default:
+            console.warn(`Unknown action: ${action}`);
+        }
+        
+        // Get updated content after action
+        const updatedContent = await page.content();
+        result.content = updatedContent;
+      } catch (actionError) {
+        console.warn(`Action ${action} failed (selector not found or error): ${actionError}`);
+        // Continue with the result we have, don't fail
+      }
+    }
+    
     const pageError = result.status !== 200 ? getError(result.status) : undefined;
 
     if (!pageError) {
