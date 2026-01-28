@@ -83,7 +83,7 @@ async def get_sentiment_overview(
         top_companies = cursor.fetchall()
         
         cursor.close()
-        conn.close()
+        db_manager.return_connection(conn)
         
         return {
             "success": True,
@@ -118,6 +118,9 @@ async def get_sentiment_overview(
             "timestamp": datetime.now().isoformat()
         }
         
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted when getting sentiment overview: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable, please try again later")
     except Exception as e:
         logger.error(f"Error getting sentiment overview: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -164,7 +167,7 @@ async def get_disclosure_sentiment(
         
         result = cursor.fetchone()
         cursor.close()
-        conn.close()
+        db_manager.return_connection(conn)
         
         if not result:
             raise HTTPException(status_code=404, detail="Disclosure not found")
@@ -198,6 +201,12 @@ async def get_disclosure_sentiment(
         
     except HTTPException:
         raise
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted when getting disclosure sentiment: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable, please try again later")
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted when getting disclosure sentiment: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable, please try again later")
     except Exception as e:
         logger.error(f"Error getting disclosure sentiment: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -264,7 +273,7 @@ async def get_company_sentiment_history(
         summary = cursor.fetchone()
         
         cursor.close()
-        conn.close()
+        db_manager.return_connection(conn)
         
         return {
             "success": True,
@@ -301,6 +310,9 @@ async def get_company_sentiment_history(
             "timestamp": datetime.now().isoformat()
         }
         
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted when getting company sentiment history: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable, please try again later")
     except Exception as e:
         logger.error(f"Error getting company sentiment history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -319,7 +331,7 @@ async def analyze_sentiment_bulk(
     """
     try:
         # Initialize production scraper
-        scraper = ProductionKAPScraper()
+        scraper = ProductionKAPScraper(use_test_data=False, use_llm=request.use_llm)
         
         conn = db_manager.get_connection()
         cursor = conn.cursor()
@@ -353,7 +365,8 @@ async def analyze_sentiment_bulk(
                 sentiment_data = scraper.analyze_sentiment(
                     content=disclosure[4],
                     company_name=disclosure[2],
-                    disclosure_type=disclosure[3]
+                    disclosure_type=disclosure[3],
+                    use_llm=request.use_llm
                 )
                 
                 # Check if analysis already exists
@@ -428,7 +441,7 @@ async def analyze_sentiment_bulk(
         
         conn.commit()
         cursor.close()
-        conn.close()
+        db_manager.return_connection(conn)
         
         return SentimentAnalysisResponse(
             total_analyzed=len(request.report_ids),
@@ -437,6 +450,9 @@ async def analyze_sentiment_bulk(
             results=results
         )
         
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted during bulk sentiment analysis: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable, please try again later")
     except Exception as e:
         logger.error(f"Error in bulk sentiment analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -455,8 +471,8 @@ async def analyze_recent_sentiment(
     - **force_reanalyze**: Re-analyze existing sentiment data
     """
     try:
-        # Initialize production scraper
-        scraper = ProductionKAPScraper()
+        # Initialize production scraper with HuggingFace LLM enabled by default
+        scraper = ProductionKAPScraper(use_llm=True, llm_provider="huggingface")
         
         conn = db_manager.get_connection()
         cursor = conn.cursor()
@@ -567,7 +583,7 @@ async def analyze_recent_sentiment(
         
         conn.commit()
         cursor.close()
-        conn.close()
+        db_manager.return_connection(conn)
         
         return ScrapeResponse(
             success=True,
@@ -579,6 +595,9 @@ async def analyze_recent_sentiment(
             }
         )
         
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted during automatic sentiment analysis: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable, please try again later")
     except Exception as e:
         logger.error(f"Error in automatic sentiment analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -683,6 +702,9 @@ async def get_sentiment_trends(
             "timestamp": datetime.now().isoformat()
         }
         
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted when getting sentiment trends: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable, please try again later")
     except Exception as e:
         logger.error(f"Error getting sentiment trends: {e}")
         raise HTTPException(status_code=500, detail=str(e))

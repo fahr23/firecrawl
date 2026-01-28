@@ -323,6 +323,127 @@ class GeminiProvider(LLMProvider):
         return chunks
 
 
+class HuggingFaceLocalProvider(LLMProvider):
+    """HuggingFace local sentiment analysis provider"""
+
+    def __init__(self, model_name: str = "savasy/bert-base-turkish-sentiment-cased", disclosure_type: str = 'Diğer', company_name: str = ""):
+        try:
+            from transformers import pipeline
+            self.classifier = pipeline(
+                "sentiment-analysis",
+                model=model_name,
+                tokenizer=model_name
+            )
+        except (ImportError, Exception) as e:
+            logger.error(f"Failed to initialize HuggingFace pipeline: {e}")
+            self.classifier = None
+        self.disclosure_type = disclosure_type
+        self.company_name = company_name
+
+
+    def analyze(self, content: str, prompt: Optional[str] = None) -> str:
+        """
+        Analyze sentiment using a local HuggingFace model.
+
+        Args:
+            content: Text content to analyze.
+            prompt: This is not used by this provider but is part of the interface.
+
+        Returns:
+            A JSON string with the sentiment analysis result.
+        """
+        if not self.classifier:
+            return ""
+
+        try:
+            # This logic is adapted from `_analyze_sentiment_text_only`
+            def tr_lower(text: str) -> str:
+                return text.replace('I', 'ı').replace('İ', 'i').lower()
+
+            content_processed = tr_lower(content)
+
+            # --- Strategy 1: Transformer Model ---
+            model_sentiment = None
+            model_confidence = 0.0
+            result = self.classifier(content[:2000])[0]
+            mapping = {
+                'POSITIVE': 'positive',
+                'NEGATIVE': 'negative',
+                'LABEL_0': 'negative',
+                'LABEL_1': 'positive',
+                'LABEL_2': 'neutral'
+            }
+            model_sentiment = mapping.get(result['label'], 'neutral')
+            model_confidence = float(result['score'])
+
+            # --- Strategy 2: Enhanced Financial Lexicon (simplified for provider) ---
+            keywords = {
+                'positive': ['artış', 'büyüme', 'başarı', 'kar', 'gelir', 'yatırım', 'kârlılık', 'temettü', 'iyileşme', 'onay'],
+                'negative': ['zarar', 'düşüş', 'azalma', 'kayıp', 'risk', 'kriz', 'borç', 'daralma', 'ceza', 'iptal']
+            }
+            pos_score = sum(1 for word in keywords['positive'] if word in content_processed)
+            neg_score = sum(1 for word in keywords['negative'] if word in content_processed)
+            total_lexicon_score = pos_score - neg_score
+
+            # --- Consolidation ---
+            if model_sentiment:
+                sentiment = model_sentiment
+                confidence = model_confidence
+                if sentiment == 'positive' and total_lexicon_score < -1:
+                    sentiment = 'neutral'
+                    confidence *= 0.7
+            else:
+                if total_lexicon_score > 1:
+                    sentiment = 'positive'
+                elif total_lexicon_score < -1:
+                    sentiment = 'negative'
+                else:
+                    sentiment = 'neutral'
+                confidence = min(0.9, 0.5 + (abs(total_lexicon_score) * 0.1))
+
+            # --- KAP Specific Metadata Extraction ---
+            long_term_types = ['Finansal Rapor', 'Faaliyet Raporu', 'Sermaye Artırımı', 'Birleşme ve Bölünme']
+            short_term_types = ['Özel Durum Açıklaması (Genel)', 'Borsa Dışı İşlem', 'Devre Kesici']
+
+            if self.disclosure_type in long_term_types:
+                impact_horizon = 'long_term'
+            elif any(t in self.disclosure_type for t in short_term_types):
+                impact_horizon = 'short_term'
+            else:
+                impact_horizon = 'medium_term'
+
+            risk_flags = [word for word in ['iflas', 'konkordato', 'dava', 'kur farkı'] if word in content_processed]
+            key_drivers = [word for word in ['temettü', 'yatırım', 'yeni fabrika', 'beklenti'] if word in content_processed]
+            
+            if sentiment == 'positive':
+                tone_descriptors = ['optimistic', 'confident']
+            elif sentiment == 'negative':
+                tone_descriptors = ['cautious', 'concerning']
+            else:
+                tone_descriptors = ['informative', 'neutral']
+            
+            analysis_text = (
+                f"KAP Analizi ({self.company_name}): {self.disclosure_type} bildirimi '{sentiment.upper()}' olarak değerlendirildi "
+                f"(Güven: %{confidence * 100:.0f})."
+            )
+
+            result_dict = {
+                'overall_sentiment': sentiment,
+                'confidence': float(confidence),
+                'impact_horizon': impact_horizon,
+                'key_drivers': key_drivers,
+                'risk_flags': risk_flags,
+                'tone_descriptors': tone_descriptors,
+                'target_audience': 'investors',
+                'analysis_text': analysis_text,
+            }
+            return json.dumps(result_dict)
+
+        except Exception as e:
+            logger.error(f"Error during HuggingFace sentiment analysis: {e}")
+            return ""
+
+
 class PDFReportGenerator:
     """Generate PDF reports from analysis results"""
     

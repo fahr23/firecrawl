@@ -113,7 +113,9 @@ The Turkish Financial Data Scraper API provides comprehensive sentiment analysis
 ```json
 {
   "report_ids": [521, 502, 518],
-  "custom_prompt": "Analyze from investor perspective"
+  "custom_prompt": "Analyze from investor perspective",
+  "use_llm": true,
+  "llm_provider": "huggingface"
 }
 ```
 
@@ -130,7 +132,8 @@ The Turkish Financial Data Scraper API provides comprehensive sentiment analysis
       "sentiment": {
         "overall_sentiment": "positive",
         "confidence": 0.75,
-        "key_drivers": ["transfer", "growth"]
+        "key_drivers": ["transfer", "growth"],
+        "provider": "HuggingFaceLocalProvider"
       }
     }
   ]

@@ -56,9 +56,19 @@ DB_PASSWORD=back2future
 DB_SCHEMA=turkish_financial
 
 # LLM Configuration (for sentiment analysis)
+SENTIMENT_PROVIDER=huggingface  # gemini | openai | local_llm | huggingface
 OPENAI_API_KEY=your_openai_key  # Optional
-# OR for local LLM:
-OLLAMA_BASE_URL=http://localhost:11434
+GEMINI_API_KEY=your_gemini_key  # Optional
+# Local LLM (LM Studio / Ollama-compatible)
+LOCAL_LLM_BASE_URL=http://localhost:1234/v1
+# Optional HuggingFace token for higher rate limits
+HF_TOKEN=your_hf_token
+
+# Database tuning (for production or high-load testing)
+DB_CONN_RETRIES=3        # Number of short retries when acquiring a connection
+DB_CONN_WAIT_MS=100     # Milliseconds to wait between retries
+DB_POOL_SIZE=20         # Connection pool size (see config.DatabaseConfig.pool_size)
+
 ```
 
 ### Start the API Server
@@ -226,13 +236,17 @@ curl -X POST http://localhost:8000/api/v1/scrapers/kap/sentiment \
   -H "Content-Type: application/json" \
   -d '{
     "report_ids": [1, 2, 3, 4, 5],
-    "custom_prompt": "Focus on financial risks and opportunities"
+    "custom_prompt": "Focus on financial risks and opportunities",
+    "use_llm": true,
+    "llm_provider": "huggingface"
   }'
 ```
 
 **Request Parameters**:
 - `report_ids` (list, required): List of report IDs to analyze
 - `custom_prompt` (string, optional): Custom analysis prompt
+- `use_llm` (bool, optional): Enable LLM-based sentiment analysis
+- `llm_provider` (string, optional): Override provider per request (`gemini`, `openai`, `local_llm`, `huggingface`)
 
 **Response**:
 ```json
@@ -258,7 +272,8 @@ curl -X POST http://localhost:8000/api/v1/scrapers/kap/sentiment \
         ],
         "tone_descriptors": ["optimistic", "confident"],
         "target_audience": "retail_investors",
-        "analysis_text": "Detaylı analiz metni Türkçe olarak..."
+        "analysis_text": "Detaylı analiz metni Türkçe olarak...",
+        "provider": "HuggingFaceLocalProvider"
       },
       "analyzed_at": "2025-01-23T10:30:00"
     }
@@ -276,6 +291,7 @@ curl -X POST http://localhost:8000/api/v1/scrapers/kap/sentiment \
 - **tone_descriptors**: Adjectives describing the tone
 - **target_audience**: `"retail_investors"`, `"institutional"`, or `null`
 - **analysis_text**: Detailed analysis in Turkish
+- **provider**: Provider used for this analysis (e.g., `HuggingFaceLocalProvider`)
 
 ### Python Example
 
@@ -285,7 +301,9 @@ import requests
 url = "http://localhost:8000/api/v1/scrapers/kap/sentiment"
 payload = {
     "report_ids": [1, 2, 3],
-    "custom_prompt": "Analyze financial risks and growth opportunities"
+  "custom_prompt": "Analyze financial risks and growth opportunities",
+  "use_llm": True,
+  "llm_provider": "huggingface"
 }
 
 response = requests.post(url, json=payload)
@@ -296,6 +314,7 @@ for item in result["results"]:
     print(f"Report {item['report_id']}: {sentiment['overall_sentiment']}")
     print(f"Confidence: {sentiment['confidence']}")
     print(f"Key Drivers: {', '.join(sentiment['key_drivers'])}")
+  print(f"Provider: {sentiment.get('provider')}")
 ```
 
 ---

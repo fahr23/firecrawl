@@ -150,6 +150,11 @@ class SentimentAnalysisRequest(BaseModel):
     """Request for sentiment analysis"""
     report_ids: List[int] = Field(description="List of report IDs to analyze")
     custom_prompt: Optional[str] = Field(default=None, description="Custom analysis prompt")
+    use_llm: bool = Field(default=False, description="Use LLM for sentiment analysis")
+    llm_provider: Optional[str] = Field(
+        default=None,
+        description="Override LLM provider for this request (gemini, openai, local_llm, huggingface)"
+    )
 
 
 class SentimentAnalysisResponse(BaseModel):
@@ -171,3 +176,14 @@ class WebhookConfigRequest(BaseModel):
     """Webhook configuration request"""
     webhook_url: str = Field(description="Webhook URL (Discord, Slack, or custom)")
     enabled: bool = Field(default=True, description="Enable/disable webhooks")
+
+class URLSentimentRequest(BaseModel):
+    """Request model for scraping URL and analyzing sentiment"""
+    url: str = Field(description="URL to scrape and analyze")
+    use_llm: bool = Field(default=True, description="Use LLM for sentiment analysis")
+    llm_provider: Optional[str] = Field(
+        default="huggingface",
+        description="LLM provider (gemini, openai, local_llm, huggingface)"
+    )
+    company_name: Optional[str] = Field(default=None, description="Company name associated with content")
+    custom_prompt: Optional[str] = Field(default=None, description="Custom analysis prompt")

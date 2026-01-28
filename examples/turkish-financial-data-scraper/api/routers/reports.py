@@ -42,38 +42,39 @@ async def get_kap_reports(
         params = []
         
         if company_code:
-            conditions.append("company_code = %s")
-            params.append(company_code)
+            conditions.append("company_name ILIKE %s")
+            params.append(f"%{company_code}%")
         
         if start_date:
-            conditions.append("report_date >= %s")
+            conditions.append("disclosure_date >= %s")
             params.append(start_date)
         
         if end_date:
-            conditions.append("report_date <= %s")
+            conditions.append("disclosure_date <= %s")
             params.append(end_date)
         
         if report_type:
-            conditions.append("report_type = %s")
+            conditions.append("disclosure_type = %s")
             params.append(report_type)
         
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         
         # Get total count
-        count_query = f"SELECT COUNT(*) FROM kap_reports WHERE {where_clause}"
+        count_query = f"SELECT COUNT(*) FROM kap_disclosures WHERE {where_clause}"
         conn = db_manager.get_connection()
         try:
             cursor = conn.cursor()
+            cursor.execute("SET search_path TO turkish_financial,public;")
             cursor.execute(count_query, params)
             total = cursor.fetchone()[0]
             
             # Get reports
             query = f"""
-                SELECT id, company_code, company_name, report_type, report_date,
-                       title, summary, data, scraped_at
-                FROM kap_reports
+                SELECT id, company_name, disclosure_type, disclosure_date,
+                       content, data, scraped_at
+                FROM kap_disclosures
                 WHERE {where_clause}
-                ORDER BY report_date DESC, scraped_at DESC
+                ORDER BY disclosure_date DESC, scraped_at DESC
                 LIMIT %s OFFSET %s
             """
             params.extend([limit, offset])
@@ -83,14 +84,14 @@ async def get_kap_reports(
             for row in cursor.fetchall():
                 reports.append(ReportResponse(
                     id=row[0],
-                    company_code=row[1] or "",
-                    company_name=row[2],
-                    report_type=row[3],
-                    report_date=row[4],
-                    title=row[5],
-                    summary=row[6],
-                    data=row[7] if row[7] else None,
-                    scraped_at=row[8]
+                    company_code="",
+                    company_name=row[1],
+                    report_type=row[2],
+                    report_date=row[3],
+                    title=None,
+                    summary=(row[4][:200] + "...") if row[4] and len(row[4]) > 200 else row[4],
+                    data=row[5] if row[5] else None,
+                    scraped_at=row[6]
                 ))
             
             return ReportsListResponse(
@@ -102,6 +103,9 @@ async def get_kap_reports(
         finally:
             db_manager.return_connection(conn)
             
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted when querying reports: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable, please try again later")
     except Exception as e:
         logger.error(f"Failed to query reports: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -119,10 +123,11 @@ async def get_kap_report(
         conn = db_manager.get_connection()
         try:
             cursor = conn.cursor()
+            cursor.execute("SET search_path TO turkish_financial,public;")
             cursor.execute("""
-                SELECT id, company_code, company_name, report_type, report_date,
-                       title, summary, data, scraped_at
-                FROM kap_reports
+                SELECT id, company_name, disclosure_type, disclosure_date,
+                       content, data, scraped_at
+                FROM kap_disclosures
                 WHERE id = %s
             """, (report_id,))
             
@@ -132,20 +137,23 @@ async def get_kap_report(
             
             return ReportResponse(
                 id=row[0],
-                company_code=row[1] or "",
-                company_name=row[2],
-                report_type=row[3],
-                report_date=row[4],
-                title=row[5],
-                summary=row[6],
-                data=row[7] if row[7] else None,
-                scraped_at=row[8]
+                company_code="",
+                company_name=row[1],
+                report_type=row[2],
+                report_date=row[3],
+                title=None,
+                summary=(row[4][:200] + "...") if row[4] and len(row[4]) > 200 else row[4],
+                data=row[5] if row[5] else None,
+                scraped_at=row[6]
             )
         finally:
             db_manager.return_connection(conn)
             
     except HTTPException:
         raise
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted when getting report: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable, please try again later")
     except Exception as e:
         logger.error(f"Failed to get report: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -164,6 +172,7 @@ async def get_companies(
         conn = db_manager.get_connection()
         try:
             cursor = conn.cursor()
+            cursor.execute("SET search_path TO turkish_financial,public;")
             
             if sector:
                 query = """
@@ -195,6 +204,9 @@ async def get_companies(
         finally:
             db_manager.return_connection(conn)
             
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted when getting companies: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable, please try again later")
     except Exception as e:
         logger.error(f"Failed to get companies: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -209,30 +221,50 @@ async def get_report_sentiment(
     Get sentiment analysis for a specific KAP report
     """
     try:
-        from infrastructure.repositories.sentiment_repository_impl import SentimentRepository
-        
-        # Use DDD repository
-        sentiment_repo = SentimentRepository(db_manager)
-        sentiment = await sentiment_repo.find_by_report_id(report_id)
-        
-        if not sentiment:
-            raise HTTPException(status_code=404, detail="Sentiment analysis not found for this report")
-        
-        # Convert value object to dict for response
-        return {
-            "report_id": report_id,
-            "overall_sentiment": sentiment.overall_sentiment.value,
-            "confidence": sentiment.confidence.value,
-            "impact_horizon": sentiment.impact_horizon.value,
-            "key_drivers": list(sentiment.key_drivers),
-            "risk_flags": list(sentiment.risk_flags),
-            "tone_descriptors": list(sentiment.tone_descriptors),
-            "target_audience": sentiment.target_audience,
-            "analysis_text": sentiment.analysis_text,
-            "analyzed_at": sentiment.analyzed_at.isoformat()
-        }
+        conn = db_manager.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SET search_path TO turkish_financial,public;")
+            cursor.execute("""
+                SELECT 
+                    s.overall_sentiment,
+                    s.confidence,
+                    s.impact_horizon,
+                    s.key_drivers,
+                    s.risk_flags,
+                    s.tone_descriptors,
+                    s.target_audience,
+                    s.analysis_text,
+                    s.risk_level,
+                    s.analyzed_at
+                FROM kap_disclosure_sentiment s
+                WHERE s.disclosure_id = %s
+            """, (report_id,))
+
+            sentiment = cursor.fetchone()
+            if not sentiment:
+                raise HTTPException(status_code=404, detail="Sentiment analysis not found for this report")
+
+            return {
+                "report_id": report_id,
+                "overall_sentiment": sentiment[0],
+                "confidence": sentiment[1],
+                "impact_horizon": sentiment[2],
+                "key_drivers": list(sentiment[3]) if sentiment[3] else [],
+                "risk_flags": list(sentiment[4]) if sentiment[4] else [],
+                "tone_descriptors": list(sentiment[5]) if sentiment[5] else [],
+                "target_audience": sentiment[6],
+                "analysis_text": sentiment[7],
+                "risk_level": sentiment[8],
+                "analyzed_at": sentiment[9].isoformat() if sentiment[9] else None
+            }
+        finally:
+            db_manager.return_connection(conn)
     except HTTPException:
         raise
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted when getting sentiment: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable, please try again later")
     except Exception as e:
         logger.error(f"Failed to get sentiment: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -257,48 +289,82 @@ async def query_sentiment(
     - **limit**: Maximum results
     """
     try:
-        from infrastructure.repositories.sentiment_repository_impl import SentimentRepository
-        from domain.value_objects.sentiment import SentimentType
-        
-        # Use DDD repository
-        sentiment_repo = SentimentRepository(db_manager)
-        
-        # Convert string to enum
-        sentiment_type = None
+        # Validate sentiment filter
+        sentiment_filter = None
         if sentiment:
-            try:
-                sentiment_type = SentimentType(sentiment.lower())
-            except ValueError:
+            valid = {"positive", "neutral", "negative"}
+            if sentiment.lower() not in valid:
                 raise HTTPException(status_code=400, detail=f"Invalid sentiment: {sentiment}")
-        
-        results = await sentiment_repo.find_by_filters(
-            company_code=company_code,
-            sentiment_type=sentiment_type,
-            start_date=start_date,
-            end_date=end_date,
-            limit=limit
-        )
-        
-        # Convert to response format
-        response_results = []
-        for report, sentiment_vo in results:
-            response_results.append({
-                "report_id": report.id,
-                "company_code": report.company_code,
-                "company_name": report.company_name,
-                "report_date": report.report_date.isoformat() if report.report_date else None,
-                "overall_sentiment": sentiment_vo.overall_sentiment.value,
-                "confidence": sentiment_vo.confidence.value,
-                "impact_horizon": sentiment_vo.impact_horizon.value,
-                "key_drivers": list(sentiment_vo.key_drivers),
-                "risk_flags": list(sentiment_vo.risk_flags),
-                "analyzed_at": sentiment_vo.analyzed_at.isoformat()
-            })
-        
-        return {
-            "total": len(response_results),
-            "results": response_results
-        }
+            sentiment_filter = sentiment.lower()
+
+        conn = db_manager.get_connection()
+        try:
+            cursor = conn.cursor()
+
+            conditions = ["1=1"]
+            params = []
+
+            if company_code:
+                conditions.append("d.company_name ILIKE %s")
+                params.append(f"%{company_code}%")
+
+            if sentiment_filter:
+                conditions.append("s.overall_sentiment = %s")
+                params.append(sentiment_filter)
+
+            if start_date:
+                conditions.append("d.disclosure_date >= %s")
+                params.append(start_date)
+
+            if end_date:
+                conditions.append("d.disclosure_date <= %s")
+                params.append(end_date)
+
+            where_clause = " AND ".join(conditions)
+
+            query = f"""
+                SELECT 
+                    d.id,
+                    d.company_name,
+                    d.disclosure_date,
+                    s.overall_sentiment,
+                    s.confidence,
+                    s.impact_horizon,
+                    s.key_drivers,
+                    s.risk_flags,
+                    s.analyzed_at
+                FROM kap_disclosures d
+                JOIN kap_disclosure_sentiment s ON d.id = s.disclosure_id
+                WHERE {where_clause}
+                ORDER BY s.analyzed_at DESC
+                LIMIT %s
+            """
+            params.append(limit)
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            response_results = []
+            for row in rows:
+                response_results.append({
+                    "report_id": row[0],
+                    "company_code": "",
+                    "company_name": row[1],
+                    "report_date": row[2].isoformat() if row[2] else None,
+                    "overall_sentiment": row[3],
+                    "confidence": row[4],
+                    "impact_horizon": row[5],
+                    "key_drivers": list(row[6]) if row[6] else [],
+                    "risk_flags": list(row[7]) if row[7] else [],
+                    "analyzed_at": row[8].isoformat() if row[8] else None
+                })
+
+            return {
+                "total": len(response_results),
+                "results": response_results
+            }
+        finally:
+            db_manager.return_connection(conn)
     except HTTPException:
         raise
     except Exception as e:

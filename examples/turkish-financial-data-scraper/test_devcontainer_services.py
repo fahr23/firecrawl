@@ -126,12 +126,15 @@ class ServiceTester:
             expected_tables = [
                 "kap_reports",
                 "bist_companies",
+                "kap_disclosures", # Added kap_disclosures
                 "bist_index_members",
                 "tradingview_sectors_tr",
                 "tradingview_industry_tr",
                 "historical_price_emtia",
                 "cryptocurrency_symbols",
                 "kap_report_sentiment"
+                "cryptocurrency_symbols", # Corrected table name
+                "kap_disclosure_sentiment" # Corrected table name
             ]
             
             missing = [t for t in expected_tables if t not in tables]

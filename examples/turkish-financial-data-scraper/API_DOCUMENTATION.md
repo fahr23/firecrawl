@@ -27,7 +27,7 @@ Currently, no authentication is required. For production deployments, consider i
 - **TradingView Integration**: Market data and sector analysis
 
 ### 🤖 **AI-Powered Sentiment Analysis**
-- **Cost-Optimized LLM**: Using Gemini 1.5 Flash with 75-80% cost reduction
+- **Configurable Providers**: Gemini, OpenAI, local LLM, or HuggingFace
 - **Turkish Language Support**: Specialized analysis for Turkish financial content
 - **Comprehensive Analysis**: Sentiment, risk assessment, impact horizon, and key drivers
 - **Smart Caching**: Prevents duplicate analysis and reduces costs
@@ -53,6 +53,7 @@ Currently, no authentication is required. For production deployments, consider i
 | POST | `/api/v1/scrapers/kap` | Scrape KAP disclosures |
 | POST | `/api/v1/scrapers/bist` | Scrape BIST data |
 | POST | `/api/v1/scrapers/tradingview` | Scrape TradingView data |
+| POST | `/api/v1/scrapers/kap/sentiment` | Analyze sentiment for specific KAP reports |
 | POST | `/api/v1/scrapers/llm/config` | Configure LLM settings |
 
 ### 📈 Data Queries & Reports
@@ -77,6 +78,54 @@ Currently, no authentication is required. For production deployments, consider i
 ## Detailed API Reference
 
 ### Sentiment Analysis Endpoints
+
+#### POST `/api/v1/scrapers/kap/sentiment`
+**Manual Sentiment Analysis (KAP Reports)**
+
+Analyze sentiment for specific KAP report IDs and optionally override the LLM provider per request.
+
+**Request Body:**
+```json
+{
+  "report_ids": [1, 2, 3],
+  "custom_prompt": "Focus on risks and opportunities",
+  "use_llm": true,
+  "llm_provider": "huggingface"
+}
+```
+
+**Request Parameters:**
+- `report_ids` (list, required)
+- `custom_prompt` (string, optional)
+- `use_llm` (bool, optional)
+- `llm_provider` (string, optional): `gemini`, `openai`, `local_llm`, `huggingface`
+
+**Response:**
+```json
+{
+  "total_analyzed": 1,
+  "successful": 1,
+  "failed": 0,
+  "results": [
+    {
+      "report_id": 1,
+      "success": true,
+      "sentiment": {
+        "overall_sentiment": "neutral",
+        "confidence": 0.52,
+        "impact_horizon": "long_term",
+        "key_drivers": [],
+        "risk_flags": [],
+        "tone_descriptors": ["informative", "neutral"],
+        "target_audience": "investors",
+        "analysis_text": "...",
+        "provider": "HuggingFaceLocalProvider",
+        "risk_level": "low"
+      }
+    }
+  ]
+}
+```
 
 #### GET `/api/v1/sentiment/`
 **Sentiment Overview & Statistics**
@@ -323,6 +372,15 @@ Automatically analyze sentiment for recent disclosures that haven't been analyze
 ---
 
 ## Error Handling
+
+### Database Pool Exhaustion (503)
+If the database connection pool is exhausted due to heavy load, the API will return HTTP 503 Service Unavailable with a message indicating the database is temporarily unavailable. Configure retry/backoff via environment variables:
+
+- `DB_CONN_RETRIES` (default: 3) — Number of short retries when acquiring a connection
+- `DB_CONN_WAIT_MS` (default: 100) — Milliseconds to wait between retries
+
+Clients should retry requests with exponential backoff when receiving a 503 response.
+
 
 ### HTTP Status Codes
 - `200 OK`: Successful request

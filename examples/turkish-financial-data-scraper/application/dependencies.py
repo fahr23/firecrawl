@@ -8,7 +8,7 @@ from database.db_manager import DatabaseManager
 from infrastructure.repositories.kap_report_repository_impl import KAPReportRepository
 from infrastructure.repositories.sentiment_repository_impl import SentimentRepository
 from infrastructure.services.sentiment_analyzer_impl import SentimentAnalyzerService
-from utils.llm_analyzer import LocalLLMProvider, OpenAIProvider, GeminiProvider
+from utils.llm_analyzer import LocalLLMProvider, OpenAIProvider, GeminiProvider, HuggingFaceLocalProvider
 from application.use_cases.analyze_sentiment_use_case import AnalyzeSentimentUseCase
 import os
 
@@ -37,24 +37,34 @@ def get_sentiment_repository(db_manager: DatabaseManager = None) -> SentimentRep
 
 def get_sentiment_analyzer_service():
     """Get sentiment analyzer service"""
-    # Check for Gemini API key first (if preferred)
-    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if gemini_key:
-        try:
-            provider = GeminiProvider(api_key=gemini_key)
-            return SentimentAnalyzerService(provider)
-        except ImportError:
-            logger.warning("google-generativeai not installed, falling back to other providers")
+    provider_type = os.getenv("SENTIMENT_PROVIDER", "huggingface")
+
+    if provider_type == "gemini":
+        gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if gemini_key:
+            try:
+                provider = GeminiProvider(api_key=gemini_key)
+                logger.info("Using Gemini for sentiment analysis.")
+                return SentimentAnalyzerService(provider)
+            except ImportError:
+                logger.warning("google-generativeai not installed, falling back.")
     
-    # Check for OpenAI API key
-    openai_key = os.getenv("OPENAI_API_KEY")
-    if openai_key:
-        provider = OpenAIProvider(api_key=openai_key)
-    else:
-        # Default to local LLM
+    if provider_type == "openai":
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            provider = OpenAIProvider(api_key=openai_key)
+            logger.info("Using OpenAI for sentiment analysis.")
+            return SentimentAnalyzerService(provider)
+
+    if provider_type == "local_llm":
         base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:1234/v1")
         provider = LocalLLMProvider(base_url=base_url)
-    
+        logger.info("Using local LLM for sentiment analysis.")
+        return SentimentAnalyzerService(provider)
+
+    # Default to HuggingFaceLocalProvider
+    logger.info("Using HuggingFace local model for sentiment analysis.")
+    provider = HuggingFaceLocalProvider()
     return SentimentAnalyzerService(provider)
 
 

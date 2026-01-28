@@ -3,6 +3,8 @@ Database Manager for Turkish Financial Data Scraper
 """
 import logging
 import json
+import os
+import time
 import psycopg2
 from psycopg2 import pool, sql
 from psycopg2.extras import RealDictCursor, Json
@@ -199,20 +201,39 @@ class DatabaseManager:
         finally:
             self.return_connection(conn)
     
+    class PoolExhaustedError(Exception):
+        """Raised when connection pool is exhausted"""
+        pass
+
     def get_connection(self):
-        """Get a connection from the pool and set search_path"""
-        try:
-            conn = self.pool.getconn()
-            # Set search_path for this connection to use our schema
-            cursor = conn.cursor()
-            cursor.execute(sql.SQL("SET search_path TO {}, public").format(
-                sql.Identifier(self.schema)
-            ))
-            cursor.close()
-            return conn
-        except Exception as e:
-            logger.error(f"Error getting connection: {e}")
-            raise
+        """Get a connection from the pool and set search_path
+
+        Implements a short retry strategy when the pool is temporarily exhausted.
+        Raises:
+            PoolExhaustedError: if connections cannot be acquired after retries
+        """
+        retries = int(os.getenv("DB_CONN_RETRIES", "3"))
+        wait_ms = int(os.getenv("DB_CONN_WAIT_MS", "100"))
+
+        for attempt in range(1, retries + 1):
+            try:
+                conn = self.pool.getconn()
+                # Set search_path for this connection to use our schema
+                cursor = conn.cursor()
+                cursor.execute(sql.SQL("SET search_path TO {}, public").format(
+                    sql.Identifier(self.schema)
+                ))
+                cursor.close()
+                return conn
+            except pool.PoolError as e:
+                logger.warning(f"Connection pool exhausted (attempt {attempt}/{retries}): {e}")
+                if attempt == retries:
+                    logger.error("Connection pool exhausted after retries")
+                    raise DatabaseManager.PoolExhaustedError("connection pool exhausted")
+                time.sleep(wait_ms / 1000.0)
+            except Exception as e:
+                logger.error(f"Error getting connection: {e}")
+                raise
     
     def return_connection(self, conn):
         """Return a connection to the pool"""

@@ -34,6 +34,9 @@ async def health_check(
             db_status = "connected"
         finally:
             db_manager.return_connection(conn)
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.warning(f"Database connection pool exhausted during health check: {e}")
+        db_status = "error: connection pool exhausted"
     except Exception as e:
         logger.warning(f"Database health check failed: {e}")
         db_status = f"error: {str(e)}"

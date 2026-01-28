@@ -15,10 +15,17 @@ import random
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Try to import LLM analyzer for advanced sentiment analysis
 try:
-    from utils.llm_analyzer import LLMAnalyzer, GeminiProvider
+    from utils.llm_analyzer import (
+        LLMAnalyzer,
+        GeminiProvider,
+        LocalLLMProvider,
+        OpenAIProvider,
+        HuggingFaceLocalProvider
+    )
     LLM_AVAILABLE = True
 except ImportError:
     LLM_AVAILABLE = False
@@ -30,19 +37,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Load environment variables from .env if present
+load_dotenv()
+
 
 class ProductionKAPScraper:
-    """Production-ready KAP scraper with full Firecrawl integration"""
+    """Production-ready KAP scraper with Playwright service"""
     
-    def __init__(self, use_test_data=False):
+    def __init__(self, use_test_data=False, use_llm=False, llm_provider: str | None = None):
         """Initialize production scraper"""
-        from firecrawl import FirecrawlApp
-        
-        # Firecrawl configuration (matches base scraper)
-        self.firecrawl = FirecrawlApp(
-            api_key="",  # Empty for self-hosted
-            api_url="http://api:3002"  # Self-hosted instance
-        )
+        # Use Playwright service directly for JavaScript rendering
+        self.playwright_url = "http://playwright-service:3000/scrape"
         
         self.base_url = "https://kap.org.tr"
         self.disclosures_url = f"{self.base_url}/tr/"  # Turkish homepage
@@ -50,69 +55,146 @@ class ProductionKAPScraper:
         
         # Initialize LLM analyzer if available
         self.llm_analyzer = None
-        if LLM_AVAILABLE:
+        self._llm_provider_override = llm_provider
+        if LLM_AVAILABLE and use_llm:
             try:
-                # Configure Gemini provider with cost optimization
-                gemini_api_key = "AIzaSyBVnJ-EiZDJE2SkCp_KcOKlTIfJHRE-Cis"
-                provider = GeminiProvider(
-                    api_key=gemini_api_key,
-                    model="gemini-1.5-flash",  # Cheaper than 2.5-flash, still very capable
-                    temperature=0.3,  # Lower temperature for more consistent, cheaper results
-                    chunk_size=2000  # Smaller chunks to reduce token usage
-                )
+                provider = self._build_llm_provider()
                 self.llm_analyzer = LLMAnalyzer(provider)
-                logger.info("Initialized Gemini 1.5 Flash LLM analyzer with 75-80% cost optimization")
-                logger.info("Cost-optimized model: gemini-1.5-flash (significantly cheaper than 2.5-flash)")
+                logger.info(
+                    "Initialized LLM analyzer for sentiment analysis using %s",
+                    provider.__class__.__name__
+                )
             except Exception as e:
-                logger.warning(f"Failed to initialize LLM analyzer: {e}, using fallback method")
+                logger.warning(
+                    "Failed to initialize LLM analyzer from environment: %s. Sentiment analysis will be skipped.",
+                    e
+                )
         else:
-            logger.warning("LLM analyzer not available, using keyword-based sentiment analysis")
+            logger.warning("LLM analyzer not available, sentiment analysis will be skipped")
         
         # Initialize sentiment cache for cost optimization
         self.sentiment_cache = {}
         
         logger.info("Production KAP Scraper initialized")
+
+    def configure_llm(self, provider_type: str = "local", **provider_config):
+        """Configure LLM provider for sentiment analysis"""
+        if not LLM_AVAILABLE:
+            raise RuntimeError("LLM analyzer not available in this environment")
+
+        if provider_type == "local":
+            provider = LocalLLMProvider(**provider_config)
+        elif provider_type == "openai":
+            provider = OpenAIProvider(**provider_config)
+        elif provider_type == "gemini":
+            provider = GeminiProvider(**provider_config)
+        elif provider_type == "huggingface":
+            provider = HuggingFaceLocalProvider(**provider_config)
+        else:
+            raise ValueError(
+                f"Unknown provider type: {provider_type}. Supported: local, openai, gemini, huggingface"
+            )
+
+        self.llm_analyzer = LLMAnalyzer(provider)
+        logger.info(f"Configured {provider_type} LLM provider")
+
+    def _build_llm_provider(self):
+        """Build LLM provider from environment configuration."""
+        provider_type = self._llm_provider_override or os.getenv("SENTIMENT_PROVIDER")
+        if not provider_type:
+            if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+                provider_type = "gemini"
+            elif os.getenv("OPENAI_API_KEY"):
+                provider_type = "openai"
+            elif os.getenv("LOCAL_LLM_BASE_URL"):
+                provider_type = "local_llm"
+            else:
+                provider_type = "huggingface"
+        provider_type = provider_type.lower()
+
+        if provider_type == "gemini":
+            api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY is not set")
+            model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+            temperature = float(os.getenv("GEMINI_TEMPERATURE", "0.3"))
+            chunk_size = int(os.getenv("GEMINI_CHUNK_SIZE", "2000"))
+            return GeminiProvider(
+                api_key=api_key,
+                model=model,
+                temperature=temperature,
+                chunk_size=chunk_size
+            )
+
+        if provider_type == "openai":
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError("OPENAI_API_KEY is not set")
+            model = os.getenv("OPENAI_MODEL", "gpt-4")
+            temperature = float(os.getenv("OPENAI_TEMPERATURE", "0.7"))
+            return OpenAIProvider(api_key=api_key, model=model, temperature=temperature)
+
+        if provider_type == "local_llm":
+            base_url = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:1234/v1")
+            api_key = os.getenv("LOCAL_LLM_API_KEY", "lm-studio")
+            model = os.getenv("LOCAL_LLM_MODEL", "QuantFactory/Llama-3-8B-Instruct-Finance-RAG-GGUF")
+            temperature = float(os.getenv("LOCAL_LLM_TEMPERATURE", "0.7"))
+            max_tokens = int(os.getenv("LOCAL_LLM_MAX_TOKENS", "4096"))
+            chunk_size = int(os.getenv("LOCAL_LLM_CHUNK_SIZE", "4000"))
+            return LocalLLMProvider(
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                chunk_size=chunk_size
+            )
+
+        model_name = os.getenv("HF_SENTIMENT_MODEL", "savasy/bert-base-turkish-sentiment-cased")
+        return HuggingFaceLocalProvider(model_name=model_name)
     
     async def scrape_url(self, url: str) -> dict:
-        """Scrape URL using Firecrawl (base scraper pattern)"""
+        """Scrape URL using Playwright service for JavaScript rendering"""
+        import aiohttp
+        
         try:
             logger.info(f"Scraping: {url}")
             
-            result = self.firecrawl.scrape(
-                url,
-                formats=["markdown", "html"],
-                wait_for=3000,
-                timeout=30000
-            )
-            
-            # Handle Firecrawl Document object
-            data = {
-                "html": getattr(result, 'html', ''),
-                "markdown": getattr(result, 'markdown', ''),
-                "metadata": getattr(result, 'metadata', {})
+            payload = {
+                "url": url,
+                "wait_after_load": 5000,  # Wait 5 seconds for JavaScript to render
+                "timeout": 30000          # 30 second timeout
             }
             
-            logger.info(f"Scraped {url}: {len(data['html']):,} chars HTML")
-            return {"success": True, "url": url, "data": data}
+            async with aiohttp.ClientSession() as session:
+                async with session.post(self.playwright_url, json=payload) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        raise Exception(f"Playwright service returned {response.status}: {error_text}")
+                    
+                    result = await response.json()
+                    html_content = result.get('content', '')
+                    
+                    data = {
+                        "html": html_content,
+                        "markdown": "",  # Playwright service doesn't return markdown
+                        "metadata": {
+                            "statusCode": result.get('pageStatusCode', 200),
+                            "error": result.get('pageError')
+                        }
+                    }
+                    
+                    logger.info(f"Scraped {url}: {len(html_content):,} chars HTML")
+                    return {"success": True, "url": url, "data": data}
             
         except Exception as e:
             logger.error(f"Scraping failed {url}: {e}")
             return {"success": False, "url": url, "error": str(e)}
+
     
     def parse_kap_disclosures(self, html: str, markdown: str) -> list:
         """Parse KAP disclosures with Turkish content support"""
         items = []
-        
-        # Check for no-disclosure indicators (Turkish and English)
-        no_data_indicators = [
-            "Notification not found",
-            "Bildirim bulunamadı",
-            "bildirim bulunamadı"
-        ]
-        
-        if any(indicator in html for indicator in no_data_indicators):
-            logger.info("KAP shows no current disclosures")
-            return []
         
         try:
             from bs4 import BeautifulSoup
@@ -120,38 +202,51 @@ class ProductionKAPScraper:
             
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Advanced parsing for Turkish company disclosures
+            # Advanced parsing for Turkish company disclosures from HTML table
             tables = soup.find_all('table')
             logger.info(f"Analyzing {len(tables)} tables for disclosure data")
             
             for table_idx, table in enumerate(tables):
                 rows = table.find_all('tr')
+                logger.debug(f"Table {table_idx} has {len(rows)} rows")
                 
                 for row_idx, row in enumerate(rows):
                     cells = row.find_all(['td', 'th'])
                     
-                    if len(cells) >= 2:
+                    if len(cells) >= 3:  # Need at least: checkbox, number/date, company, disclosure, etc.
                         cell_texts = [cell.get_text(strip=True) for cell in cells]
-                        row_text = ' '.join(cell_texts)
+                        row_text = ' | '.join(cell_texts)
+                        
+                        logger.debug(f"Row {row_idx}: {len(cells)} cells - {row_text[:100]}")
                         
                         # Turkish company pattern detection
                         if self.contains_turkish_company(row_text):
                             company = self.extract_company_name(row_text)
                             
                             if company:
+                                # Extract date/time information
+                                timestamp_info = self.extract_timestamp_from_row(row_text, cell_texts)
+                                
+                                # Extract detail URL - check for links in the row
+                                detail_url = self.extract_detail_url(cells)
+                                if not detail_url:
+                                    # Try to find disclosure ID from text and construct URL
+                                    detail_url = self.construct_detail_url(row_text, cell_texts)
+                                
                                 timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
                                 item = {
                                     'disclosure_id': f'live_kap_{timestamp_str}_{len(items)}',
                                     'company_name': company,
                                     'disclosure_type': self.extract_disclosure_type(row_text),
-                                    'disclosure_date': datetime.now().date(),
-                                    'timestamp': datetime.now().strftime("%H:%M"),
-                                    'language_info': 'Turkish',
+                                    'disclosure_date': timestamp_info.get('date', datetime.now().date()),
+                                    'timestamp': timestamp_info.get('time', datetime.now().strftime("%H:%M")),
+                                    'language_info': self.extract_language_info(row_text, cells),
                                     'has_attachment': self.check_attachments(cells),
-                                    'detail_url': self.extract_detail_url(cells),
+                                    'detail_url': detail_url,
                                     'content': row_text,
                                     'data': {
                                         'cells': cell_texts,
+                                        'cell_count': len(cells),
                                         'table_index': table_idx,
                                         'row_index': row_idx,
                                         'source': 'kap.org.tr',
@@ -160,10 +255,44 @@ class ProductionKAPScraper:
                                 }
                                 
                                 items.append(item)
-                                logger.debug(f"Found live disclosure: {company}")
+                                logger.info(f"Found disclosure: {company} - {item['disclosure_type']} - URL: {detail_url[:60]}")
             
+            # Strategy 2: Div-based parsing (for modern/responsive layouts)
+            if not items:
+                logger.info("No table items found, attempting div-based parsing")
+                # Look for div rows that might contain disclosure info
+                div_rows = soup.find_all('div', class_=re.compile(r'(row|list-item|notification|bildirim-satir|disclosure-row|disclosure|item)', re.I))
+                
+                for i, row in enumerate(div_rows):
+                    row_text = row.get_text(" ", strip=True)
+                    
+                    if len(row_text) > 20 and self.contains_turkish_company(row_text):
+                        company = self.extract_company_name(row_text)
+                        if company:
+                            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            detail_url = self.extract_detail_url(row.find_all('a'))
+                            
+                            item = {
+                                'disclosure_id': f'live_kap_div_{timestamp_str}_{len(items)}',
+                                'company_name': company,
+                                'disclosure_type': self.extract_disclosure_type(row_text),
+                                'disclosure_date': datetime.now().date(),
+                                'timestamp': datetime.now().strftime("%H:%M"),
+                                'language_info': self.extract_language_info(row_text, []),
+                                'has_attachment': self.check_attachments(row.find_all('a')),
+                                'detail_url': detail_url,
+                                'content': row_text,
+                                'data': {
+                                    'source': 'kap.org.tr',
+                                    'parsing_method': 'div_row',
+                                    'scraped_at': datetime.now().isoformat()
+                                }
+                            }
+                            items.append(item)
+                            logger.info(f"Found div-based disclosure: {company}")
+
         except Exception as e:
-            logger.error(f"Parsing error: {e}")
+            logger.error(f"Parsing error: {e}", exc_info=True)
         
         return items
     
@@ -174,10 +303,10 @@ class ProductionKAPScraper:
         
         # Turkish company suffixes and patterns
         turkish_patterns = [
-            r'[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s]+A\.Ş\.',
-            r'[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s]+BANKASI',
-            r'[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s]+HOLDİNG',
-            r'[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s]+T\.A\.Ş\.'
+            r'[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s\.\-]{2,}A\.Ş\.?',
+            r'[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s\.\-]{2,}BANKASI',
+            r'[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s\.\-]{2,}HOLDİNG',
+            r'[A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s\.\-]{2,}T\.A\.Ş\.?'
         ]
         
         import re
@@ -192,10 +321,10 @@ class ProductionKAPScraper:
         import re
         
         patterns = [
-            r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s]+(?:A\.Ş\.|A\.S\.))',
-            r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s]+BANKASI)',
-            r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s]+HOLDİNG)',
-            r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s]+T\.A\.Ş\.)'
+            r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s\.\-]{2,}(?:A\.Ş\.?|A\.S\.?))',
+            r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s\.\-]{2,}BANKASI)',
+            r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s\.\-]{2,}HOLDİNG)',
+            r'([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜa-zçğıöşü\s\.\-]{2,}T\.A\.Ş\.?)'
         ]
         
         for pattern in patterns:
@@ -212,9 +341,17 @@ class ProductionKAPScraper:
         type_mapping = {
             'özel durum': 'Özel Durum Açıklaması',
             'finansal': 'Finansal Rapor',
+            'mali': 'Finansal Rapor',
             'genel kurul': 'Genel Kurul',
             'sermaye': 'Sermaye İşlemleri',
-            'duyuru': 'Duyuru'
+            'duyuru': 'Duyuru',
+            'kar payı': 'Kar Payı Dağıtımı',
+            'pay geri': 'Pay Geri Alımı',
+            'temettü': 'Temettü',
+            'sorumluluk beyanı': 'Sorumluluk Beyanı',
+            'faaliyet raporu': 'Faaliyet Raporu',
+            'ihraç': 'İhraç İşlemleri',
+            'transfer': 'Transfer İşlemleri'
         }
         
         for keyword, disc_type in type_mapping.items():
@@ -223,27 +360,114 @@ class ProductionKAPScraper:
         
         return 'Diğer'
     
+    def extract_timestamp_from_row(self, row_text: str, cell_texts: list) -> dict:
+        """Extract timestamp information from table row"""
+        result = {
+            'date': datetime.now().date(),
+            'time': datetime.now().strftime("%H:%M")
+        }
+        
+        try:
+            import re
+            # Look for time patterns like "22:26", "14:30" etc in the cells
+            for cell_text in cell_texts:
+                # Match Turkish date/time patterns like "Dün 22:26", "Bugün 14:30", "15 gün önce"
+                time_match = re.search(r'(\d{1,2}):(\d{2})', cell_text)
+                if time_match:
+                    result['time'] = f"{time_match.group(1)}:{time_match.group(2)}"
+                    break
+            
+            # Check for date markers
+            if 'Dün' in row_text or 'dün' in row_text:
+                result['date'] = (datetime.now() - timedelta(days=1)).date()
+            elif 'Bugün' in row_text or 'bugün' in row_text:
+                result['date'] = datetime.now().date()
+            
+        except Exception as e:
+            logger.debug(f"Error extracting timestamp: {e}")
+        
+        return result
+    
+    def extract_language_info(self, row_text: str, cells=None) -> str:
+        """Extract language information from disclosure row"""
+        # Check for language indicators in the content
+        if 'İngilizce' in row_text or 'English' in row_text:
+            return 'Turkish, English'
+        elif 'Ekli Dosya' in row_text:
+            return 'Turkish'
+        else:
+            return 'Turkish'
+    
     def check_attachments(self, cells) -> bool:
         """Check for attachment indicators"""
-        for cell in cells:
-            links = cell.find_all('a')
-            for link in links:
-                href = link.get('href', '')
-                if any(indicator in href.lower() for indicator in ['attach', 'file', 'pdf', 'doc']):
+        if not cells:
+            return False
+            
+        cell_list = cells if isinstance(cells, list) else [cells]
+        
+        for cell in cell_list:
+            # Check if it's a BeautifulSoup element
+            if hasattr(cell, 'find_all'):
+                text = cell.get_text(strip=True) if hasattr(cell, 'get_text') else str(cell)
+                if any(indicator in text for indicator in ['Ekli', 'Dosya', 'Attachment', 'PDF', 'excel']):
                     return True
+                
+                links = cell.find_all('a') if hasattr(cell, 'find_all') else []
+                for link in links:
+                    href = link.get('href', '') or ''
+                    if any(indicator in href.lower() for indicator in ['attach', 'file', 'pdf', 'doc', 'excel']):
+                        return True
+            else:
+                # Plain string
+                if any(indicator in str(cell) for indicator in ['Ekli', 'Dosya', 'Attachment', 'PDF']):
+                    return True
+        
         return False
     
     def extract_detail_url(self, cells) -> str:
         """Extract detail URL from cells"""
-        for cell in cells:
-            links = cell.find_all('a', href=True)
-            for link in links:
-                href = link['href']
-                if href.startswith('/'):
-                    return f"{self.base_url}{href}"
-                elif href.startswith('http'):
-                    return href
+        if not cells:
+            return ""
+            
+        cell_list = cells if isinstance(cells, list) else [cells]
+        
+        for cell in cell_list:
+            # Check if it's a BeautifulSoup element
+            if hasattr(cell, 'find_all'):
+                links = cell.find_all('a', href=True)
+                for link in links:
+                    href = link.get('href', '')
+                    if href.startswith('/'):
+                        return f"{self.base_url}{href}"
+                    elif href.startswith('http'):
+                        return href
+        
         return ""
+
+    def construct_detail_url(self, row_text: str, cell_texts: list) -> str:
+        """Construct detail URL from row information"""
+        try:
+            import re
+            
+            # Try to extract disclosure ID from the row text
+            # Look for numeric patterns that might be disclosure IDs
+            disclosure_id_match = re.search(r'\b(\d{4,8})\b', row_text)
+            
+            if disclosure_id_match:
+                disclosure_id = disclosure_id_match.group(1)
+                # KAP disclosure URL format: https://kap.org.tr/tr/Bildirim/{disclosure_id}
+                return f"{self.base_url}/tr/Bildirim/{disclosure_id}"
+            
+            # Alternative: Try to find ID in cells
+            for i, cell_text in enumerate(cell_texts):
+                if cell_text.isdigit() and 1000 <= int(cell_text) <= 999999:
+                    return f"{self.base_url}/tr/Bildirim/{cell_text}"
+            
+        except Exception as e:
+            logger.debug(f"Could not construct detail URL: {e}")
+        
+        return ""
+
     
     def generate_realistic_test_data(self) -> list:
         """Generate realistic test data for demonstration"""
@@ -327,185 +551,44 @@ class ProductionKAPScraper:
         cache_key = f"{company_name}:{disclosure_type}:{content[:200]}"
         return hashlib.md5(cache_key.encode()).hexdigest()
     
-    def analyze_sentiment(self, content: str, company_name: str, disclosure_type: str) -> dict:
-        """Perform cost-optimized sentiment analysis using LLM or fallback to keywords"""
+    def analyze_sentiment(self, content: str, company_name: str, disclosure_type: str, use_llm: bool | None = None) -> dict:
+        """Perform sentiment analysis using the configured provider."""
         
-        # Check cache first to avoid duplicate LLM calls
+        # Check cache first
         cache_key = self.get_content_hash(content, company_name, disclosure_type)
         if cache_key in self.sentiment_cache:
             logger.debug(f"Using cached sentiment for {company_name}")
             return self.sentiment_cache[cache_key]
-        
-        # Quick pre-filtering to avoid unnecessary LLM calls
-        if len(content) < 20 or not content.strip():
-            logger.debug("Skipping LLM analysis for minimal content")
-            return self._analyze_sentiment_keywords(content, company_name, disclosure_type)
-        
-        # Check if content is mostly boilerplate (avoid LLM costs for routine announcements)
-        boilerplate_indicators = ['genel kurul toplantısı', 'yönetim kurulu kararı', 'faaliyet raporu']
-        if any(indicator in content.lower() for indicator in boilerplate_indicators) and len(content) < 100:
-            logger.debug("Using keyword analysis for routine disclosure")
-            return self._analyze_sentiment_keywords(content, company_name, disclosure_type)
-        
-        # Try LLM-based analysis for significant content
-        if self.llm_analyzer:
-            try:
-                # Optimized, concise Turkish financial prompt (reduced token usage)
-                custom_prompt = f"""Türk finansal uzmanı olarak {company_name}'in {disclosure_type} analizini yap.
 
-JSON döndür:
-{{
-  "overall_sentiment": "positive/neutral/negative",
-  "confidence": 0.0-1.0,
-  "impact_horizon": "short_term/medium_term/long_term",
-  "key_drivers": ["max 3 anahtar faktör"],
-  "risk_flags": ["varsa riskler, yoksa []"],
-  "tone_descriptors": ["max 2 ton tanımı"],
-  "target_audience": "investors/stakeholders/regulatory_bodies",
-  "analysis_text": "50 kelime max Türkçe analiz"
-}}
+        if not self.llm_analyzer:
+            logger.warning("LLM analyzer not configured. Skipping sentiment analysis.")
+            return {}
 
-Kriterler: piyasa etkisi, finansal etki, risk/fırsat, vade analizi."""
+        try:
+            # The provider is now configured via dependencies to be HuggingFace, Gemini, etc.
+            # We pass company_name and disclosure_type to the provider context if it's HuggingFace
+            if isinstance(self.llm_analyzer.provider, HuggingFaceLocalProvider):
+                self.llm_analyzer.provider.company_name = company_name
+                self.llm_analyzer.provider.disclosure_type = disclosure_type
+
+            result = self.llm_analyzer.analyze_sentiment(content=content)
+            
+            if result:
+                sentiment_result = result.dict()
+                sentiment_result['provider'] = self.llm_analyzer.provider.__class__.__name__
+                sentiment_result['risk_level'] = 'high' if len(result.risk_flags) >= 2 else ('medium' if len(result.risk_flags) == 1 else 'low')
                 
-                # Analyze with LLM (truncate content to reduce costs)
-                truncated_content = content[:800] if len(content) > 800 else content
-                result = self.llm_analyzer.analyze_sentiment(
-                    content=truncated_content,
-                    custom_prompt=custom_prompt
-                )
-                
-                if result:
-                    # Convert LLM result to database format
-                    sentiment_result = {
-                        'overall_sentiment': result.overall_sentiment,
-                        'confidence': result.confidence,
-                        'impact_horizon': result.impact_horizon,
-                        'key_drivers': result.key_drivers,
-                        'risk_flags': result.risk_flags,
-                        'tone_descriptors': result.tone_descriptors,
-                        'target_audience': result.target_audience,
-                        'analysis_text': result.analysis_text,
-                        'risk_level': 'high' if len(result.risk_flags) >= 2 else ('medium' if len(result.risk_flags) == 1 else 'low')
-                    }
-                    
-                    # Cache the result to avoid future LLM calls for similar content
-                    self.sentiment_cache[cache_key] = sentiment_result
-                    return sentiment_result
-                    
-            except Exception as e:
-                logger.warning(f"LLM sentiment analysis failed: {e}, using fallback method")
-        
-        # Fallback to keyword-based analysis
-        return self._analyze_sentiment_keywords(content, company_name, disclosure_type)
-    
-    def _analyze_sentiment_keywords(self, content: str, company_name: str, disclosure_type: str) -> dict:
-        """Fallback keyword-based sentiment analysis"""
-        content_lower = content.lower()
-        
-        # Turkish positive/negative keywords
-        positive_keywords = [
-            'artış', 'büyüme', 'başarı', 'kar', 'gelir', 'yatırım', 'genişleme',
-            'olumlu', 'iyileşme', 'verimlilik', 'kârlılık', 'satış artışı'
-        ]
-        
-        negative_keywords = [
-            'zarar', 'düşüş', 'azalma', 'kayıp', 'risk', 'sorun', 'kriz',
-            'olumsuz', 'gerileme', 'maliyet artışı', 'borç', 'iflas'
-        ]
-        
-        neutral_keywords = [
-            'bildirim', 'açıklama', 'duyuru', 'genel kurul', 'toplantı',
-            'karar', 'süreç', 'işlem', 'değişiklik'
-        ]
-        
-        # Count keyword occurrences
-        positive_score = sum(1 for word in positive_keywords if word in content_lower)
-        negative_score = sum(1 for word in negative_keywords if word in content_lower)
-        neutral_score = sum(1 for word in neutral_keywords if word in content_lower)
-        
-        # Determine overall sentiment
-        if positive_score > negative_score:
-            sentiment = 'positive'
-            confidence = min(0.9, 0.6 + (positive_score * 0.1))
-        elif negative_score > positive_score:
-            sentiment = 'negative'
-            confidence = min(0.9, 0.6 + (negative_score * 0.1))
-        else:
-            sentiment = 'neutral'
-            confidence = 0.5 + (neutral_score * 0.05)
-        
-        # Impact horizon based on disclosure type
-        if disclosure_type in ['Finansal Rapor', 'Sermaye Artırımı']:
-            impact_horizon = 'long_term'
-        elif disclosure_type in ['Özel Durum Açıklaması', 'Duyuru']:
-            impact_horizon = 'short_term'
-        else:
-            impact_horizon = 'medium_term'
-        
-        # Key drivers extraction
-        key_drivers = []
-        if 'finansal' in content_lower:
-            key_drivers.append('financial_performance')
-        if 'yatırım' in content_lower:
-            key_drivers.append('investment')
-        if 'genel kurul' in content_lower:
-            key_drivers.append('governance')
-        if 'sermaye' in content_lower:
-            key_drivers.append('capital_structure')
-        
-        # Risk flags
-        risk_flags = []
-        if negative_score > 2:
-            risk_flags.append('high_negative_content')
-        if 'risk' in content_lower:
-            risk_flags.append('explicit_risk_mention')
-        if 'zarar' in content_lower or 'kayıp' in content_lower:
-            risk_flags.append('loss_indication')
-        
-        # Tone descriptors
-        tone_descriptors = []
-        if sentiment == 'positive':
-            tone_descriptors.extend(['optimistic', 'confident'])
-        elif sentiment == 'negative':
-            tone_descriptors.extend(['cautious', 'concerning'])
-        else:
-            tone_descriptors.extend(['informative', 'neutral'])
-        
-        # Target audience
-        if 'yatırımcı' in content_lower or 'pay sahipleri' in content_lower:
-            target_audience = 'investors'
-        elif 'kamu' in content_lower or 'kamuoyu' in content_lower:
-            target_audience = 'public'
-        else:
-            target_audience = 'stakeholders'
-        
-        # Risk level
-        if len(risk_flags) >= 2:
-            risk_level = 'high'
-        elif len(risk_flags) == 1:
-            risk_level = 'medium'
-        else:
-            risk_level = 'low'
-        
-        # Analysis text
-        analysis_text = f"{company_name} - {disclosure_type} bildirimi {sentiment} sentiment gösteriyor. "
-        analysis_text += f"Güven seviyesi: {confidence:.2f}. "
-        analysis_text += f"Etki süresi: {impact_horizon}. "
-        if risk_flags:
-            analysis_text += f"Risk göstergeleri: {', '.join(risk_flags)}."
-        
-        return {
-            'overall_sentiment': sentiment,
-            'confidence': confidence,
-            'impact_horizon': impact_horizon,
-            'key_drivers': key_drivers,
-            'risk_flags': risk_flags,
-            'tone_descriptors': tone_descriptors,
-            'target_audience': target_audience,
-            'analysis_text': analysis_text,
-            'risk_level': risk_level
-        }
-    
+                # Cache the result
+                self.sentiment_cache[cache_key] = sentiment_result
+                return sentiment_result
+            else:
+                logger.warning(f"Sentiment analysis returned no result for {company_name}")
+                return {}
+
+        except Exception as e:
+            logger.error(f"Error during sentiment analysis for {company_name}: {e}", exc_info=True)
+            return {}
+
     async def save_to_database(self, items: list) -> int:
         """Save items to PostgreSQL database"""
         try:
@@ -527,6 +610,7 @@ Kriterler: piyasa etkisi, finansal etki, risk/fırsat, vade analizi."""
             
             for item in items:
                 # Skip test data
+                # This check ensures that if test data is somehow generated, it's not saved to the database
                 if 'Test verisi' in item.get('content', ''):
                     logger.debug(f"Skipping test data: {item['disclosure_id']}")
                     continue
@@ -592,6 +676,7 @@ Kriterler: piyasa etkisi, finansal etki, risk/fırsat, vade analizi."""
             
             for item in items:
                 # Skip test data
+                # This check ensures that if test data is somehow generated, sentiment analysis is not performed on it
                 if 'Test verisi' in item.get('content', ''):
                     logger.debug(f"Skipping sentiment analysis for test data: {item['disclosure_id']}")
                     continue
@@ -773,8 +858,8 @@ async def main():
     print("=" * 55)
     
     try:
-        # Run with demo data for testing
-        scraper = ProductionKAPScraper(use_test_data=True)
+        # Instantiate scraper to use live data and enable LLM for sentiment analysis
+        scraper = ProductionKAPScraper(use_test_data=False, use_llm=True)
         
         print("📥 Running production KAP scraping...")
         result = await scraper.run_production_scrape()
