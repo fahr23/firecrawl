@@ -1,7 +1,9 @@
 """
 Sentiment Analysis API endpoints for Turkish Financial Data
+Supports both Keyword-Based and HuggingFace BERT analyzers
 """
 import logging
+import json
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List, Dict, Any
 from datetime import date, datetime
@@ -14,6 +16,7 @@ from api.models import (
 from api.dependencies import get_db_manager
 from database.db_manager import DatabaseManager
 from production_kap_final import ProductionKAPScraper
+from utils.llm_analyzer import HuggingFaceLocalProvider, LLMAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -327,11 +330,16 @@ async def analyze_sentiment_bulk(
     Perform sentiment analysis on specific disclosures
     
     - **report_ids**: List of disclosure database IDs to analyze
+    - **analyzer_type**: 'keyword' (fast, default) or 'huggingface' (accurate)
     - **custom_prompt**: Optional custom prompt for analysis
     """
     try:
-        # Initialize production scraper
-        scraper = ProductionKAPScraper(use_test_data=False, use_llm=request.use_llm)
+        # Determine LLM provider based on analyzer_type
+        use_llm = request.analyzer_type == "huggingface"
+        llm_provider = "huggingface" if use_llm else None
+        
+        # Initialize production scraper with selected analyzer
+        scraper = ProductionKAPScraper(use_test_data=False, use_llm=use_llm, llm_provider=llm_provider)
         
         conn = db_manager.get_connection()
         cursor = conn.cursor()
@@ -365,8 +373,7 @@ async def analyze_sentiment_bulk(
                 sentiment_data = scraper.analyze_sentiment(
                     content=disclosure[4],
                     company_name=disclosure[2],
-                    disclosure_type=disclosure[3],
-                    use_llm=request.use_llm
+                    disclosure_type=disclosure[3]
                 )
                 
                 # Check if analysis already exists
@@ -378,26 +385,16 @@ async def analyze_sentiment_bulk(
                     cursor.execute("""
                         UPDATE kap_disclosure_sentiment SET
                             overall_sentiment = %s,
-                            confidence = %s,
-                            impact_horizon = %s,
-                            key_drivers = %s,
-                            risk_flags = %s,
-                            tone_descriptors = %s,
-                            target_audience = %s,
-                            analysis_text = %s,
-                            risk_level = %s,
-                            analyzed_at = %s
+                            sentiment_score = %s,
+                            key_sentiments = %s,
+                            analysis_notes = %s,
+                            created_at = %s
                         WHERE disclosure_id = %s
                     """, (
                         sentiment_data['overall_sentiment'],
-                        sentiment_data['confidence'],
-                        sentiment_data['impact_horizon'],
-                        sentiment_data['key_drivers'],
-                        sentiment_data['risk_flags'],
-                        sentiment_data['tone_descriptors'],
-                        sentiment_data['target_audience'],
-                        sentiment_data['analysis_text'],
-                        sentiment_data['risk_level'],
+                        sentiment_data.get('confidence', sentiment_data.get('sentiment_score', 0.5)),
+                        json.dumps(sentiment_data.get('key_sentiments', [])),
+                        sentiment_data.get('analysis_notes', sentiment_data.get('analysis_text', '')),
                         datetime.now(),
                         disclosure[0]
                     ))
@@ -405,21 +402,14 @@ async def analyze_sentiment_bulk(
                     # Insert new record
                     cursor.execute("""
                         INSERT INTO kap_disclosure_sentiment 
-                        (disclosure_id, overall_sentiment, confidence, impact_horizon, 
-                         key_drivers, risk_flags, tone_descriptors, target_audience, 
-                         analysis_text, risk_level, analyzed_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        (disclosure_id, overall_sentiment, sentiment_score, key_sentiments, analysis_notes, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                     """, (
                         disclosure[0],
                         sentiment_data['overall_sentiment'],
-                        sentiment_data['confidence'],
-                        sentiment_data['impact_horizon'],
-                        sentiment_data['key_drivers'],
-                        sentiment_data['risk_flags'],
-                        sentiment_data['tone_descriptors'],
-                        sentiment_data['target_audience'],
-                        sentiment_data['analysis_text'],
-                        sentiment_data['risk_level'],
+                        sentiment_data.get('confidence', sentiment_data.get('sentiment_score', 0.5)),
+                        json.dumps(sentiment_data.get('key_sentiments', [])),
+                        sentiment_data.get('analysis_notes', sentiment_data.get('analysis_text', '')),
                         datetime.now()
                     ))
                 
@@ -427,7 +417,8 @@ async def analyze_sentiment_bulk(
                 results.append({
                     "report_id": report_id,
                     "success": True,
-                    "sentiment": sentiment_data
+                    "sentiment": sentiment_data,
+                    "analyzer": request.analyzer_type
                 })
                 
             except Exception as e:
@@ -467,12 +458,17 @@ async def analyze_recent_sentiment(
     Automatically analyze sentiment for recent disclosures
     
     - **days_back**: Days to look back for new disclosures
+    - **analyzer_type**: 'keyword' (fast, default) or 'huggingface' (accurate)
     - **company_codes**: Optional list of specific companies
     - **force_reanalyze**: Re-analyze existing sentiment data
     """
     try:
-        # Initialize production scraper with HuggingFace LLM enabled by default
-        scraper = ProductionKAPScraper(use_llm=True, llm_provider="huggingface")
+        # Determine LLM provider based on analyzer_type
+        use_llm = request.analyzer_type == "huggingface"
+        llm_provider = "huggingface" if use_llm else None
+        
+        # Initialize production scraper with selected analyzer
+        scraper = ProductionKAPScraper(use_test_data=False, use_llm=use_llm, llm_provider=llm_provider)
         
         conn = db_manager.get_connection()
         cursor = conn.cursor()
@@ -530,26 +526,16 @@ async def analyze_recent_sentiment(
                     cursor.execute("""
                         UPDATE kap_disclosure_sentiment SET
                             overall_sentiment = %s,
-                            confidence = %s,
-                            impact_horizon = %s,
-                            key_drivers = %s,
-                            risk_flags = %s,
-                            tone_descriptors = %s,
-                            target_audience = %s,
-                            analysis_text = %s,
-                            risk_level = %s,
-                            analyzed_at = %s
+                            sentiment_score = %s,
+                            key_sentiments = %s,
+                            analysis_notes = %s,
+                            created_at = %s
                         WHERE disclosure_id = %s
                     """, (
                         sentiment_data['overall_sentiment'],
-                        sentiment_data['confidence'],
-                        sentiment_data['impact_horizon'],
-                        sentiment_data['key_drivers'],
-                        sentiment_data['risk_flags'],
-                        sentiment_data['tone_descriptors'],
-                        sentiment_data['target_audience'],
-                        sentiment_data['analysis_text'],
-                        sentiment_data['risk_level'],
+                        sentiment_data.get('confidence', sentiment_data.get('sentiment_score', 0.5)),
+                        json.dumps(sentiment_data.get('key_sentiments', [])),
+                        sentiment_data.get('analysis_notes', sentiment_data.get('analysis_text', '')),
                         datetime.now(),
                         disclosure[0]
                     ))
@@ -557,21 +543,14 @@ async def analyze_recent_sentiment(
                     # Insert new record
                     cursor.execute("""
                         INSERT INTO kap_disclosure_sentiment 
-                        (disclosure_id, overall_sentiment, confidence, impact_horizon, 
-                         key_drivers, risk_flags, tone_descriptors, target_audience, 
-                         analysis_text, risk_level, analyzed_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        (disclosure_id, overall_sentiment, sentiment_score, key_sentiments, analysis_notes, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
                     """, (
                         disclosure[0],
                         sentiment_data['overall_sentiment'],
-                        sentiment_data['confidence'],
-                        sentiment_data['impact_horizon'],
-                        sentiment_data['key_drivers'],
-                        sentiment_data['risk_flags'],
-                        sentiment_data['tone_descriptors'],
-                        sentiment_data['target_audience'],
-                        sentiment_data['analysis_text'],
-                        sentiment_data['risk_level'],
+                        sentiment_data.get('confidence', sentiment_data.get('sentiment_score', 0.5)),
+                        json.dumps(sentiment_data.get('key_sentiments', [])),
+                        sentiment_data.get('analysis_notes', sentiment_data.get('analysis_text', '')),
                         datetime.now()
                     ))
                 
@@ -587,11 +566,12 @@ async def analyze_recent_sentiment(
         
         return ScrapeResponse(
             success=True,
-            message=f"Analyzed sentiment for {analyzed_count} disclosures",
+            message=f"Analyzed sentiment for {analyzed_count} disclosures using {request.analyzer_type} analyzer",
             data={
                 "analyzed_count": analyzed_count,
                 "total_found": len(disclosures),
-                "period": f"Last {request.days_back} days"
+                "period": f"Last {request.days_back} days",
+                "analyzer_type": request.analyzer_type
             }
         )
         

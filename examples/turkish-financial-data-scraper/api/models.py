@@ -150,7 +150,11 @@ class SentimentAnalysisRequest(BaseModel):
     """Request for sentiment analysis"""
     report_ids: List[int] = Field(description="List of report IDs to analyze")
     custom_prompt: Optional[str] = Field(default=None, description="Custom analysis prompt")
-    use_llm: bool = Field(default=False, description="Use LLM for sentiment analysis")
+    analyzer_type: str = Field(
+        default="keyword",
+        description="Sentiment analyzer: 'keyword' (fast, no deps) or 'huggingface' (accurate, slower)"
+    )
+    use_llm: bool = Field(default=False, description="[Deprecated] Use analyzer_type instead")
     llm_provider: Optional[str] = Field(
         default=None,
         description="Override LLM provider for this request (gemini, openai, local_llm, huggingface)"
@@ -170,6 +174,10 @@ class AutoSentimentRequest(BaseModel):
     days_back: int = Field(default=7, ge=1, le=30, description="Days to look back for reports")
     company_codes: Optional[List[str]] = Field(default=None, description="Specific companies to analyze")
     force_reanalyze: bool = Field(default=False, description="Re-analyze reports that already have sentiment")
+    analyzer_type: str = Field(
+        default="keyword",
+        description="Sentiment analyzer: 'keyword' (fast) or 'huggingface' (accurate)"
+    )
 
 
 class WebhookConfigRequest(BaseModel):

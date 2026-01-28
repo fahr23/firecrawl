@@ -356,10 +356,120 @@ For production deployment:
 
 4. **Enable HTTPS** using Let's Encrypt or similar
 
+## Sentiment Analysis Endpoints
+
+### Overview
+
+The API provides **two sentiment analyzers** for Turkish financial disclosures:
+
+1. **Keyword-Based Analyzer** - Fast (0.1ms/item), lightweight, no dependencies
+2. **HuggingFace BERT Analyzer** - Accurate (87.28% confidence), slower (0.24s/item)
+
+Both can be selected per request via the `analyzer_type` parameter.
+
+### POST `/api/v1/sentiment/analyze`
+
+Perform sentiment analysis on specific disclosures.
+
+**Request:**
+```json
+{
+  "report_ids": [1, 2, 3],
+  "analyzer_type": "keyword",
+  "custom_prompt": null
+}
+```
+
+**Parameters:**
+- `report_ids` (required): List of disclosure IDs
+- `analyzer_type` (optional, default: "keyword"): "keyword" or "huggingface"
+- `custom_prompt` (optional): Custom analysis prompt
+
+**Response:**
+```json
+{
+  "total_analyzed": 3,
+  "successful": 3,
+  "failed": 0,
+  "results": [
+    {
+      "report_id": 1,
+      "success": true,
+      "sentiment": {
+        "overall_sentiment": "positive",
+        "confidence": 0.85,
+        "key_sentiments": ["growth", "success"],
+        "analysis_notes": "Positive sentiment with growth indicators"
+      },
+      "analyzer": "keyword"
+    }
+  ]
+}
+```
+
+### POST `/api/v1/sentiment/analyze/auto`
+
+Automatically analyze sentiment for recent disclosures.
+
+**Request:**
+```json
+{
+  "days_back": 7,
+  "company_codes": ["ASELS", "AKBNK"],
+  "analyzer_type": "keyword",
+  "force_reanalyze": false
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Analyzed sentiment for 45 disclosures using keyword analyzer",
+  "data": {
+    "analyzed_count": 45,
+    "total_found": 50,
+    "period": "Last 7 days",
+    "analyzer_type": "keyword"
+  }
+}
+```
+
+### GET `/api/v1/sentiment/`
+
+Get overall sentiment analysis statistics.
+
+### GET `/api/v1/sentiment/disclosures/{id}`
+
+Get sentiment for a specific disclosure.
+
+### GET `/api/v1/sentiment/company/{name}`
+
+Get sentiment history for a company.
+
+### GET `/api/v1/sentiment/trends`
+
+Get sentiment trends over time.
+
+## Sentiment Analyzer Comparison
+
+| Feature | Keyword | HuggingFace |
+|---------|---------|------------|
+| **Speed** | 0.1ms/item | 0.24s/item |
+| **Accuracy** | 51% avg | 87.28% avg |
+| **Dependencies** | None | PyTorch |
+| **Best For** | Real-time | Research |
+
 ## Next Steps
 
 - Add authentication/authorization
 - Implement rate limiting
 - Add webhook support for long-running scrapes
-- Add sentiment analysis endpoints
 - Add real-time scraping status endpoints
+- Implement API metrics and monitoring
+- Add GraphQL API layer (optional)
+
+## Additional Resources
+
+- **Quick Reference:** [SENTIMENT_API_QUICK_REFERENCE.md](SENTIMENT_API_QUICK_REFERENCE.md)
+- **Full Guide:** [SENTIMENT_API_GUIDE.md](SENTIMENT_API_GUIDE.md)
