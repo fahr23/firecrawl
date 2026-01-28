@@ -837,8 +837,9 @@ class ProductionKAPScraper:
             return self.sentiment_cache[cache_key]
 
         if not self.llm_analyzer:
-            logger.warning("LLM analyzer not configured. Skipping sentiment analysis.")
-            return {}
+            logger.warning("LLM analyzer not configured. Using fallback keyword analysis.")
+            # Use fallback sentiment analysis
+            return self._fallback_sentiment_analysis(content, company_name, disclosure_type)
 
         try:
             # The provider is now configured via dependencies to be HuggingFace, Gemini, etc.
@@ -864,6 +865,72 @@ class ProductionKAPScraper:
         except Exception as e:
             logger.error(f"Error during sentiment analysis for {company_name}: {e}", exc_info=True)
             return {}
+
+    def _fallback_sentiment_analysis(self, content: str, company_name: str, disclosure_type: str) -> dict:
+        """Fallback sentiment analysis using keyword matching when LLM unavailable"""
+        
+        if not content:
+            return {
+                'overall_sentiment': 'neutral',
+                'confidence': 0.5,
+                'provider': 'fallback_keyword',
+                'impact_horizon': 'unknown',
+                'key_drivers': ['insufficient_content'],
+                'risk_flags': [],
+                'tone_descriptors': [],
+                'target_audience': 'company_officials',
+                'analysis_text': 'Insufficient content for analysis'
+            }
+        
+        content_lower = content.lower()
+        
+        # Turkish sentiment keywords
+        positive_keywords = [
+            'artış', 'yüksek', 'iyi', 'başarı', 'başarılı', 'kazanç', 'kar', 'büyüme', 
+            'gelişme', 'iyileşme', 'güçlü', 'pozitif', 'olumlu', 'kazanı', 'verimlil',
+            'artan', 'arttı', 'yükseldi', 'iyileşti', 'başardı'
+        ]
+        
+        negative_keywords = [
+            'azalış', 'düşük', 'kötü', 'kayıp', 'zarara', 'kaybetme', 'risk', 'tehdit',
+            'zayıf', 'negatif', 'olumsuz', 'olumsuzluk', 'düşüş', 'geriş', 'zayıf',
+            'azalda', 'düştü', 'geriledi', 'kötüleşti', 'sorun', 'sorunlar', 'krizp'
+        ]
+        
+        # Count sentiment indicators
+        positive_count = sum(1 for word in positive_keywords if word in content_lower)
+        negative_count = sum(1 for word in negative_keywords if word in content_lower)
+        
+        # Determine sentiment
+        if positive_count > negative_count * 1.5:
+            sentiment = 'positive'
+            confidence = 0.6
+        elif negative_count > positive_count * 1.5:
+            sentiment = 'negative'
+            confidence = 0.6
+        else:
+            sentiment = 'neutral'
+            confidence = 0.5
+        
+        # Identify risk flags
+        risk_flags = []
+        risk_keywords = ['risk', 'zararı', 'kayıp', 'sorun', 'tehdit', 'olumsuz']
+        for keyword in risk_keywords:
+            if keyword in content_lower:
+                risk_flags.append(keyword)
+                break
+        
+        return {
+            'overall_sentiment': sentiment,
+            'confidence': confidence,
+            'provider': 'fallback_keyword',
+            'impact_horizon': 'unknown',
+            'key_drivers': [disclosure_type] if disclosure_type else ['financial_disclosure'],
+            'risk_flags': risk_flags,
+            'tone_descriptors': ['financial_disclosure', 'official_statement'],
+            'target_audience': 'company_officials',
+            'analysis_text': f'Fallback keyword analysis: {positive_count} positive, {negative_count} negative indicators'
+        }
 
     def generate_pdf_url(self, detail_url: str) -> str:
         """Generate PDF URL from detail URL
@@ -975,6 +1042,10 @@ class ProductionKAPScraper:
             cursor.execute("SET search_path TO turkish_financial,public;")
             
             saved_count = 0
+            pdf_analyzed_count = 0
+            html_analyzed_count = 0
+            total_pdf_content_chars = 0
+            total_html_content_chars = 0
             
             for item in items:
                 # Skip test data
@@ -997,12 +1068,41 @@ class ProductionKAPScraper:
                     
                     disclosure_db_id = result[0]
                     
-                    # Perform sentiment analysis
+                    # Prepare content for sentiment analysis
+                    # Priority: PDF text (if available) + HTML content
+                    pdf_text = item.get('pdf_text', '')
+                    html_content = item.get('content', '')
+                    
+                    # Build analysis content with PDF text preferred
+                    if pdf_text and len(pdf_text) > 100:
+                        # Use PDF text for more detailed analysis
+                        analysis_content = f"Company: {item['company_name']}\nDisclosure Type: {item['disclosure_type']}\n\nDocument Content:\n{pdf_text[:10000]}"
+                        logger.info(f"Analyzing PDF content for {item['company_name']}: {len(pdf_text):,} chars")
+                    else:
+                        # Fall back to HTML content if PDF text not available
+                        analysis_content = html_content
+                        if pdf_text:
+                            logger.debug(f"PDF text too short ({len(pdf_text)} chars) for {item['company_name']}, using HTML content")
+                    
+                    # Perform sentiment analysis on PDF or HTML content
                     sentiment_data = self.analyze_sentiment(
-                        item['content'], 
+                        analysis_content, 
                         item['company_name'], 
                         item['disclosure_type']
                     )
+                    
+                    # Skip if sentiment analysis failed (no LLM analyzer available)
+                    if not sentiment_data or not sentiment_data.get('overall_sentiment'):
+                        logger.warning(f"Sentiment analysis failed for {item['company_name']} - No sentiment result")
+                        continue
+                    
+                    # Add metadata about which content was analyzed
+                    if pdf_text and len(pdf_text) > 100:
+                        sentiment_data['analyzed_from'] = 'pdf_document'
+                        sentiment_data['analysis_content_length'] = len(pdf_text)
+                    else:
+                        sentiment_data['analyzed_from'] = 'html_disclosure'
+                        sentiment_data['analysis_content_length'] = len(html_content)
                     
                     # Check if sentiment already exists
                     cursor.execute("""
@@ -1012,53 +1112,74 @@ class ProductionKAPScraper:
                     
                     sentiment_exists = cursor.fetchone()
                     
+                    # Prepare sentiment data for database (map to actual schema)
+                    overall_sentiment = sentiment_data.get('overall_sentiment', 'neutral')
+                    sentiment_score = sentiment_data.get('confidence', 0.5)
+                    
+                    # Combine key sentiments
+                    key_sentiments_list = []
+                    if sentiment_data.get('key_drivers'):
+                        key_sentiments_list.extend(sentiment_data['key_drivers'])
+                    if sentiment_data.get('tone_descriptors'):
+                        key_sentiments_list.extend(sentiment_data['tone_descriptors'])
+                    if sentiment_data.get('risk_flags'):
+                        key_sentiments_list.extend(sentiment_data['risk_flags'])
+                    
+                    key_sentiments = json.dumps(key_sentiments_list) if key_sentiments_list else json.dumps([])
+                    
+                    # Prepare analysis notes
+                    analysis_notes = sentiment_data.get('analysis_text', '')
+                    
                     if sentiment_exists:
                         # Update existing sentiment
                         cursor.execute("""
                             UPDATE kap_disclosure_sentiment 
-                            SET overall_sentiment = %s, confidence = %s, 
-                                impact_horizon = %s, key_drivers = %s, 
-                                risk_flags = %s, tone_descriptors = %s, 
-                                target_audience = %s, analysis_text = %s, 
-                                risk_level = %s, analyzed_at = %s
+                            SET overall_sentiment = %s, 
+                                sentiment_score = %s, 
+                                key_sentiments = %s, 
+                                analysis_notes = %s
                             WHERE disclosure_id = %s
                         """, (
-                            sentiment_data['overall_sentiment'],
-                            sentiment_data['confidence'],
-                            sentiment_data['impact_horizon'],
-                            sentiment_data['key_drivers'],
-                            sentiment_data['risk_flags'],
-                            sentiment_data['tone_descriptors'],
-                            sentiment_data['target_audience'],
-                            sentiment_data['analysis_text'],
-                            sentiment_data['risk_level'],
-                            datetime.now(),
+                            overall_sentiment,
+                            sentiment_score,
+                            key_sentiments,
+                            analysis_notes,
                             disclosure_db_id
                         ))
                     else:
                         # Insert new sentiment analysis
                         cursor.execute("""
                             INSERT INTO kap_disclosure_sentiment 
-                            (disclosure_id, overall_sentiment, confidence, impact_horizon, 
-                             key_drivers, risk_flags, tone_descriptors, target_audience, 
-                             analysis_text, risk_level, analyzed_at)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            (disclosure_id, overall_sentiment, sentiment_score, 
+                             key_sentiments, analysis_notes)
+                            VALUES (%s, %s, %s, %s, %s)
                         """, (
                             disclosure_db_id,
-                            sentiment_data['overall_sentiment'],
-                            sentiment_data['confidence'],
-                            sentiment_data['impact_horizon'],
-                            sentiment_data['key_drivers'],
-                            sentiment_data['risk_flags'],
-                            sentiment_data['tone_descriptors'],
-                            sentiment_data['target_audience'],
-                            sentiment_data['analysis_text'],
-                            sentiment_data['risk_level'],
-                            datetime.now()
+                            overall_sentiment,
+                            sentiment_score,
+                            key_sentiments,
+                            analysis_notes
                         ))
                     
                     saved_count += 1
-                    logger.debug(f"Saved sentiment for {item['disclosure_id']}: {sentiment_data['overall_sentiment']}")
+                    
+                    # Track sentiment analysis source
+                    source = sentiment_data.get('analyzed_from', 'unknown')
+                    content_len = sentiment_data.get('analysis_content_length', 0)
+                    
+                    if source == 'pdf_document':
+                        pdf_analyzed_count += 1
+                        total_pdf_content_chars += content_len
+                    elif source == 'html_disclosure':
+                        html_analyzed_count += 1
+                        total_html_content_chars += content_len
+                    
+                    # Log sentiment analysis result with content source
+                    sentiment = sentiment_data.get('overall_sentiment', 'neutral')
+                    logger.info(
+                        f"Sentiment analysis saved: {item['company_name']} - "
+                        f"Sentiment: {sentiment} - Source: {source} ({content_len:,} chars)"
+                    )
                     
                 except Exception as e:
                     logger.error(f"Error saving sentiment for {item['disclosure_id']}: {e}")
@@ -1068,7 +1189,19 @@ class ProductionKAPScraper:
             cursor.close()
             conn.close()
             
-            logger.info(f"Saved {saved_count} sentiment analyses to database")
+            # Log detailed sentiment analysis summary
+            logger.info("=" * 70)
+            logger.info("SENTIMENT ANALYSIS SUMMARY")
+            logger.info("=" * 70)
+            logger.info(f"Total sentiment analyses saved: {saved_count}")
+            logger.info(f"  ✓ Analyzed from PDF documents: {pdf_analyzed_count} ({total_pdf_content_chars:,} chars)")
+            logger.info(f"  ✓ Analyzed from HTML disclosures: {html_analyzed_count} ({total_html_content_chars:,} chars)")
+            logger.info(f"Total content analyzed: {total_pdf_content_chars + total_html_content_chars:,} characters")
+            if total_pdf_content_chars > 0:
+                pdf_ratio = (pdf_analyzed_count / saved_count * 100) if saved_count > 0 else 0
+                logger.info(f"PDF-based sentiment analysis: {pdf_ratio:.1f}% of items")
+            logger.info("=" * 70)
+            
             return saved_count
             
         except Exception as e:
