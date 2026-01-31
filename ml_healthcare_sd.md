@@ -1,0 +1,311 @@
+# ScienceDirect Literature Search Results
+
+**Total papers:** 15
+**With abstracts:** 15
+**ScienceDirect papers:** 15
+
+## Related Topics
+
+- learning (15.5)
+- computer science (14.0)
+- artificial intelligence (14.0)
+- machine (12.6)
+- machine learning (12.0)
+- data (7.2)
+- healthcare (6.7)
+- disease (6.0)
+- diagnosis (5.1)
+- deep (5.0)
+- deep learning (5.0)
+- support vector machine (5.0)
+- malaria (4.8)
+- cancer (4.6)
+- based (4.6)
+
+## Articles
+
+### 1. Artificial intelligence and machine learning in spine research 🔵
+
+**URL:** [https://doi.org/10.1002/jsp2.1044](https://doi.org/10.1002/jsp2.1044)
+
+**DOI:** 10.1002/jsp2.1044
+
+**Authors:** Fabio Galbusera, Gloria Casaroli, Tito Bassani
+
+**Year:** 2019
+
+**Journal:** JOR Spine
+
+**Abstract:**
+> Artificial intelligence (AI) and machine learning (ML) techniques are revolutionizing several industrial and research fields like computer vision, autonomous driving, natural language processing, and speech recognition. These novel tools are already having a major impact in radiology, diagnostics, and many other fields in which the availability of automated solution may benefit the accuracy and repeatability of the execution of critical tasks. In this narrative review, we first present a brief description of the various techniques that are being developed nowadays, with special focus on those used in spine research. Then, we describe the applications of AI and ML to problems related to the spine which have been published so far, including the localization of vertebrae and discs in radiological images, image segmentation, computer‐aided diagnosis, prediction of clinical outcomes and complications, decision support systems, content‐based image retrieval, biomechanics, and motion analysis. Finally, we briefly discuss major ethical issues related to the use of AI in healthcare, namely, accountability, risk of biased decisions as well as data privacy and security, which are nowadays being debated in the scientific community and by regulatory agencies.
+
+**Keywords:** Computer science, Artificial intelligence, Data science, Segmentation, Machine learning, Open research, Deep learning
+
+---
+
+### 2. Artificial intelligence as the next step towards precision pathology 🔵
+
+**URL:** [https://doi.org/10.1111/joim.13030](https://doi.org/10.1111/joim.13030)
+
+**DOI:** 10.1111/joim.13030
+
+**Authors:** Balázs Ács, Mattias Rantalainen, Johan Hartman
+
+**Year:** 2020
+
+**Journal:** Journal of Internal Medicine
+
+**Abstract:**
+> Abstract Pathology is the cornerstone of cancer care. The need for accuracy in histopathologic diagnosis of cancer is increasing as personalized cancer therapy requires accurate biomarker assessment. The appearance of digital image analysis holds promise to improve both the volume and precision of histomorphological evaluation. Recently, machine learning, and particularly deep learning, has enabled rapid advances in computational pathology. The integration of machine learning into routine care will be a milestone for the healthcare sector in the next decade, and histopathology is right at the centre of this revolution. Examples of potential high‐value machine learning applications include both model‐based assessment of routine diagnostic features in pathology, and the ability to extract and identify novel features that provide insights into a disease. Recent groundbreaking results have demonstrated that applications of machine learning methods in pathology significantly improves metastases detection in lymph nodes, Ki67 scoring in breast cancer, Gleason grading in prostate cancer and tumour‐infiltrating lymphocyte (TIL) scoring in melanoma. Furthermore, deep learning models have also been demonstrated to be able to predict status of some molecular markers in lung, prostate, gastric and colorectal cancer based on standard HE slides. Moreover, prognostic (survival outcomes) deep neural network models based on digitized HE slides have been demonstrated in several diseases, including lung cancer, melanoma and glioma. In this review, we aim to present and summarize the latest developments in digital image analysis and in the application of artificial intelligence in diagnostic pathology.
+
+**Keywords:** Medicine, Precision medicine, Pathology, Artificial intelligence, Medical physics
+
+---
+
+### 3. Breast Cancer Detection in the IOT Health Environment Using Modified Recursive Feature Selection 🔵
+
+**URL:** [https://doi.org/10.1155/2019/5176705](https://doi.org/10.1155/2019/5176705)
+
+**DOI:** 10.1155/2019/5176705
+
+**Authors:** Muhammad Hammad Memon, Jianping Li, Amin Ul Haq, Muhammad Hunain Memon, Wang Zhou
+
+**Year:** 2019
+
+**Journal:** Wireless Communications and Mobile Computing
+
+**Abstract:**
+> The accurate and efficient diagnosis of breast cancer is extremely necessary for recovery and treatment in early stages in IoT healthcare environment. Internet of Things has witnessed the transition in life for the last few years which provides a way to analyze both the real-time data and past data by the emerging role of artificial intelligence and data mining techniques. The current state-of-the-art method does not effectively diagnose the breast cancer in the early stages, and most of the ladies suffered from this dangerous disease. Thus, the early detection of breast cancer significantly poses a great challenge for medical experts and researchers. To solve the problem of early-stage detection of breast cancer, we proposed machine learning-based diagnostic system which effectively classifies the malignant and benign people in the environment of IoT. In the development of our proposed system, a machine learning classifier support vector machine is used to classify the malignant and benign people. To improve the classification performance of the classification system, we used a recursive feature selection algorithm to select more suitable features from the breast cancer dataset. The training/testing splits method is applied for training and testing of the classifier for the best predictive model. Additionally, the classifier performance has been checked on by using performance evaluation metrics such as classification, specificity, sensitivity, Matthews’s correlation coefficient, F1-score, and execution time. To test the proposed method, the dataset “Wisconsin Diagnostic Breast Cancer” has been used in this research study. The experimental results demonstrate that the recursive feature selection algorithm selects the best subset of features, and the classifier SVM achieved optimal classification performance on this best subset of features. The SVM kernel linear achieved high classification accuracy (99%), specificity (99%), and sensitivity (98%), and the Matthews’s correlation coefficient is 99%. From these experimental results, we concluded that the proposed system performance is excellent due to the selection of more appropriate features that are selected by the recursive feature selection algorithm. Furthermore, we suggest this proposed system for effective and efficient early stages diagnosis of breast cancer. Thus, through this system, the recovery and treatment will be more effective for breast cancer. Lastly, the implementation of the proposed system is very reliable in all aspects of IoT healthcare for breast cancer.
+
+**Keywords:** Computer science, Machine learning, Artificial intelligence, Feature selection, Classifier (UML), Breast cancer, Support vector machine
+
+---
+
+### 4. Challenges and opportunities beyond structured data in analysis of electronic health records 🔵
+
+**URL:** [https://doi.org/10.1002/wics.1549](https://doi.org/10.1002/wics.1549)
+
+**DOI:** 10.1002/wics.1549
+
+**Authors:** Maryam Tayefi, Phuong Dinh Ngo, Taridzo Chomutare, Hercules Dalianis, Elisa Salvi
+
+**Year:** 2021
+
+**Journal:** Wiley Interdisciplinary Reviews Computational Statistics
+
+**Abstract:**
+> Abstract Electronic health records (EHR) contain a lot of valuable information about individual patients and the whole population. Besides structured data, unstructured data in EHRs can provide extra, valuable information but the analytics processes are complex, time‐consuming, and often require excessive manual effort. Among unstructured data, clinical text and images are the two most popular and important sources of information. Advanced statistical algorithms in natural language processing, machine learning, deep learning, and radiomics have increasingly been used for analyzing clinical text and images. Although there exist many challenges that have not been fully addressed, which can hinder the use of unstructured data, there are clear opportunities for well‐designed diagnosis and decision support tools that efficiently incorporate both structured and unstructured data for extracting useful information and provide better outcomes. However, access to clinical data is still very restricted due to data sensitivity and ethical issues. Data quality is also an important challenge in which methods for improving data completeness, conformity and plausibility are needed. Further, generalizing and explaining the result of machine learning models are important problems for healthcare, and these are open challenges. A possible solution to improve data quality and accessibility of unstructured data is developing machine learning methods that can generate clinically relevant synthetic data, and accelerating further research on privacy preserving techniques such as deidentification and pseudonymization of clinical text. This article is categorized under: Applications of Computational Statistics &gt; Health and Medical Data/Informatics
+
+**Keywords:** Unstructured data, Computer science, Data science, Health informatics, Machine learning, Data quality, Population, Artificial intelligence, Data mining, Big data
+
+---
+
+### 5. Deepfake detection using deep learning methods: A systematic and comprehensive review 🔵
+
+**URL:** [https://doi.org/10.1002/widm.1520](https://doi.org/10.1002/widm.1520)
+
+**DOI:** 10.1002/widm.1520
+
+**Authors:** Arash Heidari, Nima Jafari Navimipour, Hasan Dağ, Mehmet Ünal
+
+**Year:** 2023
+
+**Journal:** Wiley Interdisciplinary Reviews Data Mining and Knowledge Discovery
+
+**Abstract:**
+> Abstract Deep Learning (DL) has been effectively utilized in various complicated challenges in healthcare, industry, and academia for various purposes, including thyroid diagnosis, lung nodule recognition, computer vision, large data analytics, and human‐level control. Nevertheless, developments in digital technology have been used to produce software that poses a threat to democracy, national security, and confidentiality. Deepfake is one of those DL‐powered apps that has lately surfaced. So, deepfake systems can create fake images primarily by replacement of scenes or images, movies, and sounds that humans cannot tell apart from real ones. Various technologies have brought the capacity to change a synthetic speech, image, or video to our fingers. Furthermore, video and image frauds are now so convincing that it is hard to distinguish between false and authentic content with the naked eye. It might result in various issues and ranging from deceiving public opinion to using doctored evidence in a court. For such considerations, it is critical to have technologies that can assist us in discerning reality. This study gives a complete assessment of the literature on deepfake detection strategies using DL‐based algorithms. We categorize deepfake detection methods in this work based on their applications, which include video detection, image detection, audio detection, and hybrid multimedia detection. The objective of this paper is to give the reader a better knowledge of (1) how deepfakes are generated and identified, (2) the latest developments and breakthroughs in this realm, (3) weaknesses of existing security methods, and (4) areas requiring more investigation and consideration. The results suggest that the Conventional Neural Networks (CNN) methodology is the most often employed DL method in publications. According to research, the majority of the articles are on the subject of video deepfake detection. The majority of the articles focused on enhancing only one parameter, with the accuracy parameter receiving the most attention. This article is categorized under: Technologies &gt; Machine Learning Algorithmic Development &gt; Multimedia Application Areas &gt; Science and Technology
+
+**Keywords:** Computer science, Data science, Categorization, Confidentiality, Deep learning, Artificial intelligence
+
+---
+
+### 6. Electroencephalography‐based machine learning for cognitive profiling in Parkinson's disease: Preliminary results 🔵
+
+**URL:** [https://doi.org/10.1002/mds.27528](https://doi.org/10.1002/mds.27528)
+
+**DOI:** 10.1002/mds.27528
+
+**Authors:** Nacim Betrouni, Arnaud Delval, Laurence Chaton, Luc Defebvre, Annelien Duits
+
+**Year:** 2018
+
+**Journal:** Movement Disorders
+
+**Abstract:**
+> ABSTRACT Background Cognitive symptoms are common in patients with Parkinson's disease. Characterization of a patient's cognitive profile is an essential step toward the identification of predictors of cognitive worsening. Objective The aim of this study was to investigate the use of the combination of resting‐state EEG and data‐mining techniques to build characterization models. Methods Dense EEG data from 118 patients with Parkinson's disease, classified into 5 different groups according to the severity of their cognitive impairments, were considered. Spectral power analysis within 7 frequency bands was performed on the EEG signals. The obtained quantitative EEG features of 100 patients were mined using 2 machine‐learning algorithms to build and train characterization models, namely, support vector machines and k‐nearest neighbors models. The models were then blindly tested on data from 18 patients. Results The overall classification accuracies were 84% and 88% for the support vector machines and k‐nearest algorithms, respectively. The worst classifications were observed for patients from groups with small sample sizes, corresponding to patients with the severe cognitive deficits. Whereas for the remaining groups for whom an accurate diagnosis was required to plan the future healthcare, the classification was very accurate. Conclusion These results suggest that EEG features computed from a daily clinical practice exploration modality in—that it is nonexpensive, available anywhere, and requires minimal cooperation from the patient—can be used as a screening method to identify the severity of cognitive impairment in patients with Parkinson's disease. © 2018 International Parkinson and Movement Disorder Society
+
+**Keywords:** Electroencephalography, Cognition, Support vector machine, Parkinson's disease, Artificial intelligence, Disease, Psychology, Computer science, Machine learning, Pattern recognition (psychology)
+
+---
+
+### 7. Fetal health classification from cardiotocographic data using machine learning 🔵
+
+**URL:** [https://doi.org/10.1111/exsy.12899](https://doi.org/10.1111/exsy.12899)
+
+**DOI:** 10.1111/exsy.12899
+
+**Authors:** Abolfazl Mehbodniya, L. Arokia Jesu Prabhu, Julian Webber, Dilip Kumar Sharma, J. Santhosh
+
+**Year:** 2021
+
+**Journal:** Expert Systems
+
+**Abstract:**
+> Abstract Health complications during the gestation period have evolved as a global issue. These complications sometimes result in the mortality of the fetus, which is more prevalent in developing and underdeveloped countries. The genesis of machine learning (ML) algorithms in the healthcare domain have brought remarkable progress in disease diagnosis, treatment, and prognosis. This research deploys various ML algorithms to predict fetal health from the cardiotocographic (CTG) data by labelling the health state into normal, needs guarantee, and pathology. This work assesses the influence of various factors measured through CTG to predict the health state of the fetus through algorithms like support vector machine, random forest (RF), multi‐layer perceptron, and K‐nearest neighbours. In addition to this, the regression analysis and correlation analysis revealed the influence of the attributes on fetal health. The results of the algorithms show that RF performs better than its peers in terms of accuracy, precision, recall, F1‐score, and support. This work can further enhance more promising results by performing suitable feature engineering in the CTG data.
+
+**Keywords:** Computer science, Support vector machine, Random forest, Artificial intelligence, Feature (linguistics), Feature engineering, Machine learning, Multilayer perceptron
+
+---
+
+### 8. Fused Weighted Federated Deep Extreme Machine Learning Based on Intelligent Lung Cancer Disease Prediction Model for Healthcare 5.0 🔵
+
+**URL:** [https://doi.org/10.1155/2023/2599161](https://doi.org/10.1155/2023/2599161)
+
+**DOI:** 10.1155/2023/2599161
+
+**Authors:** Sagheer Abbas, Ghassan F. Issa, Areej Fatima, Tahir Abbas, Taher M. Ghazal
+
+**Year:** 2023
+
+**Journal:** International Journal of Intelligent Systems
+
+**Abstract:**
+> In the era of advancement in information technology and the smart healthcare industry 5.0, the diagnosis of human diseases is still a challenging task. The accurate prediction of human diseases, especially deadly cancer diseases in the smart healthcare industry 5.0, is of utmost importance for human wellbeing. In recent years, the global Internet of Medical Things (IoMT) industry has evolved at a dizzying pace, from a small wristwatch to a big aircraft. With this advancement in the healthcare industry, there also rises the issue of data privacy. To ensure the privacy of patients’ data and fast data transmission, federated deep extreme learning entangled with the edge computing approach is considered in this proposed intelligent system for the diagnosis of lung disease. Federated deep extreme machine learning is applied for the prediction of lung disease in the proposed intelligent system. Furthermore, to strengthen the proposed model, a fused weighted deep extreme machine learning methodology is adopted for better prediction of lung disease. The MATLAB 2020a tool is used for simulation and results. The proposed fused weighted federated deep extreme machine learning model is used for the validation of the best prediction of cancer disease in the smart healthcare industry 5.0. The result of the proposed fused weighted federated deep extreme machine learning approach achieved 97.2%, which is better than the state‐of‐the‐art published methods.
+
+**Keywords:** Computer science, Deep learning, Artificial intelligence, Big data, Machine learning, Extreme learning machine, Health care, Pace, Artificial neural network, Data mining
+
+---
+
+### 9. How artificial intelligence may help the Covid‐19 pandemic: Pitfalls and lessons for the future 🔵
+
+**URL:** [https://doi.org/10.1002/rmv.2205](https://doi.org/10.1002/rmv.2205)
+
+**DOI:** 10.1002/rmv.2205
+
+**Authors:** Yashpal Singh Malik, Shubhankar Sircar, Sudipta Bhat, Mohd Ikram Ansari, Tripti Pande
+
+**Year:** 2020
+
+**Journal:** Reviews in Medical Virology
+
+**Abstract:**
+> Summary The clinical severity, rapid transmission and human losses due to coronavirus disease 2019 (Covid‐19) have led the World Health Organization to declare it a pandemic. Traditional epidemiological tools are being significantly complemented by recent innovations especially using artificial intelligence (AI) and machine learning. AI‐based model systems could improve pattern recognition of disease spread in populations and predictions of outbreaks in different geographical locations. A variable and a minimal amount of data are available for the signs and symptoms of Covid‐19, allowing a composite of maximum likelihood algorithms to be employed to enhance the accuracy of disease diagnosis and to identify potential drugs. AI‐based forecasting and predictions are expected to complement traditional approaches by helping public health officials to select better response and preparedness measures against Covid‐19 cases. AI‐based approaches have helped address the key issues but a significant impact on the global healthcare industry is yet to be achieved. The capability of AI to address the challenges may make it a key player in the operation of healthcare systems in future. Here, we present an overview of the prospective applications of the AI model systems in healthcare settings during the ongoing Covid‐19 pandemic.
+
+**Keywords:** Pandemic, Coronavirus disease 2019 (COVID-19), 2019-20 coronavirus outbreak, Severe acute respiratory syndrome coronavirus 2 (SARS-CoV-2), Virology, Medicine, Intensive care medicine, Computer science
+
+---
+
+### 10. Leveraging Deep Learning Techniques for Malaria Parasite Detection Using Mobile Application 🔵
+
+**URL:** [https://doi.org/10.1155/2020/8895429](https://doi.org/10.1155/2020/8895429)
+
+**DOI:** 10.1155/2020/8895429
+
+**Authors:** Mehedi Masud, Hesham Alhumyani, Sultan S. Alshamrani, Omar Cheikhrouhou, Saleh Ibrahim
+
+**Year:** 2020
+
+**Journal:** Wireless Communications and Mobile Computing
+
+**Abstract:**
+> Malaria is a contagious disease that affects millions of lives every year. Traditional diagnosis of malaria in laboratory requires an experienced person and careful inspection to discriminate healthy and infected red blood cells (RBCs). It is also very time-consuming and may produce inaccurate reports due to human errors. Cognitive computing and deep learning algorithms simulate human intelligence to make better human decisions in applications like sentiment analysis, speech recognition, face detection, disease detection, and prediction. Due to the advancement of cognitive computing and machine learning techniques, they are now widely used to detect and predict early disease symptoms in healthcare field. With the early prediction results, healthcare professionals can provide better decisions for patient diagnosis and treatment. Machine learning algorithms also aid the humans to process huge and complex medical datasets and then analyze them into clinical insights. This paper looks for leveraging deep learning algorithms for detecting a deadly disease, malaria, for mobile healthcare solution of patients building an effective mobile system. The objective of this paper is to show how deep learning architecture such as convolutional neural network (CNN) which can be useful in real-time malaria detection effectively and accurately from input images and to reduce manual labor with a mobile application. To this end, we evaluate the performance of a custom CNN model using a cyclical stochastic gradient descent (SGD) optimizer with an automatic learning rate finder and obtain an accuracy of 97.30% in classifying healthy and infected cell images with a high degree of precision and sensitivity. This outcome of the paper will facilitate microscopy diagnosis of malaria to a mobile application so that reliability of the treatment and lack of medical expertise can be solved.
+
+**Keywords:** Computer science, Artificial intelligence, Deep learning, Machine learning, Convolutional neural network, Stochastic gradient descent, Malaria, Field (mathematics), Process (computing), Artificial neural network
+
+---
+
+### 11. Machine learning‐based in‐line holographic sensing of unstained malaria‐infected red blood cells 🔵
+
+**URL:** [https://doi.org/10.1002/jbio.201800101](https://doi.org/10.1002/jbio.201800101)
+
+**DOI:** 10.1002/jbio.201800101
+
+**Authors:** Taesik Go, Jun H. Kim, Hyeokjun Byeon, Sang Joon Lee
+
+**Year:** 2018
+
+**Journal:** Journal of Biophotonics
+
+**Abstract:**
+> Accurate and immediate diagnosis of malaria is important for medication of the infectious disease. Conventional methods for diagnosing malaria are time consuming and rely on the skill of experts. Therefore, an automatic and simple diagnostic modality is essential for healthcare in developing countries that lack the expertise of trained microscopists. In the present study, a new automatic sensing method using digital in‐line holographic microscopy (DIHM) combined with machine learning algorithms was proposed to sensitively detect unstained malaria‐infected red blood cells (iRBCs). To identify the RBC characteristics, 13 descriptors were extracted from segmented holograms of individual RBCs. Among the 13 descriptors, 10 features were highly statistically different between healthy RBCs (hRBCs) and iRBCs. Six machine learning algorithms were applied to effectively combine the dominant features and to greatly improve the diagnostic capacity of the present method. Among the classification models trained by the 6 tested algorithms, the model trained by the support vector machine (SVM) showed the best accuracy in separating hRBCs and iRBCs for training ( n = 280, 96.78%) and testing sets ( n = 120, 97.50%). This DIHM‐based artificial intelligence methodology is simple and does not require blood staining. Thus, it will be beneficial and valuable in the diagnosis of malaria.
+
+**Keywords:** Malaria, Artificial intelligence, Support vector machine, Blood smear, Machine learning, Computer science, Diagnosis of malaria, Pattern recognition (psychology), Infectious disease (medical specialty), Plasmodium falciparum
+
+---
+
+### 12. Machine Learning‐Reinforced Noninvasive Biosensors for Healthcare 🔵
+
+**URL:** [https://doi.org/10.1002/adhm.202100734](https://doi.org/10.1002/adhm.202100734)
+
+**DOI:** 10.1002/adhm.202100734
+
+**Authors:** Kaiyi Zhang, Jianwu Wang, Tianyi Liu, Yifei Luo, Xian Jun Loh
+
+**Year:** 2021
+
+**Journal:** Advanced Healthcare Materials
+
+**Abstract:**
+> Abstract The emergence and development of noninvasive biosensors largely facilitate the collection of physiological signals and the processing of health‐related data. The utilization of appropriate machine learning algorithms improves the accuracy and efficiency of biosensors. Machine learning‐reinforced biosensors are started to use in clinical practice, health monitoring, and food safety, bringing a digital revolution in healthcare. Herein, the recent advances in machine learning‐reinforced noninvasive biosensors applied in healthcare are summarized. First, different types of noninvasive biosensors and physiological signals collected are categorized and summarized. Then machine learning algorithms adopted in subsequent data processing are introduced and their practical applications in biosensors are reviewed. Finally, the challenges faced by machine learning‐reinforced biosensors are raised, including data privacy and adaptive learning capability, and their prospects in real‐time monitoring, out‐of‐clinic diagnosis, and onsite food safety detection are proposed.
+
+**Keywords:** Biosensor, Computer science, Artificial intelligence, Machine learning, Health care, Nanotechnology
+
+---
+
+### 13. Radiomics and Machine Learning in Oral Healthcare 🔵
+
+**URL:** [https://doi.org/10.1002/prca.201900040](https://doi.org/10.1002/prca.201900040)
+
+**DOI:** 10.1002/prca.201900040
+
+**Authors:** André Ferreira Leite, Karla de Faria Vasconcelos, Holger Willems, Reinhilde Jacobs
+
+**Year:** 2020
+
+**Journal:** PROTEOMICS - CLINICAL APPLICATIONS
+
+**Abstract:**
+> Abstract The increasing storage of information, data, and forms of knowledge has led to the development of new technologies that can help to accomplish complex tasks in different areas, such as in dentistry. In this context, the role of computational methods, such as radiomics and Artificial Intelligence (AI) applications, has been progressing remarkably for dentomaxillofacial radiology (DMFR). These tools bring new perspectives for diagnosis, classification, and prediction of oral diseases, treatment planning, and for the evaluation and prediction of outcomes, minimizing the possibilities of human errors. A comprehensive review of the state‐of‐the‐art of using radiomics and machine learning (ML) for imaging in oral healthcare is presented in this paper. Although the number of published studies is still relatively low, the preliminary results are very promising and in a near future, an augmented dentomaxillofacial radiology (ADMFR) will combine the use of radiomics‐based and AI‐based analyses with the radiologist's evaluation. In addition to the opportunities and possibilities, some challenges and limitations have also been discussed for further investigations.
+
+**Keywords:** Radiomics, Context (archaeology), Computer science, Artificial intelligence, Health care, Machine learning, Data science
+
+---
+
+### 14. Recent Developments and Future Directions of Wearable Skin Biosignal Sensors 🔵
+
+**URL:** [https://doi.org/10.1002/adsr.202300118](https://doi.org/10.1002/adsr.202300118)
+
+**DOI:** 10.1002/adsr.202300118
+
+**Authors:** Dohyung Kim, JinKi Min, Seung Hwan Ko
+
+**Year:** 2023
+
+**Journal:** Advanced Sensor Research
+
+**Abstract:**
+> Abstract This review article explores the transformative advancements in wearable biosignal sensors powered by machine learning, focusing on four notable biosignals: electrocardiogram (ECG), electromyogram (EMG), electroencephalogram (EEG), and photoplethysmogram (PPG). The integration of machine learning with these biosignals has led to remarkable breakthroughs in various medical monitoring and human–machine interface applications. For ECG, machine learning enables automated heartbeat classification and accurate disease detection, improving cardiac healthcare with early diagnosis and personalized interventions. EMG technology, combined with machine learning, facilitates real‐time prediction and classification of human motions, revolutionizing applications in sports medicine, rehabilitation, prosthetics, and virtual reality interfaces. EEG analysis powered by machine learning goes beyond traditional clinical applications, enabling brain activity understanding in psychology, neurology, and human–computer interaction, and holds promise in brain–computer interfaces. PPG, augmented with machine learning, has shown exceptional progress in diagnosing and monitoring cardiovascular and respiratory disorders, offering non‐invasive and accurate healthcare solutions. These integrated technologies, powered by machine learning, open new avenues for medical monitoring and human–machine interaction, shaping the future of healthcare.
+
+**Keywords:** Biosignal, Wearable computer, Computer science, Brain–computer interface, Artificial intelligence, Photoplethysmogram, Machine learning, Human–computer interaction, Wearable technology, Health care
+
+---
+
+### 15. Review on <scp>COVID</scp>‐19 diagnosis models based on machine learning and deep learning approaches 🔵
+
+**URL:** [https://doi.org/10.1111/exsy.12759](https://doi.org/10.1111/exsy.12759)
+
+**DOI:** 10.1111/exsy.12759
+
+**Authors:** Zaid Abdi Alkareem Alyasseri, Mohammed Azmi Al‐Betar, Iyad Abu Doush, Mohammed A. Awadallah, Ammar Kamal Abasi
+
+**Year:** 2021
+
+**Journal:** Expert Systems
+
+**Abstract:**
+> Abstract COVID‐19 is the disease evoked by a new breed of coronavirus called the severe acute respiratory syndrome coronavirus 2 (SARS‐CoV‐2). Recently, COVID‐19 has become a pandemic by infecting more than 152 million people in over 216 countries and territories. The exponential increase in the number of infections has rendered traditional diagnosis techniques inefficient. Therefore, many researchers have developed several intelligent techniques, such as deep learning (DL) and machine learning (ML), which can assist the healthcare sector in providing quick and precise COVID‐19 diagnosis. Therefore, this paper provides a comprehensive review of the most recent DL and ML techniques for COVID‐19 diagnosis. The studies are published from December 2019 until April 2021. In general, this paper includes more than 200 studies that have been carefully selected from several publishers, such as IEEE, Springer and Elsevier. We classify the research tracks into two categories: DL and ML and present COVID‐19 public datasets established and extracted from different countries. The measures used to evaluate diagnosis methods are comparatively analysed and proper discussion is provided. In conclusion, for COVID‐19 diagnosing and outbreak prediction, SVM is the most widely used machine learning mechanism, and CNN is the most widely used deep learning mechanism. Accuracy, sensitivity, and specificity are the most widely used measurements in previous studies. Finally, this review paper will guide the research community on the upcoming development of machine learning for COVID‐19 and inspire their works for future development. This review paper will guide the research community on the upcoming development of ML and DL for COVID‐19 and inspire their works for future development.
+
+**Keywords:** Artificial intelligence, Computer science, Coronavirus disease 2019 (COVID-19), Machine learning, Deep learning, Severe acute respiratory syndrome coronavirus 2 (SARS-CoV-2), Support vector machine, Pandemic, Coronavirus
+
+---
+

@@ -1,0 +1,928 @@
+{
+  "search_timestamp": "2026-02-01T00:07:07.208283",
+  "total_papers": 70,
+  "related_topics": [
+    {
+      "topic": "machine learning",
+      "score": 45.0
+    },
+    {
+      "topic": "learning",
+      "score": 37
+    },
+    {
+      "topic": "healthcare",
+      "score": 37
+    },
+    {
+      "topic": "machine",
+      "score": 30
+    },
+    {
+      "topic": "arxiv arxiv",
+      "score": 28.5
+    },
+    {
+      "topic": "learning healthcare",
+      "score": 25.5
+    },
+    {
+      "topic": "arxiv arxiv arxiv",
+      "score": 21.599999999999994
+    },
+    {
+      "topic": "machine learning healthcare",
+      "score": 20.399999999999995
+    },
+    {
+      "topic": "arxiv",
+      "score": 20
+    },
+    {
+      "topic": "learning for healthcare",
+      "score": 7.2
+    },
+    {
+      "topic": "review",
+      "score": 6
+    },
+    {
+      "topic": "applications",
+      "score": 6
+    },
+    {
+      "topic": "detection",
+      "score": 6
+    },
+    {
+      "topic": "healthcare machine",
+      "score": 6.0
+    },
+    {
+      "topic": "healthcare machine learning",
+      "score": 4.8
+    },
+    {
+      "topic": "healthcare applications",
+      "score": 4.5
+    },
+    {
+      "topic": "ethical",
+      "score": 4
+    },
+    {
+      "topic": "framework",
+      "score": 4
+    },
+    {
+      "topic": "learning healthcare applications",
+      "score": 3.5999999999999996
+    },
+    {
+      "topic": "opportunities",
+      "score": 3
+    }
+  ],
+  "papers": [
+    {
+      "title": "**Machine learning** in **healthcare**",
+      "url": "https://www.benthamdirect.com/content/journals/cg/10.2174/1389202922666210705124359",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Using **machine learning** for **healthcare** challenges and opportunities",
+      "url": "https://www.sciencedirect.com/science/article/pii/S2352914822000739",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Machine learning** in **healthcare**: A review",
+      "url": "https://ieeexplore.ieee.org/abstract/document/8474918/",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Identifying ethical considerations for **machine learning healthcare** applications",
+      "url": "https://www.tandfonline.com/doi/abs/10.1080/15265161.2020.1819469",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Machine learning** in **healthcare**",
+      "url": "https://www.sciencedirect.com/science/article/pii/B9780128095232000194",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Machine learning** in **healthcare**: review, opportunities and challenges",
+      "url": "https://www.sciencedirect.com/science/article/pii/B9780128212295000112",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Machine learning** for **healthcare**: on the verge of a major shift in **healthcare** epidemiology",
+      "url": "https://academic.oup.com/cid/article-pdf/doi/10.1093/cid/cix731/24265881/cix731.pdf",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Machine learning** in **healthcare** informatics",
+      "url": "https://link.springer.com/content/pdf/10.1007/978-3-642-40017-9.pdf",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Machine learning** and AI for **healthcare**",
+      "url": "https://link.springer.com/content/pdf/10.1007/978-1-4842-6537-6.pdf",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Ethical **machine learning** in **healthcare**",
+      "url": "https://www.annualreviews.org/content/journals/10.1146/annurev-biodatasci-092820-114757",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Identifying Ethical Considerations for  Machine   Learning   Healthcare  Applications",
+      "url": "https://www.semanticscholar.org/paper/Identifying-Ethical-Considerations-for-Machine-Char-Abr%C3%A0moff/6e6c03c3a971ca0d17f21bd094beaca51b514676",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": " Machine   Learning   Healthcare  Chatbot using Python",
+      "url": "https://www.semanticscholar.org/paper/Machine-Learning-Healthcare-Chatbot-using-Python-Bhavana-Susmitha/023685ff035c00ac6ad3215090aea1cfac979ab8",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": " Machine   learning ,  healthcare  resource allocation, and patient consent",
+      "url": "https://www.semanticscholar.org/paper/Machine-learning%2C-healthcare-resource-allocation%2C-Webb/dc2e84e15d9d7f080a47cfe553bdc852d718c4ef",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "IMHS: An IoT-Based  Machine   Learning   Healthcare  System",
+      "url": "https://www.semanticscholar.org/paper/IMHS%3A-An-IoT-Based-Machine-Learning-Healthcare-Goyal-Kaur/95f40a66149e15162122fe3f3ccd5dc0546bc211",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Bioethics Principles in  Machine   Learning -  Healthcare  Application Design: Achieving Health Justice and Health Equity.",
+      "url": "https://www.semanticscholar.org/paper/Bioethics-Principles-in-Machine-Learning-Healthcare-Fritz-Nguyen-Truong/76ce58fb8fb631357eb80fcf177066b64ed265a1",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Generating high-fidelity synthetic patient data for assessing  machine   learning   healthcare  software",
+      "url": "https://www.semanticscholar.org/paper/Generating-high-fidelity-synthetic-patient-data-for-Tucker-Wang/a7b19803f0bda248540ef9d1889b6911dffadd49",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Stop explaining black box  machine   learning  models for high stakes decisions and use interpretable models instead",
+      "url": "https://www.semanticscholar.org/paper/Stop-explaining-black-box-machine-learning-models-Rudin/bc00ff34ec7772080c7039b17f7069a2f7df0889",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Lung Cancer Detection Using Image Processing and  Machine   Learning   HealthCare ",
+      "url": "https://www.semanticscholar.org/paper/Lung-Cancer-Detection-Using-Image-Processing-and-Rahane-Dalvi/430cbbecd3a08f853a0863d8a4247cc7ad094b94",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Embedded Ethics Could Help Implement the Pipeline Model Framework for  Machine   Learning   Healthcare  Applications",
+      "url": "https://www.semanticscholar.org/paper/Embedded-Ethics-Could-Help-Implement-the-Pipeline-Fiske-Tigard/54a173f68fa10e3547b9c49229e7e3851289b86c",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Impact of biomaterials in lung tumor classification and segmentation using  Machine   learning   healthcare ",
+      "url": "https://www.semanticscholar.org/paper/Impact-of-biomaterials-in-lung-tumor-classification-Easwaran-Kandasamy/47a39a2f70d11b97511f7b23e24a6aee6aee33d0",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Probabilistic **Machine** **Learning** for **Healthcare**.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/34465179/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Machine** **learning** applied to **healthcare**: a conceptual review.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/35678368/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Machine** **Learning** for **Healthcare** Wearable Devices: The Big Picture.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/35480146/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Involvement of **Machine** **Learning** Tools in **Healthcare** Decision Making.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/33575021/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Explainable, trustworthy, and ethical **machine** **learning** for **healthcare**: A survey.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/36115302/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Unsupervised **machine** **learning** methods and emerging applications in **healthcare**.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/36378293/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Machine** **learning** applied to electronic **health** record data in home **healthcare**: A scoping review.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/36592572/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Automated **machine** **learning**: Review of the state-of-the-art and opportunities for **healthcare**.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/32499001/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Machine** **Learning**-Reinforced Noninvasive Biosensors for **Healthcare**.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/34165240/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Combining simulation models and **machine** **learning** in **healthcare** management: strategies and applications.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/39655860/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.21941",
+      "url": "https://arxiv.org/abs/2601.21941",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.21845",
+      "url": "https://arxiv.org/abs/2601.21845",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.20845",
+      "url": "https://arxiv.org/abs/2601.20845",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.20375",
+      "url": "https://arxiv.org/abs/2601.20375",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.20330",
+      "url": "https://arxiv.org/abs/2601.20330",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.19595",
+      "url": "https://arxiv.org/abs/2601.19595",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.18753",
+      "url": "https://arxiv.org/abs/2601.18753",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.18710",
+      "url": "https://arxiv.org/abs/2601.18710",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.18706",
+      "url": "https://arxiv.org/abs/2601.18706",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.17767",
+      "url": "https://arxiv.org/abs/2601.17767",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.17465",
+      "url": "https://arxiv.org/abs/2601.17465",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.17292",
+      "url": "https://arxiv.org/abs/2601.17292",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.17183",
+      "url": "https://arxiv.org/abs/2601.17183",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.17049",
+      "url": "https://arxiv.org/abs/2601.17049",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.16715",
+      "url": "https://arxiv.org/abs/2601.16715",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.16487",
+      "url": "https://arxiv.org/abs/2601.16487",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.16414",
+      "url": "https://arxiv.org/abs/2601.16414",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.16406",
+      "url": "https://arxiv.org/abs/2601.16406",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.15977",
+      "url": "https://arxiv.org/abs/2601.15977",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.15697",
+      "url": "https://arxiv.org/abs/2601.15697",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Consumer-Centric Explainable Multimodal Digital Twin Modeling for Personalized Alzheimer’s Detection in Healthcare 5.0",
+      "url": "https://ieeexplore.ieee.org/document/11369434/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Casting Ventricular Arrhythmia Detection as Anomaly Detection via One-Class Meta-Learning",
+      "url": "https://ieeexplore.ieee.org/document/11368880/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Stagewise Optimization Framework for Fall Direction Recognition from Wearable Sensor Data based on MachineLearning",
+      "url": "https://ieeexplore.ieee.org/document/11368688/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Diagnosis of Alzheimer's Disease Using Deep Learning Approach",
+      "url": "https://ieeexplore.ieee.org/document/11360834/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "A Deep Learning Approach for Improving Acne Type Classification Accuracy Using Hybrid Transfer Learning and Synthetic GAN-Based Augmentation",
+      "url": "https://ieeexplore.ieee.org/document/11360877/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "AI-Powered Digital Twin for Personalised Healthcare in the NHS",
+      "url": "https://ieeexplore.ieee.org/document/11360793/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "An Efficient Framework for Detecting Model Inversion Attacks in Connected Healthcare Systems",
+      "url": "https://ieeexplore.ieee.org/document/11367032/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Lightweight Seizure Detection for Wearable Electronics via Riemannian t-SNE",
+      "url": "https://ieeexplore.ieee.org/document/11367058/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "When and How to Focus: A Task-Dependent Analysis of Efficient Attentive Architectures for Biosignal Classification",
+      "url": "https://ieeexplore.ieee.org/document/11366233/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "A Secure and Interoperable Big Data Platform for AI-Driven Healthcare Solutions: Insights from the GATEKEEPER Project",
+      "url": "https://ieeexplore.ieee.org/document/11363173/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "CRISP: Cyber-Resilient Intelligent Systems for Predicting Threats in Digital Ecosystems",
+      "url": "https://ieeexplore.ieee.org/document/11366675/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Clustered Federated Learning for Healthcare Analytics: A Dual Blockchain-Functional Encryption Method for Fortified Aggregation",
+      "url": "https://ieeexplore.ieee.org/document/11366657/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Early Detection of Bladder Cancer Using Advanced Feature Engineering and Swarm Intelligence Optimization on EHRs",
+      "url": "https://ieeexplore.ieee.org/document/11364194/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Technology-Enhanced Dual-Task Testing for Alzheimer’s Disease and Related Dementias: A Review of Trends, Tools, and Emerging Directions",
+      "url": "https://ieeexplore.ieee.org/document/11363580/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "A Comprehensive Survey of TinyML-Based Biometric Recognition for IoT Edge Devices",
+      "url": "https://ieeexplore.ieee.org/document/11361023/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "On-Device Club Path Recognition with Self-Supervised Learning for Golf Analysis",
+      "url": "https://ieeexplore.ieee.org/document/11360583/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "ISO/IEC/IEEE Draft International Standard for Enterprise, Systems and Software -- Reference architectures",
+      "url": "https://ieeexplore.ieee.org/document/11360676/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Securing Consumer Applications Against AI-Driven Misinformation: A Cross-Domain Multimodal Approach",
+      "url": "https://ieeexplore.ieee.org/document/11359236/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Energy-Aware Sparse Federated Learning Framework for Secure Edge Healthcare and Consumer IoMT Devices",
+      "url": "https://ieeexplore.ieee.org/document/11358992/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "DynaTAS: Dynamic Time-Aware Shaper Communications in a 5G-TSN Converged Network for Remote Healthcare",
+      "url": "https://ieeexplore.ieee.org/document/11358884/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    }
+  ]
+}

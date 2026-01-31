@@ -72,6 +72,8 @@ services:
       MAX_CONCURRENT_PAGES: ${CRAWL_CONCURRENT_REQUESTS:-10}
     networks:
       - backend
+    ports:
+      - "3000:3000"
     # Resource limits for Docker Compose (not Swarm)
     cpus: 2.0
     mem_limit: 4G

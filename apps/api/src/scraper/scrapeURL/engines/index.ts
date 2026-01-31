@@ -48,15 +48,15 @@ const engines: Engine[] = [
   ...(useIndex ? ["index" as const, "index;documents" as const] : []),
   ...(useFireEngine
     ? [
-        "fire-engine;chrome-cdp" as const,
-        "fire-engine;chrome-cdp;stealth" as const,
-        "fire-engine(retry);chrome-cdp" as const,
-        "fire-engine(retry);chrome-cdp;stealth" as const,
-        "fire-engine;playwright" as const,
-        "fire-engine;playwright;stealth" as const,
-        "fire-engine;tlsclient" as const,
-        "fire-engine;tlsclient;stealth" as const,
-      ]
+      "fire-engine;chrome-cdp" as const,
+      "fire-engine;chrome-cdp;stealth" as const,
+      "fire-engine(retry);chrome-cdp" as const,
+      "fire-engine(retry);chrome-cdp;stealth" as const,
+      "fire-engine;playwright" as const,
+      "fire-engine;playwright;stealth" as const,
+      "fire-engine;tlsclient" as const,
+      "fire-engine;tlsclient;stealth" as const,
+    ]
     : []),
   ...(usePlaywright ? ["playwright" as const] : []),
   "fetch",
@@ -350,10 +350,10 @@ const engineOptions: {
   },
   playwright: {
     features: {
-      actions: false,
+      actions: true,
       waitFor: true,
-      screenshot: false,
-      "screenshot@fullScreen": false,
+      screenshot: true,
+      "screenshot@fullScreen": true,
       pdf: false,
       document: false,
       atsv: false,
@@ -495,8 +495,8 @@ export async function buildFallbackList(meta: Meta): Promise<
 > {
   const shouldPrioritizeTlsClient = meta.options.__experimental_engpicker
     ? (await queryEngpickerVerdict(
-        meta.options.__experimental_omceDomain ?? new URL(meta.url).hostname,
-      )) === "TlsClientOk"
+      meta.options.__experimental_omceDomain ?? new URL(meta.url).hostname,
+    )) === "TlsClientOk"
     : false;
 
   const _engines: Engine[] = [
@@ -505,15 +505,15 @@ export async function buildFallbackList(meta: Meta): Promise<
     // enable fire-engine in self-hosted testing environment when mocks are supplied
     ...(!useFireEngine && meta.mock !== null
       ? ([
-          "fire-engine;chrome-cdp",
-          "fire-engine(retry);chrome-cdp",
-          "fire-engine;chrome-cdp;stealth",
-          "fire-engine(retry);chrome-cdp;stealth",
-          "fire-engine;playwright",
-          // "fire-engine;tlsclient",
-          // "fire-engine;playwright;stealth",
-          // "fire-engine;tlsclient;stealth",
-        ] as Engine[])
+        "fire-engine;chrome-cdp",
+        "fire-engine(retry);chrome-cdp",
+        "fire-engine;chrome-cdp;stealth",
+        "fire-engine(retry);chrome-cdp;stealth",
+        "fire-engine;playwright",
+        // "fire-engine;tlsclient",
+        // "fire-engine;playwright;stealth",
+        // "fire-engine;tlsclient;stealth",
+      ] as Engine[])
       : []),
   ];
 

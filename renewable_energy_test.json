@@ -1,0 +1,928 @@
+{
+  "search_timestamp": "2026-02-01T00:02:21.053668",
+  "total_papers": 70,
+  "related_topics": [
+    {
+      "topic": "energy",
+      "score": 58
+    },
+    {
+      "topic": "renewable energy",
+      "score": 36.0
+    },
+    {
+      "topic": "energy storage",
+      "score": 31.5
+    },
+    {
+      "topic": "storage",
+      "score": 30
+    },
+    {
+      "topic": "arxiv arxiv",
+      "score": 28.5
+    },
+    {
+      "topic": "renewable",
+      "score": 27
+    },
+    {
+      "topic": "arxiv arxiv arxiv",
+      "score": 21.599999999999994
+    },
+    {
+      "topic": "arxiv",
+      "score": 20
+    },
+    {
+      "topic": "systems",
+      "score": 14
+    },
+    {
+      "topic": "power",
+      "score": 10
+    },
+    {
+      "topic": "grid",
+      "score": 8
+    },
+    {
+      "topic": "storage systems",
+      "score": 7.5
+    },
+    {
+      "topic": "system",
+      "score": 7
+    },
+    {
+      "topic": "hybrid",
+      "score": 6
+    },
+    {
+      "topic": "energy systems",
+      "score": 6.0
+    },
+    {
+      "topic": "energy storage systems",
+      "score": 6.0
+    },
+    {
+      "topic": "review",
+      "score": 5
+    },
+    {
+      "topic": "storage renewable",
+      "score": 4.5
+    },
+    {
+      "topic": "hybrid energy",
+      "score": 4.5
+    },
+    {
+      "topic": "energy conversion",
+      "score": 4.5
+    }
+  ],
+  "papers": [
+    {
+      "title": "**Renewable energy** and **energy storage** systems",
+      "url": "https://www.mdpi.com/1996-1073/16/3/1415",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Overview of **energy storage** in **renewable energy** systems",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0360319916309478",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Renewable energy** and **energy storage** systems",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0360544217312306",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Assessment of utility **energy storage** options for increased **renewable energy** penetration",
+      "url": "https://www.sciencedirect.com/science/article/pii/S1364032112002316",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "**Energy storage** and its use with intermittent **renewable energy**",
+      "url": "https://ieeexplore.ieee.org/abstract/document/1300713/",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Progress in **energy storage** technologies and methods for **renewable energy** systems application",
+      "url": "https://www.mdpi.com/2076-3417/13/9/5626",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Battery **energy storage** system size determination in **renewable energy** systems: A review",
+      "url": "https://www.sciencedirect.com/science/article/pii/S1364032118301436",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "A review of marine **renewable energy storage**",
+      "url": "https://onlinelibrary.wiley.com/doi/abs/10.1002/er.4444",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "An overview of **energy storage** and its importance in Indian **renewable energy** sector: Part I–Technologies and Comparison",
+      "url": "https://www.sciencedirect.com/science/article/pii/S2352152X17300488",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Integration of **energy storage** system and **renewable energy** sources based on artificial intelligence: An overview",
+      "url": "https://www.sciencedirect.com/science/article/pii/S2352152X21005387",
+      "source": "Google Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Machine learning and the  renewable   energy  revolution: Exploring solar and wind  energy  solutions for a sustainable future including innovations in  energy   storage ",
+      "url": "https://www.semanticscholar.org/paper/Machine-learning-and-the-renewable-energy-Exploring-Sofian-Lim/3a07972cb00d6da5c8641cee5e0266d86ee031ca",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Advancements in hybrid  energy   storage  systems for enhancing  renewable   energy -to-grid integration",
+      "url": "https://www.semanticscholar.org/paper/Advancements-in-hybrid-energy-storage-systems-for-Adeyinka-Esan/7299d9e757c87440926dfea4b3c9a697e2e6fc65",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Policy and regulatory framework supporting  renewable   energy  microgrids and  energy   storage  systems",
+      "url": "https://www.semanticscholar.org/paper/Policy-and-regulatory-framework-supporting-energy-Agupugo-Ajayi/7f9ae50645235e0c0084d8b3a18226d9f2a2504d",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Trimodal thermal  energy   storage  material for  renewable   energy  applications",
+      "url": "https://www.semanticscholar.org/paper/Trimodal-thermal-energy-storage-material-for-energy-Saher-Johnston/51418a8edd4fcf65cd3631087e75e0c6f4cec7fd",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "A comprehensive review on techno-economic assessment of hybrid  energy   storage  systems integrated with  renewable   energy ",
+      "url": "https://www.semanticscholar.org/paper/A-comprehensive-review-on-techno-economic-of-hybrid-Emrani-Berrada/d9709aef2884ca52a0997c8c7dbb0a20a0441e03",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": " Energy   Storage  for  Renewable   Energy ",
+      "url": "https://www.semanticscholar.org/paper/Energy-Storage-for-Renewable-Energy-Mielczarski-Wierzbowski/54b72cb55d876c843a4d05d76e339e19d9d4c74e",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "A comprehensive review of innovative approaches in  renewable   energy   storage ",
+      "url": "https://www.semanticscholar.org/paper/A-comprehensive-review-of-innovative-approaches-in-Eze-Simpa/57f95fbd35821b9e2ad044f0c02d440b608ee685",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": " Storage  solutions for  renewable   energy : A Review",
+      "url": "https://www.semanticscholar.org/paper/Storage-solutions-for-renewable-energy%3A-A-Review-Enasel-Dumitrascu/f6a15ba67faf23ab1df5660c16dd683f3fb264da",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Navigating challenges in large-scale  renewable   energy   storage : Barriers, solutions, and innovations",
+      "url": "https://www.semanticscholar.org/paper/Navigating-challenges-in-large-scale-renewable-and-Jafarizadeh-Yamini/3711117181b41ae0e93d70a50e35baa7bf4cd0bb",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Envisioning the Future  Renewable  and Resilient  Energy  Grids—A Power Grid Revolution Enabled by  Renewables ,  Energy   Storage , and  Energy  Electronics",
+      "url": "https://www.semanticscholar.org/paper/Envisioning-the-Future-Renewable-and-Resilient-Grid-Peng-Liu/ba4a67ba183601df21b0a76db499910d9a26fa9c",
+      "source": "Semantic Scholar",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Carbon-Based Sorbents for Hydrogen **Storage**: Challenges and Sustainability at Operating Conditions for **Renewable** **Energy**.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/35377969/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "\"Waste to Wealth\": Lignin as a **Renewable** Building Block for **Energy** Harvesting/ **Storage** and Environmental Remediation.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/32180357/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Chemical **storage** of **renewable** **energy**.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/29773731/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "The chemistry of **energy** conversion and **storage**.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/24832535/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Chemistry of **energy** conversion and **storage**.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/22407997/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Research on the evolution of supervision strategy of **renewable** **energy** + **energy** **storage** under China's carbon peaking and carbon neutrality goal.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/37133662/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Mine Water for the Generation and **Storage** of **Renewable** **Energy**: A Hybrid Hydro-Wind System.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/34201766/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Assessing the use of hybrid **renewable** **energy** system with battery **storage** for power generation in a University in Nigeria.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/34403052/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "A **renewable** approach to electric vehicle charging through solar **energy** **storage**.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/38422065/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "The Chemistry of Sustainable **Energy** Conversion and **Storage**.",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/35744857/",
+      "source": "PubMed",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.18482",
+      "url": "https://arxiv.org/abs/2601.18482",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.15135",
+      "url": "https://arxiv.org/abs/2601.15135",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.13772",
+      "url": "https://arxiv.org/abs/2601.13772",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.13202",
+      "url": "https://arxiv.org/abs/2601.13202",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.12028",
+      "url": "https://arxiv.org/abs/2601.12028",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.08052",
+      "url": "https://arxiv.org/abs/2601.08052",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.06766",
+      "url": "https://arxiv.org/abs/2601.06766",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.03679",
+      "url": "https://arxiv.org/abs/2601.03679",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2601.01256",
+      "url": "https://arxiv.org/abs/2601.01256",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2512.20880",
+      "url": "https://arxiv.org/abs/2512.20880",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2512.20286",
+      "url": "https://arxiv.org/abs/2512.20286",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2512.19114",
+      "url": "https://arxiv.org/abs/2512.19114",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2512.17803",
+      "url": "https://arxiv.org/abs/2512.17803",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2512.15677",
+      "url": "https://arxiv.org/abs/2512.15677",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2512.15583",
+      "url": "https://arxiv.org/abs/2512.15583",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2512.14289",
+      "url": "https://arxiv.org/abs/2512.14289",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2512.14136",
+      "url": "https://arxiv.org/abs/2512.14136",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2512.14128",
+      "url": "https://arxiv.org/abs/2512.14128",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2512.09227",
+      "url": "https://arxiv.org/abs/2512.09227",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "arXiv:2512.07353",
+      "url": "https://arxiv.org/abs/2512.07353",
+      "source": "arXiv",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Phased Planning of Heavy-Duty Electric Vehicle Charging Stations: An Optimization Framework Under Grid Capacity Constraints",
+      "url": "https://ieeexplore.ieee.org/document/11369876/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Short-Term Market Operations of Interconnected Local Energy Communities under Multivariate Uncertainty Dependencies in Distribution Systems",
+      "url": "https://ieeexplore.ieee.org/document/11369262/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Exact Characterization of Aggregate Flexibility via Generalized Polymatroids",
+      "url": "https://ieeexplore.ieee.org/document/11369438/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "An Optimization-Guided Prediction-Free Two-Stage Real-Time Energy Management Strategy for Novel Co-phase Traction Power Supply System with PV and EnergyStorage",
+      "url": "https://ieeexplore.ieee.org/document/11369845/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Safety-Guaranteed Energy Management in Networked Multienergy Microgrids: A Multi-Actor Single-Critic Deep Reinforcement Learning Approach",
+      "url": "https://ieeexplore.ieee.org/document/11367813/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Cost-Emissions-Efficiency Tradeoff Analysis for Urban District Energy Systems With Distributed Energy Resources",
+      "url": "https://ieeexplore.ieee.org/document/11367672/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Bridging Market Efficiency and System Resilience: Unified Multi-Service Operation of Long-Duration EnergyStorage in Decarbonized Power Systems",
+      "url": "https://ieeexplore.ieee.org/document/11367682/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Secure Operation of a Multi-Energy Microgrid via Coordinated Preventive and Corrective Control Under Diverse Uncertainties",
+      "url": "https://ieeexplore.ieee.org/document/11367642/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Instability Caused by Integration of IBRs under Strong Grid Connections — A Practical Case Study on Large-Scale EnergyStorage Systems",
+      "url": "https://ieeexplore.ieee.org/document/11367354/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Nuclear-Powered Hybrid Energy System for Clean Hydrogen Production: Time-Step-Optimized Real-Time Multi-Domain Hardware Emulation",
+      "url": "https://ieeexplore.ieee.org/document/11367275/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Dynamic Hydrogen Injection in Integrated Electricity-Gas Systems: A PDEs-Embedded Flexible Operation Strategy",
+      "url": "https://ieeexplore.ieee.org/document/11367114/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Multiscale Grid Intelligence to Fight Artificial Intelligence Data Center Grid Defection: Unlocking a Faster, Cheaper, and Cleaner On-Grid AI Rollout",
+      "url": "https://ieeexplore.ieee.org/document/11367142/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Data Centers for Sustainable Grids: From Microgrids to Supergrids",
+      "url": "https://ieeexplore.ieee.org/document/11367124/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Crucial Role of Foundation Models in Enhancing the Interaction of AI and Power Systems: Achieving Integrated Frameworks",
+      "url": "https://ieeexplore.ieee.org/document/11367249/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Frequency Control and Optimal Power Sharing in Combined Power and Heating Networks with Heat Pumps",
+      "url": "https://ieeexplore.ieee.org/document/11364163/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "A Robust Optimization Model for Managing Uncertainty in Local Electricity Market Prices for Peer-to-Peer Energy Trading",
+      "url": "https://ieeexplore.ieee.org/document/11364336/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Guest Editorial: Advanced Topologies, Control Techniques and Modeling Methodologies for Bidirectional DC/DC Converters",
+      "url": "https://ieeexplore.ieee.org/document/11360569/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Securing Smart Microgrid with Distributed Energy Resources",
+      "url": "https://ieeexplore.ieee.org/document/11361576/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Power Coordination for Electricity-Hydrogen DC Microgrids",
+      "url": "https://ieeexplore.ieee.org/document/11360323/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    },
+    {
+      "title": "Reactive Power Coordination Control to Enhance Weak Grid Stability of Hybrid Power Plants",
+      "url": "https://ieeexplore.ieee.org/document/11359964/",
+      "source": "IEEE Xplore",
+      "authors": null,
+      "year": null,
+      "abstract": null,
+      "keywords": [],
+      "journal": null,
+      "doi": null,
+      "citations": null
+    }
+  ]
+}

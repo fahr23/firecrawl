@@ -103,8 +103,8 @@ const initializeBrowser = async () => {
   });
 };
 
-const createContext = async (skipTlsVerification: boolean = false) => {
-  const userAgent = new UserAgent().toString();
+const createContext = async (skipTlsVerification: boolean = false, customUserAgent?: string) => {
+  const userAgent = customUserAgent || new UserAgent().toString();
   const viewport = { width: 1280, height: 800 };
 
   const contextOptions: any = {
@@ -144,7 +144,7 @@ const createContext = async (skipTlsVerification: boolean = false) => {
     }
     return route.continue();
   });
-  
+
   return newContext;
 };
 
@@ -202,21 +202,21 @@ app.get('/health', async (req: Request, res: Response) => {
     if (!browser) {
       await initializeBrowser();
     }
-    
+
     const testContext = await createContext();
     const testPage = await testContext.newPage();
     await testPage.close();
     await testContext.close();
-    
-    res.status(200).json({ 
+
+    res.status(200).json({
       status: 'healthy',
       maxConcurrentPages: MAX_CONCURRENT_PAGES,
       activePages: MAX_CONCURRENT_PAGES - pageSemaphore.getAvailablePermits()
     });
   } catch (error) {
     console.error('Health check failed:', error);
-    res.status(503).json({ 
-      status: 'unhealthy', 
+    res.status(503).json({
+      status: 'unhealthy',
       error: error instanceof Error ? error.message : 'Unknown error occurred'
     });
   }
@@ -256,12 +256,17 @@ app.post('/scrape', async (req: Request, res: Response) => {
   }
 
   await pageSemaphore.acquire();
-  
+
   let requestContext: BrowserContext | null = null;
   let page: Page | null = null;
 
   try {
-    requestContext = await createContext(skip_tls_verification);
+    // Extract User-Agent from headers if present
+    const customUserAgent = headers
+      ? Object.entries(headers).find(([k]) => k.toLowerCase() === 'user-agent')?.[1]
+      : undefined;
+
+    requestContext = await createContext(skip_tls_verification, customUserAgent);
     page = await requestContext.newPage();
 
     if (headers) {
@@ -269,40 +274,104 @@ app.post('/scrape', async (req: Request, res: Response) => {
     }
 
     const result = await scrapePage(page, url, 'load', wait_after_load, timeout, check_selector);
-    
-    // If an action is requested, perform it
-    if (action && selector && result.status === 200) {
+
+    // Compatibility with single action
+    const actionsToExecute = req.body.actions || [];
+    if (action && selector) {
+      actionsToExecute.push({ type: action, selector, value });
+    }
+
+    // Execute actions sequentially
+    for (const act of actionsToExecute) {
       try {
-        switch (action.toLowerCase()) {
-          case 'click':
-            console.log(`Clicking selector: ${selector}`);
-            await page.click(selector);
-            await page.waitForTimeout(wait_after_load || 1000);
+        if (!act.type) continue;
+        const actionType = act.type.toLowerCase();
+
+        switch (actionType) {
+          case 'wait':
+            if (act.milliseconds) {
+              console.log(`Waiting for ${act.milliseconds}ms`);
+              await page.waitForTimeout(act.milliseconds);
+            } else if (act.selector) {
+              console.log(`Waiting for selector: ${act.selector}`);
+              await page.waitForSelector(act.selector, { timeout: 5000 });
+            }
             break;
+
+          case 'click':
+            if (act.selector) {
+              console.log(`Clicking selector: ${act.selector}`);
+              await page.click(act.selector);
+            }
+            break;
+
           case 'write':
           case 'type':
-            console.log(`Writing to selector: ${selector}, value: ${value}`);
-            await page.fill(selector, value || '');
-            await page.waitForTimeout(wait_after_load || 1000);
+            if (act.selector && act.text) {
+              console.log(`Writing to selector: ${act.selector}, text: ${act.text}`);
+              await page.fill(act.selector, act.text);
+            } else if (act.selector && act.value) { // backward compatibility
+              console.log(`Writing to selector: ${act.selector}, value: ${act.value}`);
+              await page.fill(act.selector, act.value);
+            }
             break;
+
           case 'press':
-            console.log(`Pressing key: ${value} on selector: ${selector}`);
-            await page.press(selector, value || 'Enter');
-            await page.waitForTimeout(wait_after_load || 1000);
+            if (act.key) {
+              console.log(`Pressing key: ${act.key}`);
+              await page.keyboard.press(act.key);
+            } else if (act.selector && act.value) { // backward compatibility
+              console.log(`Pressing key: ${act.value} on selector: ${act.selector}`);
+              await page.press(act.selector, act.value);
+            }
             break;
+
+          case 'scroll':
+            console.log(`Scrolling ${act.direction || 'down'}`);
+            if (act.selector) {
+              const element = await page.$(act.selector);
+              if (element) {
+                await element.scrollIntoViewIfNeeded();
+              }
+            } else {
+              if (act.direction === 'up') {
+                await page.evaluate(() => window.scrollBy(0, -window.innerHeight));
+              } else {
+                await page.evaluate(() => window.scrollBy(0, window.innerHeight));
+              }
+            }
+            break;
+
+          case 'screenshot':
+            console.log(`Taking screenshot`);
+            const screenshot = await page.screenshot({
+              fullPage: act.fullPage ?? false
+            });
+            // We can't easily return multiple screenshots in the current response structure designed for one content
+            // So we'll attach the last screenshot to the result or maybe headers?
+            // For now, let's just allow it to happen, but maybe we need to return it.
+            // valid firecrawl response expects 'screenshot' field in the root or 'screenshots' list.
+            // The current API response structure is flat. Let's try to return it in the body if it's the only one, or append to a list if we change the response type.
+            // For simplicity and to match the demo requirement ("Take a screenshot"), we will return the base64 of the last screenshot taken.
+            res.locals = res.locals || {};
+            res.locals.screenshot = screenshot.toString('base64');
+            break;
+
           default:
-            console.warn(`Unknown action: ${action}`);
+            console.warn(`Unknown action type: ${actionType}`);
         }
-        
-        // Get updated content after action
-        const updatedContent = await page.content();
-        result.content = updatedContent;
+
+        // Optional: wait a bit after each action
+        await page.waitForTimeout(500);
       } catch (actionError) {
-        console.warn(`Action ${action} failed (selector not found or error): ${actionError}`);
-        // Continue with the result we have, don't fail
+        console.warn(`Action ${act.type} failed: ${actionError}`);
       }
     }
-    
+
+    // Get updated content after actions
+    const updatedContent = await page.content();
+    result.content = updatedContent;
+
     const pageError = result.status !== 200 ? getError(result.status) : undefined;
 
     if (!pageError) {
@@ -311,12 +380,19 @@ app.post('/scrape', async (req: Request, res: Response) => {
       console.log(`🚨 Scrape failed with status code: ${result.status} ${pageError}`);
     }
 
-    res.json({
+    const responseBody: any = {
       content: result.content,
       pageStatusCode: result.status,
       contentType: result.contentType,
       ...(pageError && { pageError })
-    });
+    };
+
+    // If we took a screenshot, include it
+    if (res.locals && res.locals.screenshot) {
+      responseBody.screenshot = res.locals.screenshot;
+    }
+
+    res.json(responseBody);
 
   } catch (error) {
     console.error('Scrape error:', error);
