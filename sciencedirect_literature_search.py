@@ -3,11 +3,11 @@
 ScienceDirect Literature Search with Full Abstracts
 =================================================
 
-Since ScienceDirect has Cloudflare bot protection, this tool:
-1. Uses OpenAlex API (indexes Elsevier/ScienceDirect content with abstracts)
-2. Uses CrossRef API for additional abstracts
-3. Uses Semantic Scholar API for backup
-4. Fetches papers from ScienceDirect-owned journals
+This tool provides comprehensive academic literature search:
+1. Elsevier/ScienceDirect Official API (direct access with API key)
+2. OpenAlex API (indexes Elsevier/ScienceDirect content with abstracts)
+3. CrossRef API for additional abstracts
+4. Semantic Scholar API for backup
 """
 
 import requests
@@ -18,6 +18,9 @@ from dataclasses import dataclass, asdict, field
 from typing import List, Optional, Dict
 from collections import Counter
 import argparse
+
+# Elsevier API Key (ScienceDirect)
+ELSEVIER_API_KEY = "7e0c8c4ed4e0fb320d69074f093779d9"
 
 
 @dataclass
@@ -32,6 +35,132 @@ class Article:
     keywords: List[str] = field(default_factory=list)
     source: str = "unknown"
     is_sciencedirect: bool = False
+
+
+class ElsevierAPISearcher:
+    """Search using official Elsevier Scopus API (covers ScienceDirect content)"""
+    
+    SCOPUS_SEARCH_URL = "https://api.elsevier.com/content/search/scopus"
+    ABSTRACT_URL = "https://api.elsevier.com/content/abstract/scopus_id"
+    
+    def __init__(self, api_key: str = ELSEVIER_API_KEY):
+        self.api_key = api_key
+        self.headers = {
+            'X-ELS-APIKey': api_key,
+            'Accept': 'application/json'
+        }
+    
+    def search(self, query: str, max_results: int = 25) -> List[Article]:
+        """Search Scopus (includes ScienceDirect) using official API"""
+        articles = []
+        
+        try:
+            params = {
+                'query': query,
+                'count': min(max_results, 25),  # Scopus limit per request
+                'sort': 'relevance'
+            }
+            
+            resp = requests.get(self.SCOPUS_SEARCH_URL, headers=self.headers, params=params, timeout=15)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                results = data.get('search-results', {}).get('entry', [])
+                total = data.get('search-results', {}).get('opensearch:totalResults', 0)
+                print(f"    Scopus API: {total} total results, fetched {len(results)}")
+                
+                for entry in results:
+                    article = self._parse_scopus_entry(entry)
+                    if article:
+                        articles.append(article)
+                        
+            elif resp.status_code == 401:
+                print(f"    ⚠ Elsevier API: Authentication failed")
+            elif resp.status_code == 429:
+                print(f"    ⚠ Elsevier API: Rate limited")
+            else:
+                print(f"    ⚠ Scopus API returned status {resp.status_code}")
+                
+        except Exception as e:
+            print(f"    ⚠ Scopus API error: {e}")
+        
+        return articles
+    
+    def _parse_scopus_entry(self, entry: dict) -> Optional[Article]:
+        """Parse Scopus API entry into Article"""
+        try:
+            # Get basic info
+            title = entry.get('dc:title', 'Untitled')
+            doi = entry.get('prism:doi', '')
+            scopus_id = entry.get('dc:identifier', '').replace('SCOPUS_ID:', '')
+            
+            # Build URL - prefer DOI, fallback to Scopus link
+            if doi:
+                url = f"https://doi.org/{doi}"
+            else:
+                # Get Scopus link
+                links = entry.get('link', [])
+                scopus_link = next((l.get('@href') for l in links if l.get('@ref') == 'scopus'), '')
+                url = scopus_link or f"https://www.scopus.com/record/display.uri?eid={entry.get('eid', '')}"
+            
+            # Get first author
+            author = entry.get('dc:creator', '')
+            
+            # Get publication info
+            journal = entry.get('prism:publicationName', '')
+            year = entry.get('prism:coverDate', '')[:4] if entry.get('prism:coverDate') else ''
+            
+            # Check if open access
+            is_open_access = entry.get('openaccessFlag', False)
+            
+            return Article(
+                title=title,
+                url=url,
+                doi=doi if doi else None,
+                abstract="",  # Will fetch separately if needed
+                authors=author,
+                journal=journal,
+                year=year,
+                keywords=[],
+                source='Scopus API' + (' (Open Access)' if is_open_access else ''),
+                is_sciencedirect='sciencedirect' in url.lower() or 'elsevier' in journal.lower()
+            )
+        except Exception as e:
+            return None
+    
+    def get_abstract_by_scopus_id(self, scopus_id: str) -> Optional[str]:
+        """Get full abstract for a Scopus ID"""
+        try:
+            url = f"{self.ABSTRACT_URL}/{scopus_id}"
+            resp = requests.get(url, headers=self.headers, timeout=10)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                # Navigate to abstract in response
+                coredata = data.get('abstracts-retrieval-response', {}).get('coredata', {})
+                abstract = coredata.get('dc:description', '')
+                if abstract:
+                    return abstract
+                        
+        except Exception:
+            pass
+        return None
+    
+    def get_abstract_by_doi(self, doi: str) -> Optional[str]:
+        """Get abstract using Abstract Retrieval API with DOI"""
+        try:
+            url = f"https://api.elsevier.com/content/abstract/doi/{doi}"
+            resp = requests.get(url, headers=self.headers, timeout=10)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                coredata = data.get('abstracts-retrieval-response', {}).get('coredata', {})
+                abstract = coredata.get('dc:description', '')
+                if abstract:
+                    return abstract
+        except Exception:
+            pass
+        return None
 
 
 class OpenAlexSearcher:
@@ -227,7 +356,8 @@ class SemanticScholarSearcher:
 class ScienceDirectLiteratureSearch:
     """Main class for ScienceDirect literature search"""
     
-    def __init__(self):
+    def __init__(self, api_key: str = ELSEVIER_API_KEY):
+        self.elsevier = ElsevierAPISearcher(api_key)
         self.openalex = OpenAlexSearcher()
         self.crossref = CrossRefSearcher()
         self.semantic = SemanticScholarSearcher()
@@ -245,8 +375,24 @@ class ScienceDirectLiteratureSearch:
         seen_dois = set()
         seen_titles = set()
         
-        # Step 1: Search ScienceDirect (Elsevier) papers via OpenAlex
-        print(f"\n📚 Step 1: Searching ScienceDirect/Elsevier papers...")
+        # Step 1: Search using official Elsevier/ScienceDirect API
+        print(f"\n🔑 Step 1: Searching via Elsevier Official API...")
+        elsevier_articles = self.elsevier.search(query, max_results)
+        for article in elsevier_articles:
+            title_key = article.title.lower()[:50] if article.title else ''
+            doi_key = article.doi.lower() if article.doi else ''
+            
+            if title_key and title_key not in seen_titles:
+                if not doi_key or doi_key not in seen_dois:
+                    seen_titles.add(title_key)
+                    if doi_key:
+                        seen_dois.add(doi_key)
+                    all_articles.append(article)
+        
+        print(f"    ✓ Found {len(elsevier_articles)} papers from ScienceDirect API")
+        
+        # Step 2: Search ScienceDirect (Elsevier) papers via OpenAlex (backup)
+        print(f"\n📚 Step 2: Searching via OpenAlex (Elsevier papers)...")
         sd_articles = self.openalex.search_sciencedirect(query, max_results)
         for article in sd_articles:
             title_key = article.title.lower()[:50] if article.title else ''
@@ -259,10 +405,10 @@ class ScienceDirectLiteratureSearch:
                         seen_dois.add(doi_key)
                     all_articles.append(article)
         
-        print(f"    ✓ Found {len(sd_articles)} ScienceDirect papers")
+        print(f"    ✓ Found {len(sd_articles)} additional ScienceDirect papers")
         
-        # Step 2: Search all OpenAlex for additional results
-        print(f"\n📖 Step 2: Searching all academic databases...")
+        # Step 3: Search all OpenAlex for additional results
+        print(f"\n📖 Step 3: Searching all academic databases...")
         all_search = self.openalex.search_all(query, max_results)
         added = 0
         for article in all_search:
@@ -279,11 +425,19 @@ class ScienceDirectLiteratureSearch:
         
         print(f"    ✓ Added {added} additional papers")
         
-        # Step 3: Enrich articles without abstracts
-        print(f"\n🔍 Step 3: Enriching papers without abstracts...")
+        # Step 4: Enrich articles without abstracts
+        print(f"\n🔍 Step 4: Enriching papers without abstracts...")
         enriched = 0
         for i, article in enumerate(all_articles):
             if not article.abstract:
+                # Try Elsevier API first (for ScienceDirect papers)
+                if article.doi and article.is_sciencedirect:
+                    abstract = self.elsevier.get_abstract_by_doi(article.doi)
+                    if abstract:
+                        all_articles[i].abstract = abstract
+                        enriched += 1
+                        continue
+                
                 # Try CrossRef
                 if article.doi:
                     abstract = self.crossref.get_abstract_by_doi(article.doi)
