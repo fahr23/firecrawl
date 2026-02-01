@@ -44,13 +44,15 @@ class BaseSearcher(ABC):
         self.logger = logging.getLogger(self.__class__.__name__)
     
     @abstractmethod
-    def search(self, query: str, max_results: int = 25) -> SearchResult:
+    def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
         """
         Search for articles matching the query.
         
         Args:
             query: Search query string.
             max_results: Maximum number of results to return.
+            year_min: Minimum publication year (optional).
+            year_max: Maximum publication year (optional).
             
         Returns:
             SearchResult object containing matching articles.

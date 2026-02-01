@@ -40,7 +40,7 @@ from .engine import AcademicSearchEngine, create_engine
 from .exporters import JSONExporter, MarkdownExporter, CSVExporter, BibTeXExporter, RISExporter
 from .analyzers import TopicExtractor, LLMAnalyzer, CompositeAnalyzer
 from .providers import (
-    ScopusSearcher, OpenAlexSearcher,
+    ScopusSearcher, OpenAlexSearcher, SemanticScholarSearcher, ArXivSearcher,
     CrossRefEnricher, SemanticScholarEnricher, ScopusEnricher
 )
 from .base import BaseSearcher, BaseAbstractEnricher, BaseAnalyzer, BaseExporter
@@ -64,6 +64,8 @@ __all__ = [
     # Search providers
     "ScopusSearcher",
     "OpenAlexSearcher",
+    "SemanticScholarSearcher",
+    "ArXivSearcher",
     
     # Enrichers
     "CrossRefEnricher",

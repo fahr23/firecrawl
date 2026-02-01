@@ -62,6 +62,16 @@ Examples:
         help="Maximum number of results (default: 25)"
     )
     parser.add_argument(
+        "--year-min",
+        type=int,
+        help="Minimum publication year (e.g., 2020)"
+    )
+    parser.add_argument(
+        "--year-max",
+        type=int,
+        help="Maximum publication year (e.g., 2024)"
+    )
+    parser.add_argument(
         "--all-sources",
         action="store_true",
         help="Search all available sources and merge results"
@@ -138,7 +148,9 @@ Examples:
     results = engine.search(
         args.query,
         max_results=args.max_results,
-        use_all_sources=args.all_sources
+        use_all_sources=args.all_sources,
+        year_min=args.year_min,
+        year_max=args.year_max
     )
     
     if args.verbose:

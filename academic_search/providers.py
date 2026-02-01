@@ -28,9 +28,10 @@ class ScopusSearcher(BaseSearcher):
     
     def __init__(self, config: Config):
         super().__init__(config)
-        self.api_key = config.api.elsevier_api_key
+        self.api_key = config.api.elsevier_api_key if config and config.api else None
+        api_key_str = str(self.api_key) if self.api_key else ''
         self.headers = {
-            'X-ELS-APIKey': self.api_key or '',
+            'X-ELS-APIKey': api_key_str,
             'Accept': 'application/json'
         }
     
@@ -42,7 +43,7 @@ class ScopusSearcher(BaseSearcher):
     def is_available(self) -> bool:
         return bool(self.api_key)
     
-    def search(self, query: str, max_results: int = 25) -> SearchResult:
+    def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
         """Search Scopus database."""
         if not self.is_available:
             self.logger.warning("Scopus API key not configured")
@@ -57,8 +58,15 @@ class ScopusSearcher(BaseSearcher):
         total_found = 0
         
         try:
+            # Build query with year filter
+            search_query = query
+            if year_min or year_max:
+                year_filter = f" AND PUBYEAR > {year_min-1}" if year_min else ""
+                year_filter += f" AND PUBYEAR < {year_max+1}" if year_max else ""
+                search_query = query + year_filter
+            
             params = {
-                'query': query,
+                'query': search_query,
                 'count': min(max_results, 25),
                 'sort': 'relevance'
             }
@@ -163,9 +171,12 @@ class OpenAlexSearcher(BaseSearcher):
     def source_name(self) -> str:
         return "OpenAlex"
     
-    def search(self, query: str, max_results: int = 25) -> SearchResult:
+    def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
         """Search OpenAlex for papers with abstracts."""
-        return self._search_with_filter(query, max_results, "has_abstract:true")
+        filter_str = "has_abstract:true"
+        if year_min:
+            filter_str += f",publication_year:{year_min}-{year_max or 2030}"
+        return self._search_with_filter(query, max_results, filter_str)
     
     def search_elsevier(self, query: str, max_results: int = 25) -> SearchResult:
         """Search specifically for Elsevier/ScienceDirect papers."""
@@ -312,6 +323,188 @@ class CrossRefEnricher(BaseAbstractEnricher):
             self.logger.debug(f"CrossRef error: {e}")
         
         return None
+
+
+class SemanticScholarSearcher(BaseSearcher):
+    """
+    Search provider for Semantic Scholar API.
+    
+    Free academic search engine with good coverage and abstracts.
+    """
+    
+    BASE_URL = "https://api.semanticscholar.org/graph/v1"
+    
+    @property
+    def source_name(self) -> str:
+        return "Semantic Scholar"
+    
+    def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
+        """Search Semantic Scholar database."""
+        articles = []
+        total_found = 0
+        
+        try:
+            url = f"{self.BASE_URL}/paper/search"
+            params = {
+                'query': query,
+                'limit': min(max_results, 100),
+                'fields': 'title,abstract,authors,year,citationCount,publicationDate,journal,externalIds,url'
+            }
+            
+            if year_min:
+                params['year'] = f"{year_min}-{year_max or 2030}"
+            
+            response = requests.get(url, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                total_found = data.get('total', 0)
+                papers = data.get('data', [])
+                
+                self.logger.info(f"Semantic Scholar: {total_found} total results")
+                
+                for paper in papers:
+                    article = self._parse_paper(paper)
+                    if article:
+                        articles.append(article)
+                        
+        except Exception as e:
+            self.logger.error(f"Semantic Scholar search error: {e}")
+        
+        return SearchResult(
+            query=query,
+            articles=articles,
+            total_found=total_found,
+            sources=[self.source_name]
+        )
+    
+    def _parse_paper(self, paper: Dict[str, Any]) -> Optional[Article]:
+        """Parse Semantic Scholar paper into Article."""
+        try:
+            # Get DOI
+            external_ids = paper.get('externalIds', {})
+            doi = external_ids.get('DOI')
+            
+            # Get URL
+            url = paper.get('url', '')
+            if not url and doi:
+                url = f"https://doi.org/{doi}"
+            
+            # Get authors
+            authors = ', '.join([a.get('name', '') for a in paper.get('authors', [])[:5]])
+            
+            return Article(
+                title=paper.get('title', 'Untitled'),
+                url=url,
+                doi=doi,
+                abstract=paper.get('abstract', ''),
+                authors=authors,
+                journal=paper.get('journal', {}).get('name', '') if paper.get('journal') else '',
+                year=str(paper.get('year', '')),
+                source=self.source_name,
+                citation_count=paper.get('citationCount'),
+                raw_data=paper
+            )
+        except Exception as e:
+            self.logger.debug(f"Parse error: {e}")
+            return None
+
+
+class ArXivSearcher(BaseSearcher):
+    """
+    Search provider for arXiv.org preprint repository.
+    
+    Free access to preprints in physics, math, CS, etc.
+    """
+    
+    BASE_URL = "http://export.arxiv.org/api/query"
+    
+    @property
+    def source_name(self) -> str:
+        return "arXiv"
+    
+    def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
+        """Search arXiv database."""
+        articles = []
+        total_found = 0
+        
+        try:
+            params = {
+                'search_query': f'all:{query}',
+                'start': 0,
+                'max_results': min(max_results, 100),
+                'sortBy': 'relevance'
+            }
+            
+            response = requests.get(self.BASE_URL, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(response.content)
+                
+                # Parse total results
+                ns = {'atom': 'http://www.w3.org/2005/Atom', 'arxiv': 'http://arxiv.org/schemas/atom'}
+                total_elem = root.find('.//atom:totalResults', ns)
+                if total_elem is not None:
+                    total_found = int(total_elem.text)
+                
+                self.logger.info(f"arXiv: {total_found} total results")
+                
+                # Parse entries
+                for entry in root.findall('.//atom:entry', ns):
+                    article = self._parse_entry(entry, ns, year_min, year_max)
+                    if article:
+                        articles.append(article)
+                        
+        except Exception as e:
+            self.logger.error(f"arXiv search error: {e}")
+        
+        return SearchResult(
+            query=query,
+            articles=articles,
+            total_found=total_found,
+            sources=[self.source_name]
+        )
+    
+    def _parse_entry(self, entry, ns: Dict[str, str], year_min: Optional[int], year_max: Optional[int]) -> Optional[Article]:
+        """Parse arXiv entry into Article."""
+        try:
+            title = entry.find('atom:title', ns).text.strip().replace('\n', ' ')
+            abstract = entry.find('atom:summary', ns).text.strip()
+            published = entry.find('atom:published', ns).text[:4]
+            year = int(published)
+            
+            # Year filter
+            if year_min and year < year_min:
+                return None
+            if year_max and year > year_max:
+                return None
+            
+            # Get authors
+            authors = ', '.join([a.find('atom:name', ns).text for a in entry.findall('atom:author', ns)[:5]])
+            
+            # Get arxiv ID and DOI
+            arxiv_id = entry.find('atom:id', ns).text.split('/abs/')[-1]
+            doi_elem = entry.find('arxiv:doi', ns)
+            doi = doi_elem.text if doi_elem is not None else None
+            
+            # Get categories as keywords
+            keywords = [cat.get('term') for cat in entry.findall('atom:category', ns)]
+            
+            return Article(
+                title=title,
+                url=f"https://arxiv.org/abs/{arxiv_id}",
+                doi=doi,
+                abstract=abstract,
+                authors=authors,
+                year=str(year),
+                keywords=keywords[:5],
+                source=self.source_name,
+                raw_data={'arxiv_id': arxiv_id}
+            )
+        except Exception as e:
+            self.logger.debug(f"Parse error: {e}")
+            return None
 
 
 class SemanticScholarEnricher(BaseAbstractEnricher):

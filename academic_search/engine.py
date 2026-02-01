@@ -13,7 +13,7 @@ from .base import BaseSearcher, BaseAbstractEnricher, BaseAnalyzer, BaseExporter
 from .models import Article, SearchResult
 from .config import Config
 from .providers import (
-    ScopusSearcher, OpenAlexSearcher,
+    ScopusSearcher, OpenAlexSearcher, SemanticScholarSearcher, ArXivSearcher,
     CrossRefEnricher, SemanticScholarEnricher, ScopusEnricher
 )
 from .exporters import JSONExporter, MarkdownExporter, CSVExporter, BibTeXExporter
@@ -81,8 +81,10 @@ class AcademicSearchEngine:
         if self.config.api.elsevier_api_key:
             self._searchers.append(ScopusSearcher(self.config))
         
-        # Backup searcher (OpenAlex - free, no API key needed)
+        # Free searchers (no API key needed)
         self._searchers.append(OpenAlexSearcher(self.config))
+        self._searchers.append(SemanticScholarSearcher(self.config))
+        self._searchers.append(ArXivSearcher(self.config))
         
         # Enrichers for adding abstracts
         self._enrichers.extend([
@@ -113,7 +115,9 @@ class AcademicSearchEngine:
     # ========== Search Methods ==========
     
     def search(self, query: str, max_results: int = 25,
-               use_all_sources: bool = False) -> SearchResult:
+               use_all_sources: bool = False,
+               year_min: Optional[int] = None,
+               year_max: Optional[int] = None) -> SearchResult:
         """
         Search for academic papers.
         
@@ -122,23 +126,28 @@ class AcademicSearchEngine:
             max_results: Maximum number of results to return.
             use_all_sources: If True, queries all sources and merges results.
                            If False, uses first available source.
+            year_min: Minimum publication year (optional).
+            year_max: Maximum publication year (optional).
         
         Returns:
             SearchResult containing found articles.
         """
         self.logger.info(f"Searching for: '{query}'")
+        if year_min or year_max:
+            year_range = f" ({year_min or 'any'} - {year_max or 'now'})"
+            self.logger.info(f"Year filter: {year_range}")
         
         if use_all_sources:
-            return self._search_all_sources(query, max_results)
+            return self._search_all_sources(query, max_results, year_min, year_max)
         else:
-            return self._search_primary_source(query, max_results)
+            return self._search_primary_source(query, max_results, year_min, year_max)
     
-    def _search_primary_source(self, query: str, max_results: int) -> SearchResult:
+    def _search_primary_source(self, query: str, max_results: int, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
         """Search using the first available source."""
         for searcher in self._searchers:
             try:
                 self.logger.info(f"Trying {searcher.source_name}...")
-                result = searcher.search(query, max_results)
+                result = searcher.search(query, max_results, year_min, year_max)
                 
                 if result.articles:
                     self.logger.info(
@@ -160,7 +169,7 @@ class AcademicSearchEngine:
             sources=["none"]
         )
     
-    def _search_all_sources(self, query: str, max_results: int) -> SearchResult:
+    def _search_all_sources(self, query: str, max_results: int, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
         """Search all sources and merge results."""
         all_articles = []
         total = 0
@@ -170,7 +179,7 @@ class AcademicSearchEngine:
         for searcher in self._searchers:
             try:
                 self.logger.info(f"Searching {searcher.source_name}...")
-                result = searcher.search(query, max_results)
+                result = searcher.search(query, max_results, year_min, year_max)
                 
                 sources.append(searcher.source_name)
                 total += result.total_found
@@ -454,7 +463,9 @@ class AcademicSearchEngine:
     
     def search_and_export(self, query: str, output_path: str,
                           max_results: int = 25,
-                          enrich: bool = True) -> SearchResult:
+                          enrich: bool = True,
+                          year_min: Optional[int] = None,
+                          year_max: Optional[int] = None) -> SearchResult:
         """
         Search, optionally enrich, and export in one call.
         
@@ -463,11 +474,13 @@ class AcademicSearchEngine:
             output_path: Output file path.
             max_results: Maximum results.
             enrich: Whether to enrich abstracts.
+            year_min: Minimum publication year.
+            year_max: Maximum publication year.
         
         Returns:
             SearchResult.
         """
-        result = self.search(query, max_results)
+        result = self.search(query, max_results, year_min=year_min, year_max=year_max)
         
         if enrich:
             result = self.enrich_abstracts(result)
