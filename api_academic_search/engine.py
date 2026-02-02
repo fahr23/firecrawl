@@ -196,9 +196,10 @@ class AcademicSearchEngine:
             except Exception as e:
                 self.logger.error(f"Error with {searcher.source_name}: {e}")
         
-        # Sort by year (newest first) and limit
+        # Sort by year (newest first)
         all_articles.sort(key=lambda a: a.year or 0, reverse=True)
-        all_articles = all_articles[:max_results]
+        # Note: We do NOT limit to max_results here because we want the cumulative
+        # results from all sources (e.g. 50 from Scopus + 50 from OpenAlex...)
         
         return SearchResult(
             query=query,

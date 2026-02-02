@@ -186,13 +186,56 @@ Examples:
             print()
     
     # Output
+    # Output
     if args.output:
         filepath = engine.export(results, args.output, format=args.format)
         print(f"Results saved to: {filepath}")
     else:
-        # Print to stdout
-        output = engine.export_to_string(results, format=args.format)
-        print(output)
+        # Default: Save to api_academic_search/results/query_timestamp/
+        from datetime import datetime
+        import re
+        
+        # Get results directory
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        results_root = os.path.join(base_dir, "results")
+        
+        # Create folder name from query and timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_query = re.sub(r'[^\w\s-]', '', args.query).strip().lower()
+        safe_query = re.sub(r'[-\s]+', '_', safe_query)[:50]
+        
+        # Create the specific result directory
+        folder_name = f"{safe_query}_{timestamp}"
+        save_dir = os.path.join(results_root, folder_name)
+        os.makedirs(save_dir, exist_ok=True)
+        
+        print(f"Saving results to directory: {save_dir}")
+        
+        # Export in multiple formats
+        formats = [
+            'json',
+            'csv',
+            'markdown',
+            'bibtex'
+        ]
+        
+        # Map formats to extensions
+        ext_map = {
+            'json': 'json',
+            'csv': 'csv',
+            'markdown': 'md',
+            'bibtex': 'bib'
+        }
+        
+        for fmt in formats:
+            ext = ext_map.get(fmt, fmt)
+            filename = f"{folder_name}.{ext}"
+            filepath = os.path.join(save_dir, filename)
+            try:
+                engine.export(results, filepath, format=fmt)
+                print(f"  - Saved {fmt.upper()}: {filename}")
+            except Exception as e:
+                print(f"  - Failed to save {fmt}: {e}")
     
     # Summary
     if args.verbose:

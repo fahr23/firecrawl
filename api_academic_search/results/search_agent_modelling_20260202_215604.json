@@ -1,0 +1,89 @@
+{
+  "articles": [
+    {
+      "title": "Agent-oriented software modeling",
+      "url": "https://doi.org/10.1109/APSEC.1999.809618",
+      "doi": "10.1109/APSEC.1999.809618",
+      "abstract": "",
+      "authors": "Kim M.",
+      "journal": "Proceedings 6th Asia Pacific Software Engineering Conference APSEC 1999",
+      "year": "1999",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "\"pOLICE\": Agent based threat modelling",
+      "url": "https://doi.org/10.1109/ICMSAO.2011.5775504",
+      "doi": "10.1109/ICMSAO.2011.5775504",
+      "abstract": "",
+      "authors": "Mangla A.",
+      "journal": "2011 4th International Conference on Modeling Simulation and Applied Optimization Icmsao 2011",
+      "year": "2011",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Agent-oriented software modeling with UML approach",
+      "url": "https://www.scopus.com/inward/record.uri?partnerID=HzOxMe3b&scp=0034247878&origin=inward",
+      "doi": null,
+      "abstract": "",
+      "authors": "Park S.",
+      "journal": "IEICE Transactions on Information and Systems",
+      "year": "2000",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "AAAI-96 Workshop on Agent modeling",
+      "url": "https://www.scopus.com/inward/record.uri?partnerID=HzOxMe3b&scp=0031232848&origin=inward",
+      "doi": null,
+      "abstract": "",
+      "authors": "Tambe M.",
+      "journal": "AI Magazine",
+      "year": "1997",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Tutorial on agent-based modelling and simulation",
+      "url": "https://doi.org/10.1057/jos.2010.3",
+      "doi": "10.1057/jos.2010.3",
+      "abstract": "",
+      "authors": "MacAl C.M.",
+      "journal": "Journal of Simulation",
+      "year": "2010",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    }
+  ],
+  "metadata": {
+    "query": "agent modelling",
+    "total_found": 1508731,
+    "sources": [
+      "Scopus API"
+    ],
+    "exported_count": 5,
+    "export_time": "2026-02-02T21:56:04.916667",
+    "articles_with_abstracts": 0
+  }
+}
