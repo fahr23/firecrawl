@@ -20,7 +20,7 @@ import os
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from academic_search import create_engine, Config
+from api_academic_search import create_engine, Config
 
 
 def main():

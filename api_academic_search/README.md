@@ -4,7 +4,7 @@ A modular, extensible Python package for searching academic literature across mu
 
 ## Features
 
-- 🔍 **Multi-Source Search**: Search Scopus (Elsevier), OpenAlex, and more
+- 🔍 **Multi-Source Search**: Search OpenAlex, Semantic Scholar, ArXiv, ScienceDirect, and Scopus
 - 📝 **Abstract Enrichment**: Fetch missing abstracts from CrossRef, Semantic Scholar
 - 🏷️ **Topic Extraction**: Automatic keyword and topic extraction
 - 🤖 **LLM Analysis Ready**: Extension point for AI-powered abstract analysis
@@ -28,7 +28,7 @@ pip install openai anthropic
 ```python
 from academic_search import create_engine
 
-# Create engine (uses OpenAlex by default - free, no API key needed)
+# Create engine (uses OpenAlex, Semantic Scholar, and ArXiv by default - free, no API key needed)
 engine = create_engine()
 
 # Search for papers
@@ -180,13 +180,7 @@ engine.export(results, "references.bib")
 # Ready to use with LaTeX
 ```
 
-### RIS
 
-```python
-engine.export(results, "references.ris")
-
-# For reference managers (Zotero, Mendeley, etc.)
-```
 
 ## LLM-Based Analysis
 
@@ -451,7 +445,13 @@ The main class that coordinates all components.
 engine = AcademicSearchEngine(config)
 
 # Search
-results = engine.search(query, max_results=25, use_all_sources=False)
+results = engine.search(
+    query, 
+    max_results=25, 
+    use_all_sources=False,
+    year_min=2020,
+    year_max=2024
+)
 
 # Enrich
 results = engine.enrich_abstracts(results, parallel=True)
