@@ -109,6 +109,42 @@ class Article:
             'elsevier' in (self.journal or '').lower()
         )
     
+    def matches_query(self, query: str) -> bool:
+        """
+        Check if article matches query terms in Title, Abstract, or Keywords.
+        
+        Args:
+            query: Search query string.
+            
+        Returns:
+            True if all significant query terms are found.
+        """
+        if not query:
+            return True
+            
+        # Normalize text
+        text = f"{self.title} {self.abstract or ''} {' '.join(self.keywords)}".lower()
+        
+        # Simple term extraction (remove special chars)
+        import re
+        terms = [t.lower() for t in re.split(r'\s+', query) if len(t) > 2]
+        
+        if not terms:
+            return True
+            
+        # Check if ALL terms are present in Title specifically (high relevance)
+        title_lower = self.title.lower()
+        if all(term in title_lower for term in terms):
+            return True
+
+        # Otherwise, check if MOST words are present in combined text (Title + Abstract)
+        # We perform a "soft match" where at least 70% of terms must be present
+        # This prevents filtering out good results just because 1 word is missing in abstract
+        matching_terms = sum(1 for term in terms if term in text)
+        match_ratio = matching_terms / len(terms)
+        
+        return match_ratio >= 0.7
+    
     @property
     def title_normalized(self) -> str:
         """Get normalized title for deduplication."""

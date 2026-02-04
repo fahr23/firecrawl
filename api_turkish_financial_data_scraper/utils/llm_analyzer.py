@@ -458,19 +458,26 @@ class PDFReportGenerator:
     
     def _find_font_path(self) -> str:
         """Find font files in the project"""
-        # Try common locations
+        # Get the project root (relative to this file: utils/llm_analyzer.py)
+        project_root = Path(__file__).parent.parent.parent
+        
+        # Try common locations (container paths and local paths)
         locations = [
             "/workspaces/firecrawl/getData_ff/llm",
             "/workspaces/firecrawl/examples/turkish-financial-data-scraper/utils",
-            str(Path(__file__).parent)
+            str(Path(__file__).parent),
+            # Local development paths
+            str(project_root / "getData_ff" / "llm"),
+            str(Path(__file__).parent / "fonts"),
         ]
         
         for location in locations:
             font_file = os.path.join(location, "DejaVuSans.ttf")
             if os.path.exists(font_file):
+                logger.debug(f"Found Unicode fonts at: {location}")
                 return location
         
-        logger.warning("Unicode fonts not found, PDF generation may fail for Turkish text")
+        logger.debug("Unicode fonts not found, PDF generation may use fallback fonts for Turkish text")
         return ""
     
     def generate_report(

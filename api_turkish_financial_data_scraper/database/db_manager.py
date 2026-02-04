@@ -6,6 +6,7 @@ import json
 import os
 import time
 import psycopg2
+import psycopg2.errors
 from psycopg2 import pool, sql
 from psycopg2.extras import RealDictCursor, Json
 from typing import Dict, Any, List, Optional
@@ -34,7 +35,11 @@ class DatabaseManager:
             raise
     
     def _create_schema(self):
-        """Create the schema if it doesn't exist"""
+        """Create the schema if it doesn't exist
+        
+        Handles race conditions when multiple connections try to create the same schema
+        simultaneously by catching UniqueViolation and treating it as success.
+        """
         # Get connection directly from pool (don't use get_connection to avoid circular dependency)
         conn = self.pool.getconn()
         try:
@@ -45,6 +50,15 @@ class DatabaseManager:
             ))
             conn.commit()
             logger.info(f"Schema '{self.schema}' created/verified")
+        except psycopg2.errors.UniqueViolation:
+            # Race condition: another connection created the schema first
+            # This is fine - the schema exists, which is what we wanted
+            conn.rollback()
+            logger.info(f"Schema '{self.schema}' already exists (concurrent creation)")
+        except psycopg2.errors.DuplicateSchema:
+            # Schema already exists - this is also fine
+            conn.rollback()
+            logger.info(f"Schema '{self.schema}' already exists")
         except Exception as e:
             logger.error(f"Error creating schema: {e}")
             conn.rollback()
@@ -64,6 +78,53 @@ class DatabaseManager:
             ))
             
             # KAP Reports table
+            # KAP Disclosures table (Main table for scraped data)
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.kap_disclosures (
+                    id SERIAL PRIMARY KEY,
+                    disclosure_id VARCHAR(100) UNIQUE,
+                    company_name VARCHAR(255),
+                    disclosure_type VARCHAR(100),
+                    disclosure_date DATE,
+                    timestamp VARCHAR(20),
+                    language_info VARCHAR(50),
+                    has_attachment BOOLEAN DEFAULT FALSE,
+                    detail_url TEXT,
+                    pdf_url TEXT,
+                    pdf_text TEXT,
+                    content TEXT,
+                    data JSONB,
+                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''').format(sql.Identifier(self.schema)))
+
+            # KAP Disclosure Sentiment table
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.kap_disclosure_sentiment (
+                    id SERIAL PRIMARY KEY,
+                    disclosure_id INTEGER REFERENCES {}.kap_disclosures(id) ON DELETE CASCADE,
+                    overall_sentiment VARCHAR(20),
+                    sentiment_score REAL DEFAULT 0.0,
+                    confidence REAL DEFAULT 0.0,
+                    key_sentiments TEXT,
+                    analysis_notes TEXT,
+                    impact_horizon VARCHAR(20),
+                    key_drivers TEXT,
+                    risk_flags TEXT,
+                    tone_descriptors TEXT,
+                    target_audience VARCHAR(50),
+                    analysis_text TEXT,
+                    risk_level VARCHAR(20),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(disclosure_id)
+                )
+            ''').format(
+                sql.Identifier(self.schema),
+                sql.Identifier(self.schema)
+            ))
+
+            # KAP Reports table (Legacy)
             cursor.execute(sql.SQL('''
                 CREATE TABLE IF NOT EXISTS {}.kap_reports (
                     id SERIAL PRIMARY KEY,

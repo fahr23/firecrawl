@@ -12,11 +12,11 @@ load_dotenv()
 
 class DatabaseConfig(BaseModel):
     """Database configuration"""
-    host: str = Field(default_factory=lambda: os.getenv("DB_HOST", "localhost"))
-    port: int = Field(default_factory=lambda: int(os.getenv("DB_PORT", "5432")))
-    database: str = Field(default_factory=lambda: os.getenv("DB_NAME", "postgres"))
-    user: str = Field(default_factory=lambda: os.getenv("DB_USER", "postgres"))
-    password: str = Field(default_factory=lambda: os.getenv("DB_PASSWORD", "postgres"))
+    host: str = Field(default_factory=lambda: os.getenv("APP_DB_HOST", "localhost"))
+    port: int = Field(default_factory=lambda: int(os.getenv("APP_DB_PORT", "5432")))
+    database: str = Field(default_factory=lambda: os.getenv("APP_DB_NAME", "backtofuture"))
+    user: str = Field(default_factory=lambda: os.getenv("APP_DB_USER", "backtofuture"))
+    password: str = Field(default_factory=lambda: os.getenv("APP_DB_PASSWORD", "back2future"))
     schema: str = Field(default_factory=lambda: os.getenv("DB_SCHEMA", "turkish_financial"))
     pool_size: int = Field(default=20)
     
@@ -70,11 +70,11 @@ class Config:
     
     def __init__(self):
         self.database = DatabaseConfig(
-            host=os.getenv("DB_HOST", "localhost"),
-            port=int(os.getenv("DB_PORT", "5432")),
-            database=os.getenv("DB_NAME", "backtofuture"),
-            user=os.getenv("DB_USER", "backtofuture"),
-            password=os.getenv("DB_PASSWORD", "back2future"),
+            host=os.getenv("APP_DB_HOST", "localhost"),
+            port=int(os.getenv("APP_DB_PORT", "5432")),
+            database=os.getenv("APP_DB_NAME", "backtofuture"),
+            user=os.getenv("APP_DB_USER", "backtofuture"),
+            password=os.getenv("APP_DB_PASSWORD", "back2future"),
             schema=os.getenv("DB_SCHEMA", "turkish_financial"),
         )
         

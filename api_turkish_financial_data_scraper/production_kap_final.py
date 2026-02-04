@@ -62,7 +62,7 @@ class ProductionKAPScraper:
         self.firecrawl_api_url = os.getenv("FIRECRAWL_API_URL", "http://localhost:3002")
         
         # Always set playwright_url as fallback
-        self.playwright_url = "http://playwright-service:3000/scrape"
+        self.playwright_url = os.getenv("PLAYWRIGHT_SERVICE_URL", "http://localhost:3000/scrape")
         
         if FIRECRAWL_AVAILABLE:
             self.firecrawl = FirecrawlApp(api_key=self.firecrawl_api_key, api_url=self.firecrawl_api_url)
@@ -78,6 +78,7 @@ class ProductionKAPScraper:
         # Initialize LLM analyzer if available
         self.llm_analyzer = None
         self._llm_provider_override = llm_provider
+        self._llm_fallback_warned = False  # Track if we've warned about using fallback
         if LLM_AVAILABLE and use_llm:
             try:
                 provider = self._build_llm_provider()
@@ -92,7 +93,7 @@ class ProductionKAPScraper:
                     e
                 )
         else:
-            logger.warning("LLM analyzer not available, sentiment analysis will be skipped")
+            logger.info("LLM analyzer not enabled, using keyword-based sentiment analysis")
         
         # Initialize sentiment cache for cost optimization
         self.sentiment_cache = {}
@@ -323,58 +324,6 @@ class ProductionKAPScraper:
             logger.error(f"Button clicking scrape failed for {url}: {e}")
             # Fallback to simple scrape without clicking
             return await self._fallback_scrape_url(url)
-    
-    async def _fallback_scrape_url(self, url: str) -> dict:
-        """Fallback scraping using direct Playwright service"""
-        import aiohttp
-        
-        try:
-            logger.info(f"Using Playwright service fallback for: {url}")
-            
-            # For homepage, use much longer wait to allow JavaScript pagination to auto-load
-            # Try waiting for the "Daha Fazla" button to disappear (indicating all items loaded)
-            if url == self.disclosures_url:
-                wait_time = 60000  # 60 second wait for pagination to complete
-                selector = "button:has-text('Daha Fazla')"  # Check if button still exists
-            else:
-                wait_time = 5000
-                selector = None
-            
-            payload = {
-                "url": url,
-                "wait_after_load": wait_time,
-                "timeout": 120000,  # 120 second timeout for homepage
-            }
-            
-            if selector and url == self.disclosures_url:
-                # Try to wait for the button to disappear (all items loaded)
-                payload["check_selector"] = ".disclosure-list-container"  # Generic selector to ensure page loaded
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.post(self.playwright_url, json=payload) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        raise Exception(f"Playwright service returned {response.status}: {error_text}")
-                    
-                    result = await response.json()
-                    html_content = result.get('content', '')
-                    
-                    data = {
-                        "html": html_content,
-                        "markdown": "",
-                        "metadata": {
-                            "statusCode": result.get('pageStatusCode', 200),
-                            "error": result.get('pageError'),
-                            "source": "playwright_service_fallback"
-                        }
-                    }
-                    
-                    logger.info(f"Scraped {url}: {len(html_content):,} chars HTML (fallback)")
-                    return {"success": True, "url": url, "data": data}
-            
-        except Exception as e:
-            logger.error(f"Fallback scraping failed {url}: {e}")
-            return {"success": False, "url": url, "error": str(e)}
     
     async def get_pdf_attachments_from_detail(self, detail_url: str) -> list:
         """Extract PDF attachment URLs from disclosure detail page"""
@@ -839,7 +788,9 @@ class ProductionKAPScraper:
             return self.sentiment_cache[cache_key]
 
         if not self.llm_analyzer:
-            logger.warning("LLM analyzer not configured. Using fallback keyword analysis.")
+            if not self._llm_fallback_warned:
+                logger.debug("Using fallback keyword-based sentiment analysis")
+                self._llm_fallback_warned = True
             # Use fallback sentiment analysis
             return self._fallback_sentiment_analysis(content, company_name, disclosure_type)
 
@@ -957,12 +908,13 @@ class ProductionKAPScraper:
         try:
             import psycopg2
             
+            # Use environment variables for database connection
             conn = psycopg2.connect(
-                host='nuq-postgres',
-                port=5432,
-                database='postgres',
-                user='postgres',
-                password='postgres'
+                host=os.getenv('DB_HOST', 'localhost'),
+                port=int(os.getenv('DB_PORT', '5432')),
+                database=os.getenv('DB_NAME', 'backtofuture'),
+                user=os.getenv('DB_USER', 'backtofuture'),
+                password=os.getenv('DB_PASSWORD', 'back2future')
             )
             cursor = conn.cursor()
             
@@ -1031,12 +983,13 @@ class ProductionKAPScraper:
         try:
             import psycopg2
             
+            # Use environment variables for database connection
             conn = psycopg2.connect(
-                host='nuq-postgres',
-                port=5432,
-                database='postgres',
-                user='postgres',
-                password='postgres'
+                host=os.getenv('DB_HOST', 'localhost'),
+                port=int(os.getenv('DB_PORT', '5432')),
+                database=os.getenv('DB_NAME', 'backtofuture'),
+                user=os.getenv('DB_USER', 'backtofuture'),
+                password=os.getenv('DB_PASSWORD', 'back2future')
             )
             cursor = conn.cursor()
             

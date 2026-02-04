@@ -72,9 +72,9 @@ Examples:
         help="Maximum publication year (e.g., 2024)"
     )
     parser.add_argument(
-        "--all-sources",
+        "--use-single-source",
         action="store_true",
-        help="Search all available sources and merge results"
+        help="Search only the first available source (default: search all sources)"
     )
     parser.add_argument(
         "--enrich",
@@ -145,25 +145,44 @@ Examples:
         print()
     
     # Search
+    # Fetch a buffer (4x) to account for filtering losses
+    search_limit = args.max_results * 4
+    
     results = engine.search(
         args.query,
-        max_results=args.max_results,
-        use_all_sources=args.all_sources,
+        max_results=search_limit,
+        use_all_sources=not args.use_single_source, # Default to True
         year_min=args.year_min,
         year_max=args.year_max
     )
     
     if args.verbose:
         print(f"Found {results.total_found:,} total results")
-        print(f"Retrieved {len(results.articles)} articles")
+        print(f"Retrieved {len(results.articles)} articles (buffer)")
         print()
     
-    # Enrich if requested
-    if args.enrich:
-        if args.verbose:
-            print("Enriching abstracts...")
-        results = engine.enrich_abstracts(results)
+    # Always enrich to ensure we can verify content
+    if args.verbose or True: # Force verbose logging for this
+        print("Enriching abstracts for accuracy check...")
+    results = engine.enrich_abstracts(results)
     
+    # Filter by content Relevance
+    # (The user specifically asked to "read abstract for search accuracy")
+    original_count = len(results.articles)
+    filtered_articles = [a for a in results.articles if a.matches_query(args.query)]
+    
+    if len(filtered_articles) < original_count:
+        print(f"Filtered {original_count - len(filtered_articles)} articles with low relevance (missing query terms)")
+
+    # Truncate to requested max_results
+    if len(filtered_articles) > args.max_results:
+        filtered_articles = filtered_articles[:args.max_results]
+
+    # Update results
+    results.articles = filtered_articles
+    results.total_found = len(filtered_articles) # Adjust total to shown
+
+
     # Analysis
     if args.analyze or args.topics:
         if args.topics:

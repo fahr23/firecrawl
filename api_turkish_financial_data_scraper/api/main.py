@@ -104,7 +104,8 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(scrapers.router)
 app.include_router(reports.router)
-app.include_router(sentiment.router)
+app.include_router(sentiment.router, prefix="/api/v1/sentiment")
+app.include_router(sentiment.router, prefix="/api/sentiment", tags=["sentiment_legacy"])
 
 
 @app.get("/")

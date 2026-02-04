@@ -60,7 +60,8 @@ class ScienceDirectSearcher(BaseSearcher):
         try:
             # Build query with year filter using pub-date field
             # ScienceDirect uses different syntax: pub-date AFT YYYYMMDD
-            search_query = f'title-abs-key("{query}")'
+            # Update: Don't wrap query in quotes to allow boolean operators/keywords
+            search_query = f'title-abs-key({query})'
             
             if year_min:
                 year_min_date = f"{year_min}0101"
@@ -184,7 +185,7 @@ class ScopusSearcher(BaseSearcher):
         return bool(self.api_key)
     
     def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
-        """Search Scopus database."""
+        """Search Scopus database with pagination."""
         if not self.is_available:
             self.logger.warning("Scopus API key not configured")
             return SearchResult(
@@ -197,46 +198,76 @@ class ScopusSearcher(BaseSearcher):
         articles = []
         total_found = 0
         
-        try:
-            # Build query with year filter
-            search_query = query
-            if year_min or year_max:
-                year_filter = f" AND PUBYEAR > {year_min-1}" if year_min else ""
-                year_filter += f" AND PUBYEAR < {year_max+1}" if year_max else ""
-                search_query = query + year_filter
-            
-            params = {
-                'query': search_query,
-                'count': min(max_results, 25),
-                'sort': 'relevance'
-            }
-            
-            response = requests.get(
-                self.SEARCH_URL,
-                headers=self.headers,
-                params=params,
-                timeout=15
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                results = data.get('search-results', {}).get('entry', [])
-                total_found = int(data.get('search-results', {}).get('opensearch:totalResults', 0))
+        # Build query with year filter
+        search_query = query
+        if year_min or year_max:
+            year_filter = f" AND PUBYEAR > {year_min-1}" if year_min else ""
+            year_filter += f" AND PUBYEAR < {year_max+1}" if year_max else ""
+            search_query = query + year_filter
+        
+        start = 0
+        batch_size = 25  # Scopus limit per request
+        
+        while len(articles) < max_results:
+            try:
+                # Calculate how many more we need
+                remaining = max_results - len(articles)
+                count = min(remaining, batch_size)
                 
-                self.logger.info(f"Scopus: {total_found} total results, fetched {len(results)}")
+                params = {
+                    'query': search_query,
+                    'start': start,
+                    'count': count,
+                    'sort': 'relevance'
+                }
                 
-                for entry in results:
-                    article = self._parse_entry(entry)
-                    if article:
-                        articles.append(article)
+                response = requests.get(
+                    self.SEARCH_URL,
+                    headers=self.headers,
+                    params=params,
+                    timeout=15
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    results = data.get('search-results', {}).get('entry', [])
+                    total_str = data.get('search-results', {}).get('opensearch:totalResults', '0')
+                    total_found = int(total_str)
+                    
+                    if not results:
+                        break
                         
-            elif response.status_code == 401:
-                self.logger.error("Scopus: Authentication failed")
-            else:
-                self.logger.warning(f"Scopus: Status {response.status_code}")
-                
-        except Exception as e:
-            self.logger.error(f"Scopus search error: {e}")
+                    for entry in results:
+                        article = self._parse_entry(entry)
+                        if article:
+                            articles.append(article)
+                    
+                    # Log first batch
+                    if start == 0:
+                        self.logger.info(f"Scopus: {total_found} total results")
+                    
+                    # Prepare next batch
+                    start += len(results)
+                    
+                    # Check if we've exhausted results
+                    if start >= total_found:
+                        break
+                        
+                    # Rate limit kindness
+                    time.sleep(0.2)
+                            
+                elif response.status_code == 401:
+                    self.logger.error("Scopus: Authentication failed")
+                    break
+                else:
+                    self.logger.warning(f"Scopus: Status {response.status_code}")
+                    break
+                    
+            except Exception as e:
+                self.logger.error(f"Scopus search error: {e}")
+                break
+        
+        self.logger.info(f"Scopus: Fetched {len(articles)} articles")
         
         return SearchResult(
             query=query,
