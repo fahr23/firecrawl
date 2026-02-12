@@ -1,0 +1,89 @@
+{
+  "articles": [
+    {
+      "title": "Renewable energy for sustainable development",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0960148122014215",
+      "doi": null,
+      "abstract": "This review article addresses the status of research within the application of renewable energy sources. It focuses on the status of renewable technologies, the role of renewable energy …",
+      "authors": "PA Østergaard, N Duic, Y Noorollahi, S Kalogirou",
+      "journal": null,
+      "year": "2022",
+      "keywords": [],
+      "source": "Google Scholar",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Renewable energy resources",
+      "url": "https://www.taylorfrancis.com/books/mono/10.4324/9780429452161/renewable-energy-resources-john-twidell",
+      "doi": null,
+      "abstract": "… this a vital textbook for researchers and students of renewable energy systems. An understanding of the scientific basics and engineering applications of renewables are vital if we are to …",
+      "authors": "J Twidell",
+      "journal": null,
+      "year": "2021",
+      "keywords": [],
+      "source": "Google Scholar",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Fundamentals of renewable energy processes",
+      "url": "https://books.google.com/books?hl=en&lr=&id=IeMbEAAAQBAJ&oi=fnd&pg=PP1&dq=renewable&ots=wZrPtgBbQl&sig=2JMpEMw2yZ_0Z1dYUFvLw992TXw",
+      "doi": null,
+      "abstract": "… the complex world of renewable energy technologies. The fourth … Illuminates the basic principles behind all key renewable … , hydropower and renewable energy storage technologies …",
+      "authors": "AV Da Rosa, JC Ordonez",
+      "journal": null,
+      "year": "2021",
+      "keywords": [],
+      "source": "Google Scholar",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Sustainable development using renewable energy technology",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0960148119312819",
+      "doi": null,
+      "abstract": "This article present a review of the status of research within the exploitation of renewable energy sources with a focus on the status of technologies exploiting renewable energy sources…",
+      "authors": "PA Østergaard, N Duic, Y Noorollahi, H Mikulcic…",
+      "journal": null,
+      "year": "2020",
+      "keywords": [],
+      "source": "Google Scholar",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Abandoning the concept of renewable energy",
+      "url": "https://www.sciencedirect.com/science/article/pii/S0301421518308280",
+      "doi": null,
+      "abstract": "… case examples and statistical data, we discuss how renewable energy is framed and has come to be … We demonstrate the key problems the concept of renewable energy has in terms of …",
+      "authors": "A Harjanne, JM Korhonen",
+      "journal": null,
+      "year": "2019",
+      "keywords": [],
+      "source": "Google Scholar",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    }
+  ],
+  "metadata": {
+    "query": "renewable",
+    "total_found": 5,
+    "sources": [
+      "Google Scholar"
+    ],
+    "exported_count": 5,
+    "export_time": "2026-02-06T13:20:38.360253",
+    "articles_with_abstracts": 5
+  }
+}

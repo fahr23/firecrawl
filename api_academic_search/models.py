@@ -127,7 +127,16 @@ class Article:
         
         # Simple term extraction (remove special chars)
         import re
-        terms = [t.lower() for t in re.split(r'\s+', query) if len(t) > 2]
+        # Split terms and removing trailing 's' for simple plural matching
+        raw_terms = [t.lower() for t in re.split(r'\s+', query) if len(t) > 2]
+        terms = []
+        for t in raw_terms:
+            if t.endswith('s') and len(t) > 3:
+                terms.append(t[:-1])
+                # Keep original too? No, matching base is safer.
+                # Actually, check if base is in text.
+            else:
+                terms.append(t)
         
         if not terms:
             return True

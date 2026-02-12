@@ -4,7 +4,7 @@ A modular, extensible Python package for searching academic literature across mu
 
 ## Features
 
-- 🔍 **Multi-Source Search**: Search OpenAlex, Semantic Scholar, ArXiv, ScienceDirect, and Scopus
+- 🔍 **Multi-Source Search**: Search OpenAlex, Semantic Scholar, ArXiv, ScienceDirect, Scopus, and Google Scholar (via Serper)
 - 📝 **Abstract Enrichment**: Fetch missing abstracts from CrossRef, Semantic Scholar
 - 🏷️ **Topic Extraction**: Automatic keyword and topic extraction
 - 🤖 **LLM Analysis Ready**: Extension point for AI-powered abstract analysis
@@ -88,6 +88,40 @@ python -m academic_search.search_cli "renewable energy" --all-sources --enrich
 
 # With API key
 python -m academic_search.search_cli "batteries" --elsevier-key YOUR_KEY
+
+# Specific providers only
+python -m academic_search.search_cli "AI safety" --providers google arxiv
+```
+
+## Helper Tools
+
+### Bulk Open URLs (`open_urls.py`)
+
+A utility script is located in the `results/` directory to help you quickly open all article URLs from a generated Markdown report.
+
+**Features:**
+- AUTOMATICALLY finds the `.md` report in your target subfolder.
+- OPENS unique URLs in your default browser.
+- **BATCH PROCESSING**: Opens URLs in batches (default: 50) to prevent browser memory issues.
+- **INTERACTIVE**: Pauses between batches and waits for your confirmation.
+
+**Usage:**
+
+```bash
+# Navigate to results directory
+cd results
+
+# Run script targeting a specific result folder (the timestamped folder name)
+python3 open_urls.py <subfolder_name> [batch_size]
+```
+
+**Example:**
+```bash
+# Open URLs from a specific report in batches of 50 (default)
+python3 open_urls.py agent_based_learning_co2_emission_20260204_152644
+
+# Open in smaller batches of 20
+python3 open_urls.py agent_based_learning_co2_emission_20260204_152644 20
 ```
 
 ## Search Results
@@ -354,6 +388,7 @@ engine.export(results, "output.xml", format="xml")
 ```bash
 # API Keys
 export ELSEVIER_API_KEY=your-elsevier-key
+export SERPER_API_KEY=your-serper-key # For Google Scholar
 export OPENAI_API_KEY=sk-...
 export ANTHROPIC_API_KEY=...
 
@@ -399,6 +434,7 @@ config = Config(
 config.api = APIConfig(
     elsevier_api_key="...",
     semantic_scholar_api_key="...",
+    serper_api_key="...", # For Google Scholar
 )
 ```
 
@@ -535,3 +571,4 @@ MIT License
 - [OpenAlex](https://openalex.org/)
 - [Semantic Scholar](https://www.semanticscholar.org/)
 - [CrossRef](https://www.crossref.org/)
+- [Serper.dev](https://serper.dev/)

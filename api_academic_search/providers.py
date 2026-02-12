@@ -14,6 +14,14 @@ from .base import BaseSearcher, BaseAbstractEnricher
 from .models import Article, SearchResult
 from .config import Config
 
+try:
+    from firecrawl import Firecrawl
+except ImportError:
+    # Use a dummy class if firecrawl is not installed to prevent ImportErrors
+    class Firecrawl:
+        def __init__(self, **kwargs): pass
+        def scrape_url(self, **kwargs): return {}
+
 
 class ScienceDirectSearcher(BaseSearcher):
     """
@@ -734,3 +742,310 @@ class ScopusEnricher(BaseAbstractEnricher):
         if not article.doi:
             return None
         return self.searcher.get_abstract_by_doi(article.doi)
+
+
+
+
+class GoogleScholarSearcher(BaseSearcher):
+    """
+    Search provider for Google Scholar using Serper Dev API.
+    
+    Uses google.serper.dev to query Google Scholar without browser scraping.
+    """
+    
+    SEARCH_HOST = "google.serper.dev"
+    
+    def __init__(self, config: Config):
+        super().__init__(config)
+        self.api_key = config.api.serper_api_key
+    
+    @property
+    def source_name(self) -> str:
+        return "Google Scholar"
+    
+    @property
+    def is_available(self) -> bool:
+        return bool(self.api_key)
+    
+    def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
+        """Search Google Scholar using Serper API."""
+        if not self.is_available:
+            self.logger.warning("Serper API key not configured")
+            return SearchResult(query=query, articles=[], total_found=0, sources=[self.source_name])
+            
+        articles = []
+        total_found = 0
+        import http.client
+        import json
+        
+        try:
+            conn = http.client.HTTPSConnection(self.SEARCH_HOST)
+            
+            # Serper Scholar results are usually 10 per page
+            # Calculate number of pages needed
+            import math
+            results_per_page = 10
+            num_pages = math.ceil(max_results / results_per_page)
+            
+            self.logger.info(f"Fetching {max_results} results from Google Scholar (approx {num_pages} pages)")
+            
+            for page in range(1, num_pages + 1):
+                if total_found >= max_results:
+                    break
+                    
+                # Construct payload
+                payload_dict = {
+                    "q": query,
+                    "page": page
+                }
+                
+                if year_min and year_min >= 2025:
+                     payload_dict["tbs"] = "qdr:y"
+                elif year_min:
+                     payload_dict["q"] += f" after:{year_min}"
+                
+                payload = json.dumps(payload_dict)
+                
+                headers = {
+                  'X-API-KEY': self.api_key,
+                  'Content-Type': 'application/json'
+                }
+                
+                self.logger.debug(f"Querying Serper Page {page}: {payload_dict}")
+                conn.request("POST", "/scholar", payload, headers)
+                res = conn.getresponse()
+                data = res.read()
+                
+                if res.status == 200:
+                    response_json = json.loads(data.decode("utf-8"))
+                    
+                    # Parse results
+                    results_list = response_json.get('organic', [])
+                    
+                    if not results_list:
+                        self.logger.info(f"No more results on page {page}")
+                        break
+                        
+                    for item in results_list:
+                        if len(articles) >= max_results:
+                            break
+                            
+                        # Parse item
+                        title = item.get('title', '')
+                        link = item.get('link', '')
+                        snippet = item.get('snippet', '')
+                        
+                        # Publication info
+                        pub_info = item.get('publicationInfo', '')
+                        authors_text = ""
+                        
+                        if isinstance(pub_info, dict):
+                             authors_list = pub_info.get('authors', [])
+                             if isinstance(authors_list, list):
+                                authors_text = ", ".join([a.get('name', '') for a in authors_list if isinstance(a, dict)])
+                        elif isinstance(pub_info, str):
+                            parts = pub_info.split(' - ')
+                            if parts:
+                                authors_text = parts[0].strip()
+                        
+                        # Try to extract year
+                        import re
+                        year = ""
+                        year_match = re.search(r'\b(19|20)\d{2}\b', str(pub_info))
+                        if year_match:
+                            year = year_match.group(0)
+                            
+                        article = Article(
+                            title=title,
+                            url=link,
+                            abstract=snippet,
+                            authors=authors_text,
+                            source=self.source_name,
+                            year=year
+                        )
+                        articles.append(article)
+                        total_found += 1
+                    
+                    # Rate limit kindness for API loop
+                    time.sleep(0.5)
+                else:
+                    self.logger.warning(f"Serper request failed on page {page}: {res.status}")
+                    break
+                    
+            self.logger.info(f"Google Scholar (Serper): Found {len(articles)} articles")
+                
+        except Exception as e:
+            self.logger.error(f"Google Scholar search error: {e}")
+                
+
+            
+        return SearchResult(
+            query=query,
+            articles=articles,
+            total_found=total_found,
+            sources=[self.source_name]
+        )
+
+
+class ClarivateSearcher(BaseSearcher):
+    """
+    Search provider for Clarivate Web of Science Starter API.
+    """
+    
+    SEARCH_URL = "https://api.clarivate.com/apis/wos-starter/v1/documents"
+    
+    def __init__(self, config: Config):
+        super().__init__(config)
+        self.api_key = config.api.clarivate_api_key
+        
+    @property
+    def source_name(self) -> str:
+        return "Web of Science"
+    
+    @property
+    def is_available(self) -> bool:
+        return bool(self.api_key)
+    
+    def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
+        """Search Web of Science Starter API."""
+        if not self.is_available:
+            self.logger.warning("Clarivate API key not configured")
+            return SearchResult(
+                query=query,
+                articles=[],
+                total_found=0,
+                sources=[self.source_name]
+            )
+            
+        articles = []
+        total_found = 0
+        
+        try:
+            page = 1
+            limit = 50 
+            
+            while len(articles) < max_results:
+                # Handle query syntax - Starter API requires field tags like TI= or TS=
+                search_query = query
+                if '=' not in query:
+                    # Default to Topic search if supported, otherwise Title
+                    search_query = f"TI=({query})" # Using TI as safer default for Starter API
+                
+                params = {
+                    'q': search_query,
+                    'limit': min(max_results - len(articles), limit),
+                    'page': page
+                }
+                
+                headers = {
+                    'X-ApiKey': self.api_key
+                }
+                
+                response = requests.get(
+                    self.SEARCH_URL,
+                    headers=headers,
+                    params=params,
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    hits = data.get('hits', []) 
+                    # If 'hits' is empty, try 'docs' or similar if API differs
+                    if not hits and 'docs' in data:
+                        hits = data.get('docs', [])
+                    
+                    meta = data.get('metadata', {})
+                    total_str = meta.get('total', 0) if isinstance(meta, dict) else 0
+                    total_found = int(total_str)
+
+                    if not hits:
+                        self.logger.info(f"Clarivate: No results on page {page}")
+                        break
+                        
+                    for hit in hits:
+                        if len(articles) >= max_results:
+                            break
+                        
+                        article = self._parse_hit(hit)
+                        if article:
+                            articles.append(article)
+                            
+                    if len(articles) >= total_found:
+                        break
+                    
+                    if not hits:
+                         break
+                        
+                    page += 1
+                else:
+                    self.logger.error(f"Clarivate request failed: {response.status_code} - {response.text}")
+                    break
+                    
+        except Exception as e:
+            self.logger.error(f"Clarivate search error: {e}")
+            
+        return SearchResult(
+            query=query,
+            articles=articles,
+            total_found=total_found,
+            sources=[self.source_name]
+        )
+
+    def _parse_hit(self, hit: Dict[str, Any]) -> Optional[Article]:
+        """Parse Clarivate API hit."""
+        try:
+            title = hit.get('title', 'Untitled')
+            if isinstance(title, list):
+                title = title[0] if title else 'Untitled'
+            
+            # Authors
+            authors_list = hit.get('names', {}).get('authors', [])
+            if not authors_list:
+                 authors_list = hit.get('authors', [])
+
+            authors = ""
+            if isinstance(authors_list, list):
+                 names = []
+                 for a in authors_list:
+                     if isinstance(a, str):
+                         names.append(a)
+                     elif isinstance(a, dict):
+                         names.append(a.get('displayName', a.get('wosStandard', '')))
+                 authors = ", ".join(names)
+
+            # Pub info
+            source = hit.get('source', {})
+            journal = source.get('sourceTitle', '')
+            if isinstance(journal, list):
+                journal = journal[0] if journal else ''
+                
+            year = source.get('publishYear', '')
+            
+            # Identifiers
+            uids = hit.get('identifiers', {})
+            doi = uids.get('doi', '')
+            if not doi:
+                doi = hit.get('doi', '') 
+            if isinstance(doi, list):
+                doi = doi[0] if doi else ''
+
+            url = hit.get('links', {}).get('record', '')
+            if not url and doi:
+                 url = f"https://doi.org/{doi}"
+            
+            return Article(
+                title=str(title),
+                url=url,
+                doi=str(doi) if doi else None,
+                abstract="", # Usually unavailable in starter
+                authors=authors,
+                journal=str(journal),
+                year=str(year),
+                source=self.source_name,
+                raw_data=hit
+            )
+        except Exception as e:
+            self.logger.debug(f"Clarivate parse error: {e}")
+            return None

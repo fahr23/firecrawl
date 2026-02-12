@@ -41,6 +41,7 @@ from .exporters import JSONExporter, MarkdownExporter, CSVExporter, BibTeXExport
 from .analyzers import TopicExtractor, LLMAnalyzer, CompositeAnalyzer
 from .providers import (
     ScienceDirectSearcher, ScopusSearcher, OpenAlexSearcher, SemanticScholarSearcher, ArXivSearcher,
+    GoogleScholarSearcher, ClarivateSearcher,
     CrossRefEnricher, SemanticScholarEnricher, ScopusEnricher
 )
 from .base import BaseSearcher, BaseAbstractEnricher, BaseAnalyzer, BaseExporter
@@ -67,6 +68,8 @@ __all__ = [
     "OpenAlexSearcher",
     "SemanticScholarSearcher",
     "ArXivSearcher",
+    "GoogleScholarSearcher",
+    "ClarivateSearcher",
     
     # Enrichers
     "CrossRefEnricher",

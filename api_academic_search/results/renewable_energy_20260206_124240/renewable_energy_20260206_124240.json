@@ -1,0 +1,423 @@
+{
+  "articles": [
+    {
+      "title": "Blockchain-Enabled Renewable Energy Certificate Trading: A Secure and Privacy-Preserving Approach",
+      "url": "https://arxiv.org/abs/2601.08339v1",
+      "doi": "10.1016/j.energy.2023.130110",
+      "abstract": "In the 21st century, transitioning to renewable energy sources is imperative, with fossil fuel reserves depleting rapidly and recognizing critical environmental issues such as climate change, air pollution, water pollution, and habitat destruction. Embracing renewable energy is not only an environmental necessity but also a strategic move with multiple benefits. By shifting to renewable energy sources and supporting their production through the acquisition of renewable energy certificates, we foster innovation and drive economic growth in the renewable energy sector. This, in turn, reduces greenhouse gas emissions, aligning with global efforts to mitigate climate change. Additionally, renewable energy certificates ensure compliance with regulations that mandate the use of renewable energy, enhancing legal adherence while promoting transparency and trust in energy sourcing. To monitor the uptake of renewable energy, governments have implemented Renewable Energy Certificates (RECs) as a tracking mechanism for the production and consumption of renewable energy. However, there are two main challenges to the existing REC schema: 1) The RECs have not been globally adopted due to inconsistent design; 2) The consumer privacy has not been well incorporated in the design of blockchain. In this study, we investigate the trading of RECs between suppliers and consumers using the directed acyclic graph (DAG) blockchain system and introduce a trading schema to help protect consumer information. Our results demonstrate lower transaction time by 41\\% and energy consumption by 65\\% compared to proof-of-stake.",
+      "authors": "Wei-Jen Liu, Wei-Yu Chiu, Weiqi Hua",
+      "journal": null,
+      "year": "2026",
+      "keywords": [
+        "eess.SY"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Subjective-Objective Median-based Importance Technique (SOMIT) to Aid Multi-Criteria Renewable Energy Evaluation",
+      "url": "https://arxiv.org/abs/2601.03182v1",
+      "doi": "10.1016/j.apenergy.2025.126872",
+      "abstract": "Accelerating the renewable energy transition requires informed decision-making that accounts for the diverse financial, technical, environmental, and social trade-offs across different renewable energy technologies. A critical step in this multi-criteria decision-making (MCDM) process is the determination of appropriate criteria weights. However, deriving these weights often solely involves either subjective assessment from decision-makers or objective weighting methods, each of which has limitations in terms of cognitive burden, potential bias, and insufficient contextual relevance. This study proposes the subjective-objective median-based importance technique (SOMIT), a novel hybrid approach for determining criteria weights in MCDM. By tailoring SOMIT to renewable energy evaluation, the method directly supports applied energy system planning, policy analysis, and technology prioritization under carbon neutrality goals. The practical utility of SOMIT is demonstrated through two MCDM case studies on renewable energy decision-making in India and Saudi Arabia. Using the derived weights from SOMIT, the TOPSIS method ranks the renewable energy alternatives, with solar power achieving the highest performance scores in both cases. The main contributions of this work are five-fold: 1) the proposed SOMIT reduces the number of required subjective comparisons from the conventional quadratic order to a linear order; 2) SOMIT is more robust to outliers in the alternatives-criteria matrix (ACM); 3) SOMIT balances subjective expert knowledge with objective data-driven insights, thereby mitigating bias; 4) SOMIT is inherently modular, allowing both its individual parts and the complete approach to be seamlessly coupled with a wide range of MCDM methods commonly applied in energy systems and policy analysis; 5) a dedicated Python library, pysomit, is developed for SOMIT.",
+      "authors": "Ding Ding, Yang Li, Poh Ling Neo, Zhiyuan Wang, Chongwu Xia",
+      "journal": null,
+      "year": "2026",
+      "keywords": [
+        "math.OC"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Exploring the link between renewable energy policy and foreign direct investment in promoting renewable energy in Belt and Road Initiative countries",
+      "url": "https://doi.org/10.1016/j.renene.2025.122915",
+      "doi": "10.1016/j.renene.2025.122915",
+      "abstract": "",
+      "authors": "Viglioni M.T.D.",
+      "journal": "Renewable Energy",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Multidimensional landscape of renewable energy investments in Africa",
+      "url": "https://doi.org/10.1016/B978-0-443-29869-1.00015-5",
+      "doi": "10.1016/B978-0-443-29869-1.00015-5",
+      "abstract": "",
+      "authors": "Ackah I.",
+      "journal": "Renewable Energy Projects and Investments Interdisciplinary Knowledge Analysis Opportunities and Outlook",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "An environmental assessment of non-renewable, modern renewable, and combustible renewable energy in Cameroon",
+      "url": "https://doi.org/10.1007/s10668-023-04192-y",
+      "doi": "10.1007/s10668-023-04192-y",
+      "abstract": "",
+      "authors": "Pata U.K.",
+      "journal": "Environment Development and Sustainability",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": true,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "The Regional and Personal Disparities of Global Renewable Energy Use from Four Perspectives",
+      "url": "https://doi.org/10.3390/su17177822",
+      "doi": "10.3390/su17177822",
+      "abstract": "Global climate change demands a rapid transition to renewable energy for sustainable development and carbon neutrality. However, existing frameworks often overlook the dynamics of renewable energy use across production, consumption, final production, and income perspectives of the economy, thereby limiting understanding of global energy transitions. This study addresses this gap using a multi regional input-output (MRIO) model to analyze renewable energy use globally from 2000 to 2021 through multiple perspectives. Our findings reveal significant disparities in renewable energy use across countries. The United States is the largest renewable energy user by four perspectives in 2021, while per capita renewable energy use reveals pronounced disparities, with heavily populated countries like China and India having notably low use levels. Furthermore, resource-exporting countries, as primary suppliers for global renewable energy, promote renewable energy use, making a substantial contribution to the energy transition. Sectoral analysis highlights the significance of electricity, gas, and water industries in renewable energy use. This study provides a comprehensive framework for analyzing renewable energy use, offering valuable insights to policymakers to accelerate equitable and sustainable energy transitions.",
+      "authors": "He H.",
+      "journal": "Sustainability Switzerland",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": true,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Renewable energy development and carbon productivity in OECD countries: A new perspective on the internal mix of renewable energy",
+      "url": "https://doi.org/10.1080/15435075.2025.2462620",
+      "doi": "10.1080/15435075.2025.2462620",
+      "abstract": "",
+      "authors": "Xie L.",
+      "journal": "International Journal of Green Energy",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Power generation prediction for renewable energy fuel using multiple linear regression: A case study of Thailand",
+      "url": "https://doi.org/10.1063/5.0264705",
+      "doi": "10.1063/5.0264705",
+      "abstract": "",
+      "authors": "Wanison R.",
+      "journal": "Aip Conference Proceedings",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Exploring the role of renewable energy expansion in mitigating energy poverty in China",
+      "url": "https://doi.org/10.1007/s10668-025-07077-4",
+      "doi": "10.1007/s10668-025-07077-4",
+      "abstract": "Abstract\n                  China has formulated ambitious but costly renewable energy targets for carbon reduction, energy security, and rural revitalization. However, nearly 13.2%-35.3% of Chinese are still suffering from energy-poor. As the transformation of energy structure accelerates, whether the expansion of renewable energy can alleviate energy poverty is rarely discussed. Therefore, this paper collects panel data from 30 provinces and regions in China from 2004 to 2020, and uses the difference-generalized moment method (GMM) to verify the role of renewable energy expansion in alleviating energy poverty. With the objective of rigorously measuring energy poverty, this paper establishes a four-dimensional comprehensive assessment system. Finally, robustness tests and heterogeneity analysis were performed to ensure the reliability of the results. According to the findings, (i) From the full sample data analysis results, the expansion of renewable energy has not significantly promoted the alleviation of energy poverty. (ii) The role of renewable energy expansion in alleviating energy poverty shows considerable variation across regions. In regions with serious energy poverty and large-scale expansion of renewable energy, the development of renewable energy is an effective means to mitigates energy poverty. However, in regions with lower levels of energy poverty and renewable energy expansion, the role of renewable energy expansion is not matter.",
+      "authors": "Wu W.",
+      "journal": "Environment Development and Sustainability",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": true,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Macroeconomic Analysis of Renewable Energy Consumption: A Panel Data Approach",
+      "url": "https://doi.org/10.1007/978-3-031-72174-8_1",
+      "doi": "10.1007/978-3-031-72174-8_1",
+      "abstract": "",
+      "authors": "Revtiuk Y.",
+      "journal": "Springerbriefs in Applied Sciences and Technology",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Research on the Decomposition Method of Renewable Energy Portfolio Standard",
+      "url": "https://doi.org/10.1109/ICGEPS65133.2025.11034477",
+      "doi": "10.1109/ICGEPS65133.2025.11034477",
+      "abstract": "The design of policy regimes plays an important role in promoting the development of renewable energy. Under the policy framework of China’s renewable energy consumption responsibility weighting, further disaggregation of provincial targets to the level of market players is of great significance for the implementation of renewable energy consumption responsibility weighting and the development of renewable energy. This paper proposes two specific programs for the decomposition of the weight of responsibility for renewable energy consumption into market entities, which provide theoretical references for the decomposition of the target of the weight of responsibility for renewable energy consumption in each province, and help the provinces to effectively decompose and implement the targets for renewable energy consumption, and promote the healthy and long-term development of the guarantee mechanism for renewable energy consumption.",
+      "authors": "Wu S.",
+      "journal": "2025 4th International Conference on Green Energy and Power Systems Icgeps 2025",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Interactions between renewable energy tokens, oil shocks, and clean energy investments: Do COP26 policies matter?",
+      "url": "https://doi.org/10.1016/j.enpol.2025.114497",
+      "doi": "10.1016/j.enpol.2025.114497",
+      "abstract": "",
+      "authors": "Naifar N.",
+      "journal": "Energy Policy",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Renewable energy market in Africa: Opportunities, progress, challenges, and future prospects",
+      "url": "https://doi.org/10.1016/j.esr.2025.101700",
+      "doi": "10.1016/j.esr.2025.101700",
+      "abstract": "",
+      "authors": "Alex-Oke T.",
+      "journal": "Energy Strategy Reviews",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": true,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "A theoretical framework of renewable energy financing",
+      "url": "https://www.scopus.com/inward/record.uri?partnerID=HzOxMe3b&scp=105008259233&origin=inward",
+      "doi": null,
+      "abstract": "",
+      "authors": "Soydas S.S.",
+      "journal": "Finance of Renewable Energy in A Sustainable World",
+      "year": "2025",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Dynamic Rolling Horizon Optimization for Network-Constrained V2X Value Stacking of Electric Vehicles Under Uncertainties",
+      "url": "https://arxiv.org/abs/2502.09290v2",
+      "doi": "10.1016/j.renene.2025.122668",
+      "abstract": "Electric vehicle (EV) coordination can provide significant benefits through vehicle-to-everything (V2X) by interacting with the grid, buildings, and other EVs. This work aims to develop a V2X value-stacking framework, including vehicle-to-building (V2B), vehicle-to-grid (V2G), and energy trading, to maximize economic benefits for residential communities while maintaining distribution voltage. This work also seeks to quantify the impact of prediction errors related to building load, renewable energy, and EV arrivals. A dynamic rolling-horizon optimization (RHO) method is employed to leverage multiple revenue streams and maximize the potential of EV coordination. To address energy uncertainties, including hourly local building load, local photovoltaic (PV) generation, and EV arrivals, this work develops a Transformer-based forecasting model named Gated Recurrent Units-Encoder-Temporal Fusion Decoder (GRU-EN-TFD). The simulation results, using real data from Australia's National Electricity Market, and the Independent System Operators in New England and New York in the US, reveal that V2X value stacking can significantly reduce energy costs. The proposed GRU-EN-TFD model outperforms the benchmark forecast model. Uncertainties in EV arrivals have a more substantial impact on value-stacking performance, highlighting the significance of its accurate forecast. This work provides new insights into the dynamic interactions among residential communities, unlocking the full potential of EV batteries.",
+      "authors": "Canchen Jiang, Ariel Liebman, Bo Jie, Hao Wang",
+      "journal": null,
+      "year": "2025",
+      "keywords": [
+        "math.OC",
+        "cs.LG",
+        "eess.SY"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Remote Renewable Energy Hubs: a Taxonomy",
+      "url": "https://arxiv.org/abs/2507.07659v1",
+      "doi": "10.1016/j.egyr.2025.02.040",
+      "abstract": "Serving the energy demand with renewable energy is hindered by its limited availability near load centres (i.e. places where the energy demand is high). To address this challenge, the concept of Remote Renewable Energy Hubs (RREH) emerges as a promising solution. RREHs are energy hubs located in areas with abundant renewable energy sources, such as sun in the Sahara Desert or wind in Greenland. In these hubs, renewable energy sources are used to synthetise energy molecules. To produce specific energy molecules, a tailored hub configuration must be designed, which means choosing a set of technologies that are interacting with each other as well as defining how they are integrated in their local environment. The plurality of technologies that may be employed in RREHs results in a large diversity of hubs. In order to characterize this diversity, we propose in this paper a taxonomy for accurately defining these hubs. This taxonomy allows to better describe and compare designs of hubs as well as to identify new ones. Thus, it may guide policymakers and engineers in hub design, contributing to cost efficiency and/or improving local integration.",
+      "authors": "Victor Dachet, Antoine Dubois, Bardhyl Miftari, Raphaël Fonteneau, Damien Ernst",
+      "journal": null,
+      "year": "2025",
+      "keywords": [
+        "eess.SY"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Load and Renewable Energy Forecasting Using Deep Learning for Grid Stability",
+      "url": "https://arxiv.org/abs/2501.13412v1",
+      "doi": null,
+      "abstract": "As the energy landscape changes quickly, grid operators face several challenges, especially when integrating renewable energy sources with the grid. The most important challenge is to balance supply and demand because the solar and wind energy are highly unpredictable. When dealing with such uncertainty, trustworthy short-term load and renewable energy forecasting can help stabilize the grid, maximize energy storage, and guarantee the effective use of renewable resources. Physical models and statistical techniques were the previous approaches employed for this kind of forecasting tasks. In forecasting renewable energy, machine learning and deep learning techniques have recently demonstrated encouraging results. More specifically, the deep learning techniques like CNN and LSTM and the conventional machine learning techniques like regression that are mostly utilized for load and renewable energy forecasting tasks. In this article, we will focus mainly on CNN and LSTM-based forecasting methods.",
+      "authors": "Kamal Sarkar",
+      "journal": null,
+      "year": "2025",
+      "keywords": [
+        "cs.LG",
+        "cs.AI"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Assessment and Prioritization of Renewable Energy Alternatives to Achieve Sustainable Development Goals in Turkiye: Based on Fuzzy AHP Approach",
+      "url": "https://arxiv.org/abs/2512.05444v2",
+      "doi": "10.58559/ijes.1494256",
+      "abstract": "The aim of this study is to prioritize renewable energy sources to achieve sustainable development in Turkiye by using fuzzy AHP method. In our study, we used 30 criteria that affect the investment in renewable energy sources. We also calculated the weights of these criteria in investment decisions. In addition, we analyzed the advantageous renewable energy sources according to each criterion. Thus, it was determined which renewable energy source is advantageous according to which criteria. The results show that the most important main criteria for renewable energy investments in Turkiye are economic, political, technical, environmental and social criteria, respectively. The most appropriate renewable energy sources according to economic, political, technical and social criteria are solar, wind, hydroelectric,",
+      "authors": "Emre Akusta, Raif Cergibozan",
+      "journal": null,
+      "year": "2025",
+      "keywords": [
+        "econ.GN"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Impact Analysis of Utility-Scale Energy Storage on the ERCOT Grid in Reducing Renewable Generation Curtailments and Emissions",
+      "url": "https://arxiv.org/abs/2502.15958v3",
+      "doi": "10.1109/PESGM52009.2025.11225707",
+      "abstract": "This paper explores the solutions for minimizing renewable energy (RE) curtailment in the Texas Electric Reliability Council of Texas (ERCOT) grid. By utilizing current and future planning data from ERCOT and the System Advisor Model from the National Renewable Energy Laboratory, we examine how future renewable energy (RE) initiatives, combined with utility-scale energy storage, can reduce CO2 emissions while reshaping Texas's energy mix. The study projects the energy landscape from 2023 to 2033, considering the planned phase-out of fossil fuel plants and the integration of new wind/solar projects. By comparing emissions under different load scenarios, with and without storage, we demonstrate storage's role in optimizing RE utilization. The findings of this paper provide actionable guidance for energy stakeholders, underscoring the need to expand wind and solar projects with strategic storage solutions to maximize Texas's RE capacity and substantially reduce CO2 emissions.",
+      "authors": "Cody Buehner, Sharaf K. Magableh, Oraib Dawaghreh, Caisheng Wang",
+      "journal": null,
+      "year": "2025",
+      "keywords": [
+        "eess.SY"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Ammonia, Methane, Hydrogen and Methanol Produced in Remote Renewable Energy Hubs: a Comparative Quantitative Analysis",
+      "url": "https://arxiv.org/abs/2507.07681v1",
+      "doi": "10.52202/077185-0192",
+      "abstract": "Remote renewable energy hubs (RREHs) for synthetic fuel production are engineering systems harvesting renewable energy where it is particularly abundant. They produce transportable synthetic fuels for export to distant load centers. This article aims to evaluate the production costs of different energy carriers, and includes a discussion on advantages and disadvantages in terms of technical performance. To do so, we extend the study of Berger et al., (2021) which focuses on methane (CH4) as energy carrier and introduce three new carriers: ammonia (NH3), hydrogen (H2) and methanol (CH3OH). The four different RREHs are located in the Algerian Sahara desert and must serve to the load center, Belgium, a constant electro-fuel demand of 10 TWh per year. The modelling and optimisation of these systems are performed using the modelling language GBOML (Graph-Based Optimisation Modelling Language). Our findings reveal that the three new RREHs, each with its respective carrier (ammonia, hydrogen, and methanol), are all more cost-effective than the methane-based system. Ammonia demonstrates the most favourable cost-to-energy exported ratio.",
+      "authors": "Antoine Larbanois, Victor Dachet, Antoine Dubois, Raphaël Fonteneau, Damien Ernst",
+      "journal": null,
+      "year": "2025",
+      "keywords": [
+        "eess.SY"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Peer-to-Peer Energy Trading in Dairy Farms using Multi-Agent Reinforcement Learning",
+      "url": "https://arxiv.org/abs/2511.23148v1",
+      "doi": "10.1016/j.apenergy.2025.127041",
+      "abstract": "The integration of renewable energy resources in rural areas, such as dairy farming communities, enables decentralized energy management through Peer-to-Peer (P2P) energy trading. This research highlights the role of P2P trading in efficient energy distribution and its synergy with advanced optimization techniques. While traditional rule-based methods perform well under stable conditions, they struggle in dynamic environments. To address this, Multi-Agent Reinforcement Learning (MARL), specifically Proximal Policy Optimization (PPO) and Deep Q-Networks (DQN), is combined with community/distributed P2P trading mechanisms. By incorporating auction-based market clearing, a price advisor agent, and load and battery management, the approach achieves significant improvements. Results show that, compared to baseline models, DQN reduces electricity costs by 14.2% in Ireland and 5.16% in Finland, while increasing electricity revenue by 7.24% and 12.73%, respectively. PPO achieves the lowest peak hour demand, reducing it by 55.5% in Ireland, while DQN reduces peak hour demand by 50.0% in Ireland and 27.02% in Finland. These improvements are attributed to both MARL algorithms and P2P energy trading, which together results in electricity cost and peak hour demand reduction, and increase electricity selling revenue. This study highlights the complementary strengths of DQN, PPO, and P2P trading in achieving efficient, adaptable, and sustainable energy management in rural communities.",
+      "authors": "Mian Ibad Ali Shah, Marcos Eduardo Cruz Victorio, Maeve Duffy, Enda Barrett, Karl Mason",
+      "journal": null,
+      "year": "2025",
+      "keywords": [
+        "cs.AI"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Optimal Sizing and Control of a Grid-Connected Battery in a Stacked Revenue Model Including an Energy Community",
+      "url": "https://arxiv.org/abs/2507.04343v1",
+      "doi": "10.1016/j.apenergy.2025.126122",
+      "abstract": "Recent years have seen rapid increases in intermittent renewable generation, requiring novel battery energy storage systems (BESS) solutions. One recent trend is the emergence of large grid-connected batteries, that can be controlled to provide multiple storage and flexibility services, using a stacked revenue model. Another emerging development is renewable energy communities (REC), in which prosumers invest in their own renewable generation capacity, but also requiring battery storage for flexibility. In this paper, we study settings in which energy communities rent battery capacity from a battery operator through a battery-as-a-service (BaaS) model. We present a methodology for determining the sizing and pricing of battery capacity that can be rented, such that it provides economic benefits to both the community and the battery operator that participates in the energy market. We examine how sizes and prices vary across a number of different scenarios for different types of tariffs (flat, dynamic) and competing energy market uses. Second, we conduct a systematic study of linear optimization models for battery control when deployed to provide flexibility to energy communities. We show that existing approaches for battery control with daily time windows have a number of important limitations in practical deployments, and we propose a number of regularization functions in the optimization to address them. Finally, we investigate the proposed method using real generation, demand, tariffs, and battery data, based on a practical case study from a large battery operator in the Netherlands. For the settings in our case study, we find that a community of 200 houses with a 330 kW wind turbine can save up to 12,874 euros per year by renting just 280 kWh of battery capacity (after subtracting battery rental costs), with the methodology applicable to a wide variety of settings and tariff types.",
+      "authors": "Tudor Octavian Pocola, Valentin Robu, Jip Rietveld, Sonam Norbu, Benoit Couraud",
+      "journal": null,
+      "year": "2025",
+      "keywords": [
+        "eess.SY",
+        "cs.MA",
+        "math.OC"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Data-Driven Evolutionary Game-Based Model Predictive Control for Hybrid Renewable Energy Dispatch in Autonomous Ships",
+      "url": "https://arxiv.org/abs/2504.14750v1",
+      "doi": null,
+      "abstract": "In this paper, we propose a data-driven Evolutionary Game-Based Model Predictive Control (EG-MPC) framework for the energy dispatch of a hybrid renewable energy system powering an autonomous ship. The system integrates solar photovoltaic and wind turbine generation with battery energy storage and diesel backup power to ensure reliable operation. Given the uncertainties in renewable generation and dynamic energy demands, an optimal dispatch strategy is crucial to minimize operational costs while maintaining system reliability. To address these challenges, we formulate a cost minimization problem that considers both battery degradation costs and diesel fuel expenses, leveraging real-world data to enhance modeling accuracy. The EG-MPC approach integrates evolutionary game dynamics within a receding-horizon optimization framework, enabling adaptive and near-optimal control solutions in real time. Simulation results based on site-specific data demonstrate that the proposed method achieves cost-effective, reliable, and adaptive energy dispatch, outperforming conventional rule-based and standard MPC approaches, particularly under uncertainty.",
+      "authors": "Yaoze Liu, Zhen Tian, Jinming Yang, Zhihao Lin",
+      "journal": null,
+      "year": "2025",
+      "keywords": [
+        "eess.SY"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Extreme Scenario Characterization for High Renewable Energy Penetrated Power Systems over Long Time Scales",
+      "url": "https://arxiv.org/abs/2506.23169v1",
+      "doi": null,
+      "abstract": "Power systems with high renewable energy penetration are highly influenced by weather conditions, often facing significant challenges such as persistent power shortages and severe power fluctuations over long time scales. This paper addresses the critical need for effective characterization of extreme scenarios under these situations. First, novel risk indices are proposed to quantify the severity of continuous power shortages and substantial power fluctuations over long-term operations. These indices are independent of specific scheduling strategies and incorporate the system's resource regulation capabilities. By employing a filtering-based approach, the proposed indices focus on retaining key characteristics of continuous power shortages and fluctuation events, enabling the identification of extreme scenarios on long time scales. Secondly, an extreme scenario generation method is developed using Gaussian mixture models and sequential Monte Carlo simulation. Especially, this method periodically evaluates the severity of generated scenarios based on the defined risk indices, retaining extreme scenarios while discarding less critical ones. Finally, case studies based on real-world data demonstrate the efficacy of the proposed method. The results confirm that integrating the identified extreme scenarios significantly enhances the system's ability to ensure long-term security and reliability under high renewable energy penetration.",
+      "authors": "Kai Kang, Feng Liu, Yifan Su, Zhaojian Wang",
+      "journal": null,
+      "year": "2025",
+      "keywords": [
+        "eess.SY"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Extreme return connectedness between renewable energy tokens and renewable energy stock markets: evidence from a quantile-based analysis",
+      "url": "https://doi.org/10.1007/s11356-023-31563-9",
+      "doi": "10.1007/s11356-023-31563-9",
+      "abstract": "",
+      "authors": "Ustaoglu E.",
+      "journal": "Environmental Science and Pollution Research International",
+      "year": "2024",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    }
+  ],
+  "metadata": {
+    "query": "renewable energy",
+    "total_found": 25,
+    "sources": [
+      "ScienceDirect",
+      "Scopus API",
+      "OpenAlex",
+      "Semantic Scholar",
+      "arXiv",
+      "Google Scholar"
+    ],
+    "exported_count": 25,
+    "export_time": "2026-02-06T12:42:40.346375",
+    "articles_with_abstracts": 15
+  }
+}

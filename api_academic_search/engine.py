@@ -14,6 +14,7 @@ from .models import Article, SearchResult
 from .config import Config
 from .providers import (
     ScienceDirectSearcher, ScopusSearcher, OpenAlexSearcher, SemanticScholarSearcher, ArXivSearcher,
+    GoogleScholarSearcher, ClarivateSearcher,
     CrossRefEnricher, SemanticScholarEnricher, ScopusEnricher
 )
 from .exporters import JSONExporter, MarkdownExporter, CSVExporter, BibTeXExporter
@@ -82,10 +83,18 @@ class AcademicSearchEngine:
             self._searchers.append(ScienceDirectSearcher(self.config))  # Best for Elsevier content
             self._searchers.append(ScopusSearcher(self.config))         # Broad multi-publisher search
         
+        # Clarivate
+        if self.config.api.clarivate_api_key:
+            self._searchers.append(ClarivateSearcher(self.config))
+        
         # Free searchers (no API key needed)
         self._searchers.append(OpenAlexSearcher(self.config))
         self._searchers.append(SemanticScholarSearcher(self.config))
         self._searchers.append(ArXivSearcher(self.config))
+        
+        # Google Scholar (via Serper or Firecrawl fallback if still configured)
+        if self.config.api.serper_api_key or self.config.api.firecrawl_api_key:
+            self._searchers.append(GoogleScholarSearcher(self.config))
         
         # Enrichers for adding abstracts
         self._enrichers.extend([
@@ -118,7 +127,8 @@ class AcademicSearchEngine:
     def search(self, query: str, max_results: int = 25,
                use_all_sources: bool = False,
                year_min: Optional[int] = None,
-               year_max: Optional[int] = None) -> SearchResult:
+               year_max: Optional[int] = None,
+               providers: Optional[List[str]] = None) -> SearchResult:
         """
         Search for academic papers.
         
@@ -129,6 +139,8 @@ class AcademicSearchEngine:
                            If False, uses first available source.
             year_min: Minimum publication year (optional).
             year_max: Maximum publication year (optional).
+            providers: List of specific provider names to use (case-insensitive).
+                       If None, uses all configured providers.
         
         Returns:
             SearchResult containing found articles.
@@ -138,14 +150,31 @@ class AcademicSearchEngine:
             year_range = f" ({year_min or 'any'} - {year_max or 'now'})"
             self.logger.info(f"Year filter: {year_range}")
         
-        if use_all_sources:
-            return self._search_all_sources(query, max_results, year_min, year_max)
+        # Determine active searchers
+        active_searchers = self._searchers
+        if providers:
+            # Normalize names
+            provider_names = [p.lower() for p in providers]
+            active_searchers = [
+                s for s in self._searchers 
+                if any(p in s.source_name.lower() or s.source_name.lower() in p for p in provider_names)
+            ]
+            
+            if not active_searchers:
+                self.logger.warning(f"No matching providers found for: {providers}")
+                return SearchResult(query=query, articles=[], total_found=0, sources=[])
+        
+        if use_all_sources or providers: # If specific providers requested, imply use_all_sources behavior usually? 
+            # The prompt says "if not given do it all if given use them". 
+            # So if providers are given, we iterate them all (implied 'all' behavior for the subset).
+            return self._search_all_sources(query, max_results, year_min, year_max, active_searchers)
         else:
-            return self._search_primary_source(query, max_results, year_min, year_max)
+            return self._search_primary_source(query, max_results, year_min, year_max, active_searchers)
     
-    def _search_primary_source(self, query: str, max_results: int, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
+    def _search_primary_source(self, query: str, max_results: int, year_min: Optional[int] = None, year_max: Optional[int] = None, searchers: List[BaseSearcher] = None) -> SearchResult:
         """Search using the first available source."""
-        for searcher in self._searchers:
+        searchers = searchers or self._searchers
+        for searcher in searchers:
             try:
                 self.logger.info(f"Trying {searcher.source_name}...")
                 result = searcher.search(query, max_results, year_min, year_max)
@@ -170,14 +199,15 @@ class AcademicSearchEngine:
             sources=["none"]
         )
     
-    def _search_all_sources(self, query: str, max_results: int, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
+    def _search_all_sources(self, query: str, max_results: int, year_min: Optional[int] = None, year_max: Optional[int] = None, searchers: List[BaseSearcher] = None) -> SearchResult:
         """Search all sources and merge results."""
+        searchers = searchers or self._searchers
         all_articles = []
         total = 0
         sources = []
         seen_dois = set()
         
-        for searcher in self._searchers:
+        for searcher in searchers:
             try:
                 self.logger.info(f"Searching {searcher.source_name}...")
                 result = searcher.search(query, max_results, year_min, year_max)
@@ -197,7 +227,7 @@ class AcademicSearchEngine:
                 self.logger.error(f"Error with {searcher.source_name}: {e}")
         
         # Sort by year (newest first)
-        all_articles.sort(key=lambda a: a.year or 0, reverse=True)
+        all_articles.sort(key=lambda a: int(a.year) if a.year and str(a.year).isdigit() else 0, reverse=True)
         # Note: We do NOT limit to max_results here because we want the cumulative
         # results from all sources (e.g. 50 from Scopus + 50 from OpenAlex...)
         
@@ -509,6 +539,7 @@ class AcademicSearchEngine:
 
 
 def create_engine(elsevier_api_key: Optional[str] = None,
+                  clarivate_api_key: Optional[str] = None,
                   enable_llm: bool = False,
                   llm_provider: Optional[str] = None,
                   llm_api_key: Optional[str] = None,
@@ -546,5 +577,8 @@ def create_engine(elsevier_api_key: Optional[str] = None,
     
     if elsevier_api_key:
         config.api.elsevier_api_key = elsevier_api_key
+        
+    if clarivate_api_key:
+        config.api.clarivate_api_key = clarivate_api_key
     
     return AcademicSearchEngine(config)

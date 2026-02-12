@@ -16,6 +16,10 @@ class APIConfig:
     """Configuration for API keys and endpoints."""
     elsevier_api_key: Optional[str] = None
     semantic_scholar_api_key: Optional[str] = None
+    firecrawl_api_key: Optional[str] = None
+    firecrawl_api_url: Optional[str] = "http://localhost:3002"
+    serper_api_key: Optional[str] = None
+    clarivate_api_key: Optional[str] = None
     
     def __post_init__(self):
         """Load from environment if not provided."""
@@ -26,6 +30,19 @@ class APIConfig:
             )
         if not self.semantic_scholar_api_key:
             self.semantic_scholar_api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+        
+        if not self.firecrawl_api_key:
+            self.firecrawl_api_key = os.getenv("FIRECRAWL_API_KEY")
+        
+        if os.getenv("FIRECRAWL_API_URL"):
+            self.firecrawl_api_url = os.getenv("FIRECRAWL_API_URL")
+
+        if not self.serper_api_key:
+             # Default from user request
+            self.serper_api_key = os.getenv("SERPER_API_KEY", "d37ce4e3555a198dbda59f69f97d2eb96df7efc1")
+            
+        if not self.clarivate_api_key:
+            self.clarivate_api_key = os.getenv("CLARIVATE_API_KEY", "25c3c04668c64cd41731c51b0dc253d790b262dd")
 
 
 @dataclass
@@ -125,6 +142,7 @@ class Config:
             "api": {
                 "elsevier_api_key": "***" if self.api.elsevier_api_key else None,
                 "semantic_scholar_api_key": "***" if self.api.semantic_scholar_api_key else None,
+                "clarivate_api_key": "***" if self.api.clarivate_api_key else None,
             },
             "max_results": self.max_results,
             "timeout": self.timeout,

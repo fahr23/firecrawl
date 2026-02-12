@@ -1,0 +1,53 @@
+{
+  "articles": [
+    {
+      "title": "Dynamic Rolling Horizon Optimization for Network-Constrained V2X Value Stacking of Electric Vehicles Under Uncertainties",
+      "url": "https://arxiv.org/abs/2502.09290v2",
+      "doi": "10.1016/j.renene.2025.122668",
+      "abstract": "Electric vehicle (EV) coordination can provide significant benefits through vehicle-to-everything (V2X) by interacting with the grid, buildings, and other EVs. This work aims to develop a V2X value-stacking framework, including vehicle-to-building (V2B), vehicle-to-grid (V2G), and energy trading, to maximize economic benefits for residential communities while maintaining distribution voltage. This work also seeks to quantify the impact of prediction errors related to building load, renewable energy, and EV arrivals. A dynamic rolling-horizon optimization (RHO) method is employed to leverage multiple revenue streams and maximize the potential of EV coordination. To address energy uncertainties, including hourly local building load, local photovoltaic (PV) generation, and EV arrivals, this work develops a Transformer-based forecasting model named Gated Recurrent Units-Encoder-Temporal Fusion Decoder (GRU-EN-TFD). The simulation results, using real data from Australia's National Electricity Market, and the Independent System Operators in New England and New York in the US, reveal that V2X value stacking can significantly reduce energy costs. The proposed GRU-EN-TFD model outperforms the benchmark forecast model. Uncertainties in EV arrivals have a more substantial impact on value-stacking performance, highlighting the significance of its accurate forecast. This work provides new insights into the dynamic interactions among residential communities, unlocking the full potential of EV batteries.",
+      "authors": "Canchen Jiang, Ariel Liebman, Bo Jie, Hao Wang",
+      "journal": null,
+      "year": "2025",
+      "keywords": [
+        "math.OC",
+        "cs.LG",
+        "eess.SY"
+      ],
+      "source": "arXiv",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Analyzing the economic, social, and technological determinants of renewable and nonrenewable electricity production in China: Findings from time series models",
+      "url": "https://doi.org/10.1016/j.energy.2023.128888",
+      "doi": "10.1016/j.energy.2023.128888",
+      "abstract": "",
+      "authors": "Li Y.",
+      "journal": "Energy",
+      "year": "2023",
+      "keywords": [],
+      "source": "Scopus API",
+      "is_open_access": false,
+      "citation_count": null,
+      "references": [],
+      "analysis": null
+    }
+  ],
+  "metadata": {
+    "query": "renewable",
+    "total_found": 2,
+    "sources": [
+      "ScienceDirect",
+      "Scopus API",
+      "OpenAlex",
+      "Semantic Scholar",
+      "arXiv",
+      "Google Scholar"
+    ],
+    "exported_count": 2,
+    "export_time": "2026-02-06T13:20:56.325121",
+    "articles_with_abstracts": 1
+  }
+}

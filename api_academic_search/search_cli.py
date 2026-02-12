@@ -82,6 +82,12 @@ Examples:
         help="Enrich articles with abstracts from multiple sources"
     )
     
+    parser.add_argument(
+        "--providers",
+        nargs="+",
+        help="List of providers to use (e.g. 'google', 'scopus'). Default: all"
+    )
+    
     # Analysis options
     parser.add_argument(
         "--analyze",
@@ -153,7 +159,8 @@ Examples:
         max_results=search_limit,
         use_all_sources=not args.use_single_source, # Default to True
         year_min=args.year_min,
-        year_max=args.year_max
+        year_max=args.year_max,
+        providers=args.providers
     )
     
     if args.verbose:
