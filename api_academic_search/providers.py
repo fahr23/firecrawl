@@ -890,9 +890,16 @@ class GoogleScholarSearcher(BaseSearcher):
 class ClarivateSearcher(BaseSearcher):
     """
     Search provider for Clarivate Web of Science Starter API.
+    
+    Supports advanced features:
+    - Field-specific queries (TI, TS, AU, AI, OG, DO, PY, SO)
+    - Sorting by citations, publication year, relevance
+    - Multiple databases (WOS, BIOABS, MEDLINE)
+    - Citation counts and author identifiers
     """
     
     SEARCH_URL = "https://api.clarivate.com/apis/wos-starter/v1/documents"
+    DOCUMENT_URL = "https://api.clarivate.com/apis/wos-starter/v1/documents/{uid}"
     
     def __init__(self, config: Config):
         super().__init__(config)
@@ -906,8 +913,25 @@ class ClarivateSearcher(BaseSearcher):
     def is_available(self) -> bool:
         return bool(self.api_key)
     
-    def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
-        """Search Web of Science Starter API."""
+    def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, 
+               year_max: Optional[int] = None, sort_by: str = "relevance",
+               database: str = "WOS", detail: str = "full") -> SearchResult:
+        """
+        Search Web of Science Starter API with advanced options.
+        
+        Args:
+            query: Search query. Can use field tags (TI=, TS=, AU=, etc.) or plain text.
+            max_results: Maximum number of results to return.
+            year_min: Minimum publication year.
+            year_max: Maximum publication year.
+            sort_by: Sort order. Options: 'relevance', 'citations' (most cited first),
+                    'year_desc' (newest first), 'year_asc' (oldest first).
+            database: Database to search. Options: 'WOS' (default), 'BIOABS', 'MEDLINE'.
+            detail: Detail level. 'full' (default) or 'short'.
+        
+        Returns:
+            SearchResult containing found articles.
+        """
         if not self.is_available:
             self.logger.warning("Clarivate API key not configured")
             return SearchResult(
@@ -922,20 +946,25 @@ class ClarivateSearcher(BaseSearcher):
         
         try:
             page = 1
-            limit = 50 
+            limit = 50
+            
+            # Build search query with field tags if not present
+            search_query = self._build_query(query, year_min, year_max)
+            
+            # Map sort_by to API sortField parameter
+            sort_field = self._get_sort_field(sort_by)
             
             while len(articles) < max_results:
-                # Handle query syntax - Starter API requires field tags like TI= or TS=
-                search_query = query
-                if '=' not in query:
-                    # Default to Topic search if supported, otherwise Title
-                    search_query = f"TI=({query})" # Using TI as safer default for Starter API
-                
                 params = {
                     'q': search_query,
                     'limit': min(max_results - len(articles), limit),
-                    'page': page
+                    'page': page,
+                    'db': database,
+                    'detail': detail
                 }
+                
+                if sort_field:
+                    params['sortField'] = sort_field
                 
                 headers = {
                     'X-ApiKey': self.api_key
@@ -951,11 +980,7 @@ class ClarivateSearcher(BaseSearcher):
                 if response.status_code == 200:
                     data = response.json()
                     
-                    hits = data.get('hits', []) 
-                    # If 'hits' is empty, try 'docs' or similar if API differs
-                    if not hits and 'docs' in data:
-                        hits = data.get('docs', [])
-                    
+                    hits = data.get('hits', [])
                     meta = data.get('metadata', {})
                     total_str = meta.get('total', 0) if isinstance(meta, dict) else 0
                     total_found = int(total_str)
@@ -963,6 +988,9 @@ class ClarivateSearcher(BaseSearcher):
                     if not hits:
                         self.logger.info(f"Clarivate: No results on page {page}")
                         break
+                    
+                    if page == 1:
+                        self.logger.info(f"Clarivate: {total_found} total results found")
                         
                     for hit in hits:
                         if len(articles) >= max_results:
@@ -975,10 +1003,9 @@ class ClarivateSearcher(BaseSearcher):
                     if len(articles) >= total_found:
                         break
                     
-                    if not hits:
-                         break
-                        
                     page += 1
+                    time.sleep(0.2)  # Rate limiting
+                    
                 else:
                     self.logger.error(f"Clarivate request failed: {response.status_code} - {response.text}")
                     break
@@ -992,60 +1019,246 @@ class ClarivateSearcher(BaseSearcher):
             total_found=total_found,
             sources=[self.source_name]
         )
+    
+    def _build_query(self, query: str, year_min: Optional[int] = None, 
+                     year_max: Optional[int] = None) -> str:
+        """
+        Build WoS query with field tags and year filters.
+        
+        Field tags:
+        - TS: Topic (title, abstract, keywords)
+        - TI: Title
+        - AU: Author
+        - AI: Author Identifier (ORCID/ResearcherID)
+        - OG: Organization
+        - DO: DOI
+        - PY: Publication Year
+        - SO: Source (journal)
+        """
+        search_query = query
+        
+        # Add default field tag if not present
+        if '=' not in query:
+            # Use TS (Topic) for broader search coverage
+            search_query = f"TS=({query})"
+        
+        # Add year filter if specified
+        if year_min or year_max:
+            if year_min and year_max:
+                search_query += f" AND PY=({year_min}-{year_max})"
+            elif year_min:
+                search_query += f" AND PY=({year_min}-2030)"
+            elif year_max:
+                search_query += f" AND PY=(1900-{year_max})"
+        
+        return search_query
+    
+    def _get_sort_field(self, sort_by: str) -> Optional[str]:
+        """
+        Map sort_by parameter to WoS sortField value.
+        
+        Options:
+        - RS: Relevance Score (default)
+        - TC+D: Times Cited Descending (most cited first)
+        - PY+D: Publication Year Descending (newest first)
+        - PY+A: Publication Year Ascending (oldest first)
+        - LD+D: Load Date Descending
+        """
+        sort_map = {
+            'relevance': 'RS',
+            'citations': 'TC+D',
+            'year_desc': 'PY+D',
+            'year_asc': 'PY+A',
+            'newest': 'PY+D',
+            'oldest': 'PY+A',
+            'most_cited': 'TC+D'
+        }
+        return sort_map.get(sort_by.lower(), 'RS')
+    
+    def get_document_by_uid(self, uid: str, detail: str = "full") -> Optional[Article]:
+        """
+        Retrieve a specific document by its WoS UID (Accession Number).
+        
+        Args:
+            uid: Web of Science Accession Number (e.g., "WOS:000123456789012")
+            detail: Detail level ('full' or 'short')
+        
+        Returns:
+            Article object or None if not found.
+        """
+        if not self.is_available:
+            return None
+        
+        try:
+            url = self.DOCUMENT_URL.format(uid=uid)
+            params = {'detail': detail}
+            headers = {'X-ApiKey': self.api_key}
+            
+            response = requests.get(url, headers=headers, params=params, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                # The response should contain the document directly
+                return self._parse_hit(data)
+            else:
+                self.logger.warning(f"Failed to retrieve document {uid}: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Error retrieving document {uid}: {e}")
+            return None
 
     def _parse_hit(self, hit: Dict[str, Any]) -> Optional[Article]:
-        """Parse Clarivate API hit."""
+        """Parse Clarivate API hit with enhanced metadata."""
         try:
             title = hit.get('title', 'Untitled')
             if isinstance(title, list):
                 title = title[0] if title else 'Untitled'
             
-            # Authors
+            # Authors with identifiers
             authors_list = hit.get('names', {}).get('authors', [])
             if not authors_list:
-                 authors_list = hit.get('authors', [])
+                authors_list = hit.get('authors', [])
 
             authors = ""
+            author_ids = []
             if isinstance(authors_list, list):
-                 names = []
-                 for a in authors_list:
-                     if isinstance(a, str):
-                         names.append(a)
-                     elif isinstance(a, dict):
-                         names.append(a.get('displayName', a.get('wosStandard', '')))
-                 authors = ", ".join(names)
+                names = []
+                for a in authors_list:
+                    if isinstance(a, str):
+                        names.append(a)
+                    elif isinstance(a, dict):
+                        display_name = a.get('displayName', a.get('wosStandard', ''))
+                        names.append(display_name)
+                        
+                        # Capture author identifiers (ORCID, ResearcherID)
+                        if 'researcherId' in a:
+                            author_ids.append(f"RID:{a['researcherId']}")
+                        if 'orcid' in a:
+                            author_ids.append(f"ORCID:{a['orcid']}")
+                
+                authors = ", ".join(names)
 
-            # Pub info
+            # Publication info
             source = hit.get('source', {})
             journal = source.get('sourceTitle', '')
             if isinstance(journal, list):
                 journal = journal[0] if journal else ''
-                
+            
             year = source.get('publishYear', '')
+            volume = source.get('volume', '')
+            issue = source.get('issue', '')
+            pages = source.get('pages', {})
             
             # Identifiers
             uids = hit.get('identifiers', {})
             doi = uids.get('doi', '')
             if not doi:
-                doi = hit.get('doi', '') 
+                doi = hit.get('doi', '')
             if isinstance(doi, list):
                 doi = doi[0] if doi else ''
+            
+            pmid = uids.get('pmid', '')
+            issn = uids.get('issn', '')
+            eissn = uids.get('eissn', '')
 
-            url = hit.get('links', {}).get('record', '')
+            # Citation count
+            citations_data = hit.get('citations', [])
+            citation_count = None
+            if citations_data and isinstance(citations_data, list):
+                # Usually first element contains the count
+                citation_count = citations_data[0].get('count', 0) if citations_data[0] else 0
+            
+            # Links
+            links = hit.get('links', {})
+            url = links.get('record', '')
             if not url and doi:
-                 url = f"https://doi.org/{doi}"
+                url = f"https://doi.org/{doi}"
+            
+            # Keywords (from author keywords if available in full detail)
+            keywords = []
+            if 'keywords' in hit:
+                kw_data = hit.get('keywords', {})
+                if isinstance(kw_data, dict) and 'authorKeywords' in kw_data:
+                    keywords = kw_data.get('authorKeywords', [])[:10]
+            
+            # Build citation string
+            citation_str = journal
+            if volume:
+                citation_str += f", {volume}"
+            if issue:
+                citation_str += f"({issue})"
+            if isinstance(pages, dict):
+                page_range = pages.get('range', '')
+                if page_range:
+                    citation_str += f", {page_range}"
             
             return Article(
                 title=str(title),
                 url=url,
                 doi=str(doi) if doi else None,
-                abstract="", # Usually unavailable in starter
+                abstract="",  # Starter API doesn't include abstracts
                 authors=authors,
                 journal=str(journal),
                 year=str(year),
+                keywords=keywords,
+                citation_count=citation_count,
                 source=self.source_name,
+                is_open_access=False,  # Not provided in Starter API
                 raw_data=hit
             )
         except Exception as e:
             self.logger.debug(f"Clarivate parse error: {e}")
             return None
+    
+    def search_by_author(self, author_name: str, max_results: int = 25, 
+                         sort_by: str = "citations") -> SearchResult:
+        """
+        Search for papers by author name.
+        
+        Args:
+            author_name: Author name to search for
+            max_results: Maximum results to return
+            sort_by: Sort order (default: most cited first)
+        
+        Returns:
+            SearchResult with author's papers
+        """
+        query = f"AU=({author_name})"
+        return self.search(query, max_results=max_results, sort_by=sort_by)
+    
+    def search_by_organization(self, org_name: str, max_results: int = 25,
+                               sort_by: str = "citations") -> SearchResult:
+        """
+        Search for papers by organization/institution.
+        
+        Args:
+            org_name: Organization name to search for
+            max_results: Maximum results to return
+            sort_by: Sort order (default: most cited first)
+        
+        Returns:
+            SearchResult with organization's papers
+        """
+        query = f"OG=({org_name})"
+        return self.search(query, max_results=max_results, sort_by=sort_by)
+    
+    def search_highly_cited(self, topic: str, min_year: Optional[int] = None,
+                           max_results: int = 25) -> SearchResult:
+        """
+        Search for highly cited papers on a topic.
+        
+        Args:
+            topic: Research topic
+            min_year: Minimum publication year (optional)
+            max_results: Maximum results to return
+        
+        Returns:
+            SearchResult sorted by citation count (descending)
+        """
+        return self.search(
+            query=topic,
+            max_results=max_results,
+            year_min=min_year,
+            sort_by="citations"
+        )

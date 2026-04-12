@@ -1,0 +1,34 @@
+{
+  "articles": [
+    {
+      "title": "Urban Eco-Network Traffic Control via MARL-Based Traffic Signals and Vehicle Speed Coordination",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001593494100001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.3390/app151910586",
+      "abstract": "This study proposes a Cooperative Traffic Controller System (CTS), an urban eco-network control system that leverages Multi-Agent Reinforcement Learning (MARL), to address urban road congestion and environmental pollution. The proposed system synergizes traffic signal timing optimization and speed guidance control, simultaneously enhancing network efficiency, reducing carbon emissions, and minimizing energy consumption. A Beta-enhanced Soft Actor-Critic (SAC) algorithm is applied to achieve the joint optimization of the traffic signal phasing and vehicle speed coordination. Experimental results show that in large-scale networks, the improved SAC reduces the average delay time per vehicle by approximately one minute, reduces CO2 emissions by more than double, and reduces fuel consumption by 56%. Comparative analyses of the algorithm versus the PPO and standard SAC demonstrate its superior performance in complex traffic scenarios—specifically in congestion mitigation and emissions reduction.",
+      "authors": "Chen, Lanping, Yang, Fan, Chen, Chenyuan, Zhu, Yue, Xu, Ziyuan, Xu, Ying, Zhu, Lin",
+      "journal": "APPLIED SCIENCES-BASEL",
+      "year": "2025",
+      "keywords": [
+        "Multi-Agent Reinforcement Learning (MARL)",
+        "eco-traffic control",
+        "coordinated signal-speed optimization",
+        "intelligent transportation"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 1,
+      "references": [],
+      "analysis": null
+    }
+  ],
+  "metadata": {
+    "query": "TS=(co2 AND mitigation AND scenario AND (machine learning OR agent based))",
+    "total_found": 1,
+    "sources": [
+      "Web of Science"
+    ],
+    "exported_count": 1,
+    "export_time": "2026-02-17T11:20:42.018337",
+    "articles_with_abstracts": 1
+  }
+}

@@ -4,7 +4,10 @@ A modular, extensible Python package for searching academic literature across mu
 
 ## Features
 
-- 🔍 **Multi-Source Search**: Search OpenAlex, Semantic Scholar, ArXiv, ScienceDirect, Scopus, and Google Scholar (via Serper)
+- 🔍 **Multi-Source Search**: Search OpenAlex, Semantic Scholar, ArXiv, ScienceDirect, Scopus, **Web of Science (Clarivate)**, and Google Scholar (via Serper)
+- 📊 **Advanced Sorting**: Sort by citations, publication year, or relevance (Clarivate)
+- 🎯 **Field-Specific Search**: Search by title, author, organization, or topic (Clarivate)
+- 📚 **Multiple Databases**: Access WOS, BIOABS, MEDLINE (Clarivate)
 - 📝 **Abstract Enrichment**: Fetch missing abstracts from CrossRef, Semantic Scholar
 - 🏷️ **Topic Extraction**: Automatic keyword and topic extraction
 - 🤖 **LLM Analysis Ready**: Extension point for AI-powered abstract analysis
@@ -53,6 +56,25 @@ engine = create_engine(elsevier_api_key="your-api-key")
 results = engine.search("deep learning", max_results=50)
 ```
 
+### With Clarivate Web of Science
+
+```python
+from academic_search import create_engine
+
+# With Clarivate API key
+engine = create_engine(clarivate_api_key="your-api-key")
+
+# Or set environment variable
+# export CLARIVATE_API_KEY=your-api-key
+
+# Search with sorting by citations
+results = engine.search("machine learning", max_results=25, providers=["Web of Science"])
+
+# Access citation counts
+for article in results.articles:
+    print(f"{article.title} - Citations: {article.citation_count}")
+```
+
 ### Full Configuration
 
 ```python
@@ -66,12 +88,15 @@ config = Config(
     llm_api_key="sk-...",
 )
 config.api.elsevier_api_key = "your-elsevier-key"
+config.api.clarivate_api_key = "your-clarivate-key"
 
 engine = AcademicSearchEngine(config)
 results = engine.search("quantum computing")
 ```
 
 ## CLI Usage
+
+### Basic Commands
 
 ```bash
 # Basic search
@@ -84,7 +109,7 @@ python -m academic_search.search_cli "climate change" -o results.md -f markdown
 python -m academic_search.search_cli "neural networks" --analyze --topics
 
 # Search all sources
-python -m academic_search.search_cli "renewable energy" --all-sources --enrich
+python -m academic_search.search_cli "renewable energy" --enrich
 
 # With API key
 python -m academic_search.search_cli "batteries" --elsevier-key YOUR_KEY
@@ -93,6 +118,39 @@ python -m academic_search.search_cli "batteries" --elsevier-key YOUR_KEY
 python -m academic_search.search_cli "AI safety" --providers google arxiv
 ```
 
+### Clarivate Web of Science Features
+
+```bash
+# Find most cited papers
+python -m academic_search.search_cli "deep learning" \
+    --sort-by citations \
+    --max-results 10 \
+    --providers "Web of Science"
+
+# Search by title only
+python -m academic_search.search_cli "climate change" \
+    --field-tag TI \
+    --year-min 2020
+
+# Search MEDLINE database
+python -m academic_search.search_cli "cancer treatment" \
+    --database MEDLINE \
+    --sort-by year_desc
+
+# Search by author
+python -m academic_search.search_cli "Einstein A*" \
+    --field-tag AU \
+    --sort-by citations
+
+# Search by organization
+python -m academic_search.search_cli "MIT" \
+    --field-tag OG \
+    --sort-by citations \
+    --max-results 20
+```
+
+**See full CLI documentation**: [docs/CLI_CLARIVATE_USAGE.md](docs/CLI_CLARIVATE_USAGE.md)
+
 ## Helper Tools
 
 ### Bulk Open URLs (`open_urls.py`)
@@ -100,6 +158,7 @@ python -m academic_search.search_cli "AI safety" --providers google arxiv
 A utility script is located in the `results/` directory to help you quickly open all article URLs from a generated Markdown report.
 
 **Features:**
+
 - AUTOMATICALLY finds the `.md` report in your target subfolder.
 - OPENS unique URLs in your default browser.
 - **BATCH PROCESSING**: Opens URLs in batches (default: 50) to prevent browser memory issues.
@@ -116,6 +175,7 @@ python3 open_urls.py <subfolder_name> [batch_size]
 ```
 
 **Example:**
+
 ```bash
 # Open URLs from a specific report in batches of 50 (default)
 python3 open_urls.py agent_based_learning_co2_emission_20260204_152644
@@ -214,8 +274,6 @@ engine.export(results, "references.bib")
 # Ready to use with LaTeX
 ```
 
-
-
 ## LLM-Based Analysis
 
 The package includes an extension point for LLM-based abstract analysis:
@@ -287,13 +345,13 @@ class MyDatabaseSearcher(BaseSearcher):
     @property
     def source_name(self) -> str:
         return "MyDatabase"
-    
+
     def search(self, query: str, max_results: int = 25) -> SearchResult:
         # Implement your search logic
         articles = []
-        
+
         # ... fetch from your database ...
-        
+
         for item in raw_results:
             articles.append(Article(
                 title=item["title"],
@@ -304,7 +362,7 @@ class MyDatabaseSearcher(BaseSearcher):
                 url=item["url"],
                 source=self.source_name
             ))
-        
+
         return SearchResult(
             query=query,
             articles=articles,
@@ -325,7 +383,7 @@ class MyEnricher(BaseAbstractEnricher):
     @property
     def source_name(self) -> str:
         return "MyEnricher"
-    
+
     def get_abstract(self, article: Article) -> str | None:
         # Fetch abstract using DOI, title, etc.
         if article.doi:
@@ -346,7 +404,7 @@ class SentimentAnalyzer(BaseAnalyzer):
     @property
     def analyzer_name(self) -> str:
         return "SentimentAnalyzer"
-    
+
     def analyze(self, article: Article) -> dict:
         # Analyze article sentiment, research direction, etc.
         return {
@@ -366,11 +424,11 @@ class XMLExporter(BaseExporter):
     @property
     def format_name(self) -> str:
         return "XML"
-    
+
     @property
     def file_extension(self) -> str:
         return "xml"
-    
+
     def export(self, result: SearchResult, filepath: str) -> str:
         # Generate XML
         filepath = self._ensure_extension(filepath)
@@ -422,7 +480,7 @@ config = Config(
     debug=False,
     max_results=25,
     timeout=30,
-    
+
     # LLM settings
     enable_llm_analysis=False,
     llm_provider=None,  # "openai" or "anthropic"
@@ -482,8 +540,8 @@ engine = AcademicSearchEngine(config)
 
 # Search
 results = engine.search(
-    query, 
-    max_results=25, 
+    query,
+    max_results=25,
     use_all_sources=False,
     year_min=2020,
     year_max=2024

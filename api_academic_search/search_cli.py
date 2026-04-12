@@ -8,6 +8,11 @@ Usage:
     python search_cli.py "machine learning healthcare" --max-results 50
     python search_cli.py "deep learning" --format markdown --output results.md
     python search_cli.py "quantum computing" --analyze --topics
+    
+Clarivate Web of Science:
+    python search_cli.py "machine learning" --sort-by citations --max-results 10
+    python search_cli.py "climate change" --field-tag TI --year-min 2020
+    python search_cli.py "cancer treatment" --database MEDLINE --sort-by year_desc
 
 For help:
     python search_cli.py --help
@@ -16,6 +21,7 @@ For help:
 import argparse
 import sys
 import os
+import re
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -29,10 +35,18 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s "machine learning" --max-results 25
-  %(prog)s "climate change" --format markdown --output results.md
-  %(prog)s "neural networks" --analyze --topics
-  %(prog)s "renewable energy" --all-sources --enrich
+  Basic search:
+    %(prog)s "machine learning" --max-results 25
+    %(prog)s "climate change" --format markdown --output results.md
+    %(prog)s "neural networks" --analyze --topics
+    %(prog)s "renewable energy" --use-single-source --enrich
+  
+  Clarivate Web of Science features:
+    %(prog)s "deep learning" --sort-by citations --max-results 10
+    %(prog)s "quantum computing" --field-tag TI --year-min 2020
+    %(prog)s "cancer treatment" --database MEDLINE --sort-by year_desc
+    %(prog)s "AU=(Einstein A*)" --providers "Web of Science" --sort-by citations
+    %(prog)s "OG=(MIT)" --sort-by citations --max-results 20
         """
     )
     
@@ -105,6 +119,29 @@ Examples:
         "--elsevier-key",
         help="Elsevier/Scopus API key (or set ELSEVIER_API_KEY env var)"
     )
+    parser.add_argument(
+        "--clarivate-key",
+        help="Clarivate Web of Science API key (or set CLARIVATE_API_KEY env var)"
+    )
+    
+    # Clarivate-specific options
+    parser.add_argument(
+        "--sort-by",
+        choices=["relevance", "citations", "most_cited", "year_desc", "year_asc", "newest", "oldest"],
+        default="relevance",
+        help="Sort order for results (default: relevance). 'citations' for most cited first."
+    )
+    parser.add_argument(
+        "--database",
+        choices=["WOS", "BIOABS", "MEDLINE"],
+        default="WOS",
+        help="Database to search (Clarivate only). WOS=Web of Science, BIOABS=Biological Abstracts, MEDLINE=Medical literature"
+    )
+    parser.add_argument(
+        "--field-tag",
+        choices=["TS", "TI", "AU", "OG", "SO"],
+        help="Field tag for query (Clarivate). TS=Topic, TI=Title, AU=Author, OG=Organization, SO=Source/Journal"
+    )
     
     # LLM options
     parser.add_argument(
@@ -136,9 +173,17 @@ Examples:
     
     args = parser.parse_args()
     
+    # Build query with field tag if specified
+    query = args.query
+    if args.field_tag:
+        # Wrap query with field tag if not already present
+        if '=' not in query:
+            query = f"{args.field_tag}=({query})"
+    
     # Create engine
     engine = create_engine(
         elsevier_api_key=args.elsevier_key,
+        clarivate_api_key=args.clarivate_key,
         enable_llm=args.llm,
         llm_provider=args.llm_provider,
         llm_api_key=args.llm_key,
@@ -147,21 +192,50 @@ Examples:
     
     if args.verbose:
         print(f"Available sources: {engine.available_sources}")
-        print(f"Searching for: '{args.query}'")
+        print(f"Searching for: '{query}'")
+        if args.field_tag:
+            print(f"Field tag: {args.field_tag}")
+        if args.sort_by != "relevance":
+            print(f"Sort by: {args.sort_by}")
+        if args.database != "WOS":
+            print(f"Database: {args.database}")
         print()
     
-    # Search
+    # Search with Clarivate-specific parameters
+    # Check if we're using Clarivate provider
+    using_clarivate = (
+        args.providers and any("web of science" in p.lower() or "clarivate" in p.lower() for p in args.providers)
+    ) or (
+        not args.providers and args.clarivate_key  # Clarivate available and no specific providers
+    )
+    
     # Fetch a buffer (4x) to account for filtering losses
     search_limit = args.max_results * 4
     
-    results = engine.search(
-        args.query,
-        max_results=search_limit,
-        use_all_sources=not args.use_single_source, # Default to True
-        year_min=args.year_min,
-        year_max=args.year_max,
-        providers=args.providers
-    )
+    # If using Clarivate with specific features, use direct searcher
+    if using_clarivate and (args.sort_by != "relevance" or args.database != "WOS"):
+        from api_academic_search.providers import ClarivateSearcher
+        from api_academic_search.config import Config
+        
+        searcher = ClarivateSearcher(Config())
+        results = searcher.search(
+            query,
+            max_results=search_limit,
+            year_min=args.year_min,
+            year_max=args.year_max,
+            sort_by=args.sort_by,
+            database=args.database
+        )
+    else:
+        # Standard search through engine
+        results = engine.search(
+            query,
+            max_results=search_limit,
+            use_all_sources=not args.use_single_source,
+            year_min=args.year_min,
+            year_max=args.year_max,
+            providers=args.providers
+        )
     
     if args.verbose:
         print(f"Found {results.total_found:,} total results")
@@ -176,10 +250,28 @@ Examples:
     # Filter by content Relevance
     # (The user specifically asked to "read abstract for search accuracy")
     original_count = len(results.articles)
-    filtered_articles = [a for a in results.articles if a.matches_query(args.query)]
     
-    if len(filtered_articles) < original_count:
+    # Extract filter terms: if query has field tags, extract what's inside the tags
+    filter_query = args.query
+    if '(' in filter_query and ')' in filter_query:
+        # Simple extraction of terms inside any parentheses
+        terms_in_tags = re.findall(r'\((.*?)\)', filter_query)
+        if terms_in_tags:
+            # Join all extracted parts and remove boolean operators
+            filter_query = ' '.join(terms_in_tags)
+            filter_query = re.sub(r'\b(AND|OR|NOT)\b', ' ', filter_query, flags=re.IGNORECASE)
+    
+    filtered_articles = [a for a in results.articles if a.matches_query(filter_query)]
+    
+    if len(filtered_articles) < original_count and args.verbose:
         print(f"Filtered {original_count - len(filtered_articles)} articles with low relevance (missing query terms)")
+
+    # If filtering was too aggressive (resulted in 0), fall back to original results
+    # but only for specialized providers like Clarivate where the API already filtered
+    if not filtered_articles and original_count > 0 and using_clarivate:
+        if args.verbose:
+            print("Post-filtering returned 0 results for Clarivate search. Falling back to API results as they are already pre-filtered.")
+        filtered_articles = results.articles
 
     # Truncate to requested max_results
     if len(filtered_articles) > args.max_results:
@@ -219,7 +311,6 @@ Examples:
     else:
         # Default: Save to api_academic_search/results/query_timestamp/
         from datetime import datetime
-        import re
         
         # Get results directory
         base_dir = os.path.dirname(os.path.abspath(__file__))

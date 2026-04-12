@@ -5,6 +5,9 @@ Description:
     It is useful when you have a folder containing search results (like 'api_academic_search/results/some_search_folder')
     and you want to quickly open all the source URLs in your browser.
     
+    DOI URLs (https://doi.org/...) are preferred over other URLs (e.g. Web of Science gateway links),
+    since DOI links are universal and don't require authentication.
+    
     To avoid browser memory issues with large numbers of tabs, this script processes URLs in batches (default: 50).
     It will pause after each batch and wait for user confirmation before proceeding.
 
@@ -17,7 +20,7 @@ Example:
 
 How it works:
     1. Looks for the first .md file in the provided directory.
-    2. Scans for lines formatted as `**URL:** [link](url)`.
+    2. Extracts DOI URLs (preferred) and regular URLs as fallback.
     3. Opens unique URLs in batches, pausing for user input between batches.
 """
 
@@ -26,6 +29,44 @@ import re
 import webbrowser
 import time
 import sys
+
+def extract_urls_from_md(content):
+    """
+    Extract URLs from markdown, preferring DOI URLs over regular URLs.
+    
+    For each article block, we prefer the DOI link (https://doi.org/...) 
+    over the **URL:** link (which may be a WoS gateway requiring auth).
+    """
+    # Split content into article blocks (each starts with ### followed by number)
+    blocks = re.split(r'(?=^### \d+\.)', content, flags=re.MULTILINE)
+    
+    urls = []
+    for block in blocks:
+        # Try to extract DOI URL first
+        doi_match = re.search(r'\*\*DOI:\*\* \[.*?\]\((https://doi\.org/[^\)]+)\)', block)
+        url_match = re.search(r'\*\*URL:\*\* \[.*?\]\((.*?)\)', block)
+        
+        if doi_match:
+            urls.append(doi_match.group(1))
+        elif url_match:
+            url = url_match.group(1)
+            urls.append(url)
+    
+    # If no article blocks found, fall back to extracting all DOI and URL lines
+    if not urls:
+        # First collect all DOI URLs
+        doi_urls = re.findall(r'\*\*DOI:\*\* \[.*?\]\((https://doi\.org/[^\)]+)\)', content)
+        # Then collect all regular URLs
+        all_urls = re.findall(r'\*\*URL:\*\* \[.*?\]\((.*?)\)', content)
+        
+        if doi_urls:
+            urls = doi_urls
+        elif all_urls:
+            urls = all_urls
+    
+    # Remove duplicates while preserving order
+    return list(dict.fromkeys(urls))
+
 
 def open_urls_in_md(directory, batch_size=50):
     # Check if directory exists
@@ -48,19 +89,18 @@ def open_urls_in_md(directory, batch_size=50):
     with open(file_path, "r", encoding="utf-8") as f:
         content = f.read()
 
-    # Extract URLs from **URL:** lines
-    # Format: **URL:** [link text](actual_url)
-    urls = re.findall(r"\*\*URL:\*\* \[.*?\]\((.*?)\)", content)
-    
-    # Remove duplicates while preserving order
-    unique_urls = list(dict.fromkeys(urls))
+    # Extract URLs preferring DOI links
+    unique_urls = extract_urls_from_md(content)
     total_urls = len(unique_urls)
+    
+    # Count how many are DOI urls
+    doi_count = sum(1 for u in unique_urls if 'doi.org' in u)
 
     if not unique_urls:
         print("No URLs found.")
         return
 
-    print(f"Found {total_urls} unique URLs.")
+    print(f"Found {total_urls} unique URLs ({doi_count} DOI links, {total_urls - doi_count} other).")
     
     # Process in batches
     for i in range(0, total_urls, batch_size):

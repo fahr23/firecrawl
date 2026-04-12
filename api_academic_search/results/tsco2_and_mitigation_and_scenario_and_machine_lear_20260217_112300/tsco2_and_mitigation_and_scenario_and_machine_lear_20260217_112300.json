@@ -1,0 +1,336 @@
+{
+  "articles": [
+    {
+      "title": "The need for carbon-emissions-driven climate projections in CMIP7",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001357786400001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.5194/gmd-17-8141-2024",
+      "abstract": "Abstract. Previous phases of the Coupled Model Intercomparison Project (CMIP) have primarily focused on simulations driven by atmospheric concentrations of greenhouse gases (GHGs), for both idealized model experiments and climate projections of different emissions scenarios. We argue that although this approach was practical to allow parallel development of Earth system model simulations and detailed socioeconomic futures, carbon cycle uncertainty as represented by diverse, process-resolving Earth system models (ESMs) is not manifested in the scenario outcomes, thus omitting a dominant source of uncertainty in meeting the Paris Agreement. Mitigation policy is defined in terms of human activity (including emissions), with strategies varying in their timing of net-zero emissions, the balance of mitigation effort between short-lived and long-lived climate forcers, their reliance on land use strategy, and the extent and timing of carbon removals. To explore the response to these drivers, ESMs need to explicitly represent complete cycles of major GHGs, including natural processes and anthropogenic influences. Carbon removal and sequestration strategies, which rely on proposed human management of natural systems, are currently calculated in integrated assessment models (IAMs) during scenario development with only the net carbon emissions passed to the ESM. However, proper accounting of the coupled system impacts of and feedback on such interventions requires explicit process representation in ESMs to build self-consistent physical representations of their potential effectiveness and risks under climate change. We propose that CMIP7 efforts prioritize simulations driven by CO2 emissions from fossil fuel use and projected deployment of carbon dioxide removal technologies, as well as land use and management, using the process resolution allowed by state-of-the-art ESMs to resolve carbon–climate feedbacks. Post-CMIP7 ambitions should aim to incorporate modeling of non-CO2 GHGs (in particular, sources and sinks of methane and nitrous oxide) and process-based representation of carbon removal options. These developments will allow three primary benefits: (1) resources to be allocated to policy-relevant climate projections and better real-time information related to the detectability and verification of emissions reductions and their relationship to expected near-term climate impacts, (2) scenario modeling of the range of possible future climate states including Earth system processes and feedbacks that are increasingly well-represented in ESMs, and (3) optimal utilization of the strengths of ESMs in the wider context of climate modeling infrastructure (which includes simple climate models, machine learning approaches and kilometer-scale climate models).",
+      "authors": "Sanderson, Benjamin M., Booth, Ben B. B., Dunne, John, Eyring, Veronika, Fisher, Rosie A., Friedlingstein, Pierre, Gidden, Matthew J., Hajima, Tomohiro, Jones, Chris D., Jones, Colin G., King, Andrew, Koven, Charles D., Lawrence, David M., Lowe, Jason, Mengis, Nadine, Peters, Glen P., Rogelj, Joeri, Smith, Chris, Snyder, Abigail C., Simpson, Isla R., Swann, Abigail L. S., Tebaldi, Claudia, Ilyina, Tatiana, Schleussner, Carl-Friedrich, Seferian, Roland, Samset, Bjorn H., van Vuuren, Detlef, Zaehle, Soenke",
+      "journal": "GEOSCIENTIFIC MODEL DEVELOPMENT",
+      "year": "2024",
+      "keywords": [],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 29,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Local sources of global climate forcing from different categories of land use activities",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000360804800001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.5194/esd-6-175-2015",
+      "abstract": "Abstract. Identifying and quantifying the sources of climate impacts from land use and land cover change (LULCC) is necessary to optimize policies regarding LULCC for climate change mitigation. These climate impacts are typically defined relative to emissions of CO2, or sometimes emissions of other long-lived greenhouse gases. Here we use previously published estimates of the radiative forcing (RF) of LULCC that include the short-lived forcing agents O3 and aerosols, in addition to long-lived greenhouse gases and land albedo change, for six projections of LULCC as a metric for quantifying climate impacts. The LULCC RF is attributed to three categories of LULCC activities: direct modifications to land cover, agriculture, and wildfire response, and sources of the forcing are ascribed to individual grid points for each sector. Results for the year 2010 show substantial positive forcings from the direct modifications and agriculture sectors, particularly from south and southeast Asia, and a smaller magnitude negative forcing response from wildfires. The spatial distribution of future sources of LULCC RF is highly scenario-dependent, but we show that future forest area change can be used as a predictor of the future RF from direct modification activities, especially in the tropics, suggesting that deforestation-prevention policies that value land based on its C-content may be particularly effective at mitigating climate forcing originating in the tropics from this sector. However, the response of wildfire RF to tropical land cover changes is not as easily scalable and yet imposes a non-trivial feedback onto the total LULCC RF.",
+      "authors": "Ward, D. S., Mahowald, N. M.",
+      "journal": "EARTH SYSTEM DYNAMICS",
+      "year": "2015",
+      "keywords": [],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 12,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "AERA-MIP: emission pathways, remaining budgets, and carbon cycle dynamics compatible with 1.5 and 2 °C global warming stabilization",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001379030400001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.5194/esd-15-1591-2024",
+      "abstract": "Abstract. While international climate policies now focus on limiting global warming to well below 2 °C or pursuing a 1.5 °C level of global warming, the climate modelling community has not provided an experimental design in which all Earth system models (ESMs) converge and stabilize at the same prescribed global warming levels. This gap hampers accurate estimations based on comprehensive ESMs of the carbon emission pathways and budgets needed to meet such agreed warming levels and of the associated climate impacts under temperature stabilization. Here, we apply the Adaptive Emission Reduction Approach (AERA) with ESMs to provide such simulations in which all models converge at 1.5 and 2.0 °C warming levels by adjusting their emissions over time. These emission-driven simulations provide a wide range of emission pathways and resulting atmospheric CO2 projections for a given warming level, uncovering uncertainty ranges that were previously missing in the traditional Coupled Model Intercomparison Project (CMIP) scenarios with prescribed greenhouse gas concentration pathways. Meeting the 1.5 °C warming level requires a 40 % (full model range: 7 % to 76 %) reduction in multi-model mean CO2-forcing-equivalent (CO2-fe) emissions from 2025 to 2030, a 98 % (57 % to 127 %) reduction from 2025 to 2050, and a stabilization at 1.0 (−1.7 to 2.9) PgC yr−1 from 2100 onward after the 1.5 °C global warming level is reached. Meeting the 2.0 °C warming level requires a 47 % (8 % to 92 %) reduction in multi-model mean CO2-fe emissions until 2050 and a stabilization at 1.7 (−1.5 to 2.7) PgC yr−1 from 2100 onward. The on-average positive emissions under stabilized global temperatures are the result of a decreasing transient climate response to cumulative CO2-fe emissions over time under stabilized global warming. This evolution is consistent with a slightly negative zero emissions commitment – initially assumed to be zero – and leads to an increase in the post-2025 CO2-fe emission budget by a factor of 2.2 (−0.8 to 6.9) by 2150 for the 1.5 °C warming level and a factor of 1.4 (0.9 to 2.4) for the 2.0 °C warming level compared to its first estimate in 2025. The median CO2-only carbon budget by 2150, relative to 2020, is 800 GtCO2 for the 1.5 °C warming level and 2250 GtCO2 for the 2.0 °C warming level. These median values exceed the median IPCC AR6 estimates by 60 % for the 1.5 °C warming level and 67 % for 2.0 °C. Some of the differences may be explained by the choice of the mitigation scenario for non-CO2 radiative agents. Our simulations highlight shifts in carbon uptake dynamics under stabilized temperature, such as a cessation of the carbon sinks in the North Atlantic and in tropical forests. On the other hand, the Southern Ocean remains a carbon sink centuries after temperatures stabilize. Overall, this new type of warming-level-based emission-driven simulation offers a more coherent assessment across climate models and opens up a wide range of possibilities for studying both the carbon cycle and climate impacts, such as extreme events, under climate stabilization.\n",
+      "authors": "Silvy, Yona, Froelicher, Thomas L., Terhaar, Jens, Joos, Fortunat, Burger, Friedrich A., Lacroix, Fabrice, Allen, Myles, Bernardello, Raffaele, Bopp, Laurent, Brovkin, Victor, Buzan, Jonathan R., Cadule, Patricia, Dix, Martin, Dunne, John, Friedlingstein, Pierre, Georgievski, Goran, Hajima, Tomohiro, Jenkins, Stuart, Kawamiya, Michio, Kiang, Nancy Y., Lapin, Vladimir, Lee, Donghyun, Lerner, Paul, Mengis, Nadine, Monteiro, Estela A., Paynter, David, Peters, Glen P., Romanou, Anastasia, Schwinger, Jorg, Sparrow, Sarah, Stofferahn, Eric, Tjiputra, Jerry, Tourigny, Etienne, Ziehn, Tilo",
+      "journal": "EARTH SYSTEM DYNAMICS",
+      "year": "2024",
+      "keywords": [],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 12,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "A collaborative predictive multi-agent system for forecasting carbon emissions related to energy consumption",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000644441500003&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.3233/MGS-210342",
+      "abstract": "Energy production and consumption are one of the largest sources of greenhouse gases (GHG), along with industry, and is one of the highest causes of global warming. Forecasting the environmental cost of energy production is necessary for better decision making and easing the switch to cleaner energy systems in order to reduce air pollution. This paper describes a hybrid approach based on Artificial Neural Networks (ANN) and an agent-based architecture for forecasting carbon dioxide (CO2) issued from different energy sources in the city of Annaba using real data. The system consists of multiple autonomous agents, divided into two types: firstly, forecasting agents, which forecast the production of a particular type of energy using the ANN models; secondly, core agents that perform other essential functionalities such as calculating the equivalent CO2 emissions and controlling the simulation. The development is based on Algerian gas and electricity data provided by the national energy company. The simulation consists firstly of forecasting energy production using the forecasting agents and calculating the equivalent emitted CO2. Secondly, a dedicated agent calculates the total CO2 emitted from all the available sources. It then computes the benefits of using renewable energy sources as an alternative way to meet the electric load in terms of emission mitigation and economizing natural gas consumption. The forecasting models showed satisfying results, and the simulation scenario showed that using renewable energy can help reduce the emissions by 369 tons of CO2 (3%) per day.",
+      "authors": "Bouziane, Seif Eddine, Khadir, Mohamed Tarek, Dugdale, Julie",
+      "journal": "MULTIAGENT AND GRID SYSTEMS",
+      "year": "2021",
+      "keywords": [
+        "Neural networks",
+        "agent-based architecture",
+        "short-term forecasting",
+        "carbon dioxide",
+        "renewable energy"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 9,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "On the Use of Biofuels for Cleaner Cities: Assessing Vehicular Pollution through Digital Twins and Machine Learning Algorithms",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001153004300001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.3390/su16020708",
+      "abstract": "The air pollution caused by greenhouse gas emissions, particularly carbon dioxide (CO2), is a significant environmental concern that impacts air quality and contributes to global warming. The transportation sector plays a pivotal role in this issue, being a major contributor to CO2 emissions. In light of this situation, this article proposes a methodology that utilizes a supervised learning algorithm to estimate CO2 emissions and compare vehicles fueled with ethanol and gasoline. Additionally, the solution adopts an online, unsupervised machine learning algorithm to identify data outliers and improve the confidence in the results. Furthermore, this work incorporates the concept of digital twins, using virtual models of vehicles to carry out more extensive pollution simulations and allowing the simulation of various types of vehicles and the modeling of realistic traffic scenarios. A supervised machine learning approach was adopted to infer emission data in the model, allowing more comprehensive and meaningful comparisons between real-world and simulated measurements. The performed analyses of pollution emissions for different speeds and sections of routes demonstrate that CO2 emissions from ethanol were significantly lower than those from gasoline, favoring more sustainable fuels even in combustion engine vehicles. Adopting cleaner fuels is perceived as crucial to mitigate the negative effects of climate change, with plant-based fuels like ethanol being crucial during the transition from fossil fuels to a more sustainable vehicular landscape.",
+      "authors": "Andrade, Matheus, Medeiros, Morsinaldo, Medeiros, Thais, Azevedo, Mariana, Silva, Marianne, Costa, Daniel G., Silva, Ivanovitch",
+      "journal": "SUSTAINABILITY",
+      "year": "2024",
+      "keywords": [
+        "machine learning",
+        "CO2 emissions",
+        "vehicular pollution",
+        "digital twins",
+        "climate change mitigation",
+        "smart cities"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 6,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Comparison of machine learning systems trained to detect Alfven eigenmodes using the CO<sub>2</sub> interferometer on DIII-D",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001093797200001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.1088/1741-4326/acfe8b",
+      "abstract": "Abstract\n               A Machine-Learning (ML) based detection scheme that automatically detects Alfvén Eigenmodes (AE) in a labelled DIII-D database is presented here. Controlling AEs is important for the success of planned burning plasma devices such as ITER, since resonant fast ions can drive AEs unstable and degrade the performance of the plasma or damage the first walls of the machine vessel. Artificial Intelligence could be useful for real-time detection and control of AEs in steady-state plasma scenarios by implementing ML-based models into control algorithms that drive actuators for mitigation of AE impacts. Thus, the objective is to compare differences in performance between using two different recurrent neural network systems (Reservoir Computing Network and Long Short Term Memory Network) and two different representations of the \n                     \n                     \n                        \n                           \n                              C\n                              \n                                 O\n                                 2\n                              \n                           \n                        \n                     \n                   phase data (simple and crosspower spectrograms). All \n                     \n                     \n                        \n                           \n                              C\n                              \n                                 O\n                                 2\n                              \n                           \n                        \n                     \n                   interferometer chords are used to train both models, but only one is processed during each training step. The results from the model and data comparison show higher performance for the RCN model (True Positive Rate = 90% and False Positive Rate = 14%), and that using simple magnitude spectrograms is sufficient to detect AEs. Also, the vertical \n                     \n                     \n                        \n                           \n                              C\n                              \n                                 O\n                                 2\n                              \n                           \n                        \n                     \n                   interferometer chord passing near the center is better for ML-based detection of AEs.",
+      "authors": "Garcia, Alvin V., Jalalvand, Azarakhsh, Steiner, Peter, Rothstein, Andy, Van Zeeland, Michael, Heidbrink, William W., Kolemen, Egemen",
+      "journal": "NUCLEAR FUSION",
+      "year": "2023",
+      "keywords": [
+        "fast-ion physics",
+        "machine learning",
+        "Alfven eigenmodes",
+        "CO2 interferometer",
+        "DIII-D"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 6,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Exploration of Urban Emission Mitigation Pathway under the Carbon Neutrality Target: A Case Study of Beijing, China",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000881584200001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.3390/su142114016",
+      "abstract": "Exploring the urban carbon neutrality pathway is crucial to the overall achievement of the net-zero emissions target in China. Therefore, taking Beijing as a case study, this paper firstly analyzes the CO2 emission drivers by combining the Stochastic Impacts by Regression on Population, Affluence, and Technology (STIRPAT) and partial least squares (PLS) methods. Subsequently, based on the optimized extreme learning machine (ELM) model, this paper projects the CO2 emissions of Beijing during 2021–2060 under different scenarios. The results show that controlling the total energy consumption and increasing the proportion of non-fossil energy consumption and electrification level should be the key measures to implement emission reduction in Beijing. Particularly, the proportion of non-fossil energy consumption and electrification level should be increased to 65% and 73%, respectively, in 2060. In addition, more stringent emission reduction policies need to be implemented to achieve the carbon neutrality target. Under the H−EPS scenario, Beijing’s CO2 emissions peaked in 2010 and will be reduced by a cumulative 109 MtCO2 during 2021–2060. Along with executing emission mitigation policies, Beijing should actively increase carbon sinks and develop carbon capture, utilization, and storage (CCUS) technology. Especially after 2040, the emission reduction produced by carbon sinks and CCUS technology should be no less than 20 MtCO2 per year.",
+      "authors": "Jiang, Zheng, Zhang, Shuohua, Li, Wei",
+      "journal": "SUSTAINABILITY",
+      "year": "2022",
+      "keywords": [
+        "carbon neutrality",
+        "driving factors",
+        "emission mitigation pathway",
+        "electrification",
+        "Beijing"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 6,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Estimating Carbon Sink Strength of Norway Spruce Forests Using Machine Learning",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000875187600001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.3390/f13101721",
+      "abstract": "Forests sequester atmospheric carbon dioxide (CO2) which is important for climate mitigation. Net ecosystem production (NEP) varies significantly across forests in different regions depending on the dominant tree species, stand age, and environmental factors. Therefore, it is important to evaluate forest NEP and its potential changes under climate change in different regions to inform forestry policy making. Norway spruce (Picea abies) is the most prevalent species in conifer forests throughout Europe. Here, we focused on Norway spruce forests and used eddy covariance-based observations of CO2 fluxes and other variables from eight sites to build a XGBoost machine learning model for NEP estimation. The NEP values from the study sites varied between −296 (source) and 1253 (sink) g C m−2 yr−1. Overall, among the tested variables, air temperature was the most important factor driving NEP variations, followed by global radiation and stand age, while precipitation had a very limited contribution to the model. The model was used to predict the NEP of mature Norway spruce forests in different regions within Europe. The NEP median value was 494 g C m−2 yr−1 across the study areas, with higher NEP values, up to &gt;800 g C m−2 yr−1, in lower latitude regions. Under the “middle-of-the-road” SSP2-4.5 scenario, the NEP values tended to be greater in almost all the studied regions by 2060 with the estimated median of NEP changes in 2041–2060 to be +45 g C m−2 yr−1. Our results indicate that Norway spruce forests show high productivity in a wide area of Europe with potentially future NEP enhancement. However, due to the limitations of the data, the potential decrease in NEP induced by temperature increases beyond the photosynthesis optima and frequent ecosystem disturbances (e.g., drought, bark beetle infestation, etc.) still needs to be evaluated.",
+      "authors": "Zhao, Junbin, Lange, Holger, Meissner, Helge",
+      "journal": "FORESTS",
+      "year": "2022",
+      "keywords": [
+        "carbon balance",
+        "forest stand age",
+        "net ecosystem exchange",
+        "XGBoost",
+        "climate change",
+        "eddy covariance"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 5,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Understanding Farmer Behaviour for Successful Climate Change Mitigation in Voluntary Initiatives",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001548469100001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.1111/1467-8489.70046",
+      "abstract": "ABSTRACTPrivate and voluntary initiatives, such as voluntary carbon markets, can support public policies aimed at reducing greenhouse gas (GHG) emissions in agriculture. This study investigates the impact of behavioural factors (reluctance to change) and social dynamics (peer imitation) on the adoption of two mitigation practices on Swiss dairy and beef farms: the use of the feed additive 3‐nitrooxypropanol (3‐NOP), the commercial product Bovaer and substituting concentrate feeds with on‐farm cultivated legumes. Using a bio‐economic agent‐based model and a diverse sample of farms, we simulated outcomes for reducing GHG emissions under increasing levels of financial compensation in scenarios reflecting behavioural and social influences. The results show that, assuming profit‐maximising behaviour, emissions could be reduced by up to 24% at a price of 150 CHF per tonne of CO2‐equivalent. However, when farmers' reluctance to change is considered, the mitigation potential decreases significantly. Introducing social network effects, such as peer imitation, improves outcomes, increasing the potential reduction and showing that social influence can help overcome behavioural resistance. These findings suggest that, although private and voluntary schemes offer meaningful potential for reducing agricultural emissions, their effectiveness is limited when real‐world behavioural dynamics are considered. The study highlights the importance of aligning voluntary market mechanisms with supportive public policies to maximise GHG reductions.",
+      "authors": "Tarruella, Marta, Huber, Robert, El Benni, Nadja, Mack, Gabriele, Schaefer, David, Finger, Robert",
+      "journal": "AUSTRALIAN JOURNAL OF AGRICULTURAL AND RESOURCE ECONOMICS",
+      "year": "2025",
+      "keywords": [
+        "3-NOP",
+        "agricultural GHG emissions",
+        "agricultural voluntary initiatives and public policy",
+        "climate change mitigation",
+        "peer imitation",
+        "reluctance to change"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 3,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Estimation of CO<sub>2</sub> Emissions in Transportation Systems Using Artificial Neural Networks, Machine Learning, and Deep Learning: A Comprehensive Approach",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001454416400001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.3390/systems13030194",
+      "abstract": "This study focuses on estimating transportation system-related emissions in CO2 eq., considering several socioeconomic and energy- and transportation-related input variables. The proposed approach incorporates artificial neural networks, machine learning, and deep learning algorithms. The case of Turkey was considered as an example. Model performance was evaluated using a dataset of Turkey, and future projections were made based on scenario analysis compatible with Turkey’s climate change mitigation strategies. This study also adopted a transportation type-based analysis, exploring the role of Turkey’s road, air, marine, and rail transportation systems. The findings of this study indicate that the aforementioned models can be effectively implemented to predict transport emissions, concluding that they have valuable and practical applications in this field.",
+      "authors": "Yalcin, Seval Ene",
+      "journal": "SYSTEMS",
+      "year": "2025",
+      "keywords": [
+        "artificial neural networks",
+        "deep learning",
+        "machine learning",
+        "CO2 emissions",
+        "transport systems",
+        "forecasting"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 2,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Mapping Uncounted Anthropogenic Fill Flows: Environmental Impact and Mitigation",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000884017300001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.3390/land11111959",
+      "abstract": "Fill material flows created by land development earthworks are anthropogenic agents that generate massive energy use from their heavy loads. However, formal quantification of these flows has been neglected. We use Osaka Prefecture in Japan as a case study to quantify fill flows and associated CO2 emissions. We collected data on fill flows, including fill generation and acceptance. We mapped these publicly uncounted fill flows and calculated the CO2 emissions from the associated energy use. We also simulated a scenario in which optimized shortest-distance matching is achieved between fill generators and acceptors. We estimated the current fill flows based on distance and weight and broke down the total by type of site and activity. We compared our estimates of current fill flows with estimates from our matching simulation and found the simulation could achieve an 8448 km reduction in flow length and a 5724 t-CO2 reduction in emissions associated with transportation. We discussed the implications of flexible matching, especially in different construction sectors, and the importance of continuous, spatially geo-referenced monitoring of these fill flows toward further environmental impact mitigation. The approach presented here could apply to assessing environmental loads arising from landform changes in other cities and lead to development of a new regional- and global-scale fill material science in the Anthropocene.",
+      "authors": "Hara, Yuji, Hirai, Chizuko, Sampei, Yuki",
+      "journal": "LAND",
+      "year": "2022",
+      "keywords": [
+        "earthwork",
+        "energy use",
+        "cut-fill land development",
+        "supply-demand matching",
+        "land teleconnection",
+        "landfill",
+        "urbanization",
+        "landslide disaster"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 0,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "FROT: A Framework to comprehensively describe radiative contributions to temperature responses",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001346355900001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.1088/1748-9326/ad8807",
+      "abstract": "Abstract\n               Different human activities and associated emissions of CO2 and non-CO2 radiative forcing agents and feedbacks determine the final state of Earth’s climate. To understand and explain contributions to global temperature changes, many emission-based metrics have been employed, such as CO2-equivalent or -forcing equivalent. None of these metrics, however, include dynamic responses from Earth system feedbacks in terms of carbon and heat redistribution, known to play an increasingly important role in ambitious mitigation scenarios. Here we introduce a framework that allows for an assessment of such feedbacks in addition to CO2, non-CO2 anthropogenic forcing and natural external variability contributions. FROT (Framework for Radiative cOntributions to Temperature response) allows for an assessment of components of direct radiative impact to the system (climate forcing), as well as Earth system feedbacks concerning heat and carbon. The framework is versatile in terms of applications and allows for exploring individual components contributions to, for example, temperature stabilisation simulations, or comparisons in different models and scenarios, as it can reasonably explain their simulated temperature variability. Here, we apply FROT to both an intermediate complexity and a fully coupled Earth system model, as we simulate highly ambitious mitigation scenarios. Comparing temperature stabilisation scenarios, we can show that both net-zero CO2 emissions and small amounts of positive CO2 emissions could lead to a stable global temperature trajectory. Our assessment reveals that the effects of non-CO2 climate forcings, especially the development of sulphate aerosols in the atmosphere, and the dynamics of the carbon cycle, play a pivotal role in the final level of warming and in enabling a temperature stabilisation. Under highly ambitious climate mitigation scenarios it becomes crucial to include Earth system feedbacks, specifically ocean heat uptake, to understand interannual to decadal temperature development, since previously secondary processes now become increasingly dominant. Our framework offers the opportunity to do so.",
+      "authors": "Monteiro, Estela A., Silvy, Yona, Hohn, David, Burger, Friedrich A., Froelicher, Thomas L., Mengis, Nadine",
+      "journal": "ENVIRONMENTAL RESEARCH LETTERS",
+      "year": "2024",
+      "keywords": [
+        "radiative contribution",
+        "radiative forcing",
+        "temperature stabilisation",
+        "Earth system feedbacks",
+        "ambitious climate mitigation"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 1,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Urban Eco-Network Traffic Control via MARL-Based Traffic Signals and Vehicle Speed Coordination",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001593494100001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.3390/app151910586",
+      "abstract": "This study proposes a Cooperative Traffic Controller System (CTS), an urban eco-network control system that leverages Multi-Agent Reinforcement Learning (MARL), to address urban road congestion and environmental pollution. The proposed system synergizes traffic signal timing optimization and speed guidance control, simultaneously enhancing network efficiency, reducing carbon emissions, and minimizing energy consumption. A Beta-enhanced Soft Actor-Critic (SAC) algorithm is applied to achieve the joint optimization of the traffic signal phasing and vehicle speed coordination. Experimental results show that in large-scale networks, the improved SAC reduces the average delay time per vehicle by approximately one minute, reduces CO2 emissions by more than double, and reduces fuel consumption by 56%. Comparative analyses of the algorithm versus the PPO and standard SAC demonstrate its superior performance in complex traffic scenarios—specifically in congestion mitigation and emissions reduction.",
+      "authors": "Chen, Lanping, Yang, Fan, Chen, Chenyuan, Zhu, Yue, Xu, Ziyuan, Xu, Ying, Zhu, Lin",
+      "journal": "APPLIED SCIENCES-BASEL",
+      "year": "2025",
+      "keywords": [
+        "Multi-Agent Reinforcement Learning (MARL)",
+        "eco-traffic control",
+        "coordinated signal-speed optimization",
+        "intelligent transportation"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 1,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Comparison of machine learning systems trained to detect Alfvén eigenmodes using the CO<sub>2</sub> interferometer on DIII-D",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001177149900043&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.1088/1741-4326/acfe8b",
+      "abstract": "Abstract\n               A Machine-Learning (ML) based detection scheme that automatically detects Alfvén Eigenmodes (AE) in a labelled DIII-D database is presented here. Controlling AEs is important for the success of planned burning plasma devices such as ITER, since resonant fast ions can drive AEs unstable and degrade the performance of the plasma or damage the first walls of the machine vessel. Artificial Intelligence could be useful for real-time detection and control of AEs in steady-state plasma scenarios by implementing ML-based models into control algorithms that drive actuators for mitigation of AE impacts. Thus, the objective is to compare differences in performance between using two different recurrent neural network systems (Reservoir Computing Network and Long Short Term Memory Network) and two different representations of the \n                     \n                     \n                        \n                           \n                              C\n                              \n                                 O\n                                 2\n                              \n                           \n                        \n                     \n                   phase data (simple and crosspower spectrograms). All \n                     \n                     \n                        \n                           \n                              C\n                              \n                                 O\n                                 2\n                              \n                           \n                        \n                     \n                   interferometer chords are used to train both models, but only one is processed during each training step. The results from the model and data comparison show higher performance for the RCN model (True Positive Rate = 90% and False Positive Rate = 14%), and that using simple magnitude spectrograms is sufficient to detect AEs. Also, the vertical \n                     \n                     \n                        \n                           \n                              C\n                              \n                                 O\n                                 2\n                              \n                           \n                        \n                     \n                   interferometer chord passing near the center is better for ML-based detection of AEs.",
+      "authors": "Garcia, Alvin V., Jalalvand, Azarakhsh, Steiner, Peter, Rothstein, Andy, Van Zeeland, Michael, Heidbrink, William W., Kolemen, Egemen",
+      "journal": "NUCLEAR FUSION",
+      "year": "2023",
+      "keywords": [
+        "fast-ion physics",
+        "machine learning",
+        "Alfven eigenmodes",
+        "CO2 interferometer",
+        "DIII-D"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 0,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Climate-Smart Slurry Management for Sustainable Crop Production in a Warming Future",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001667684100001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.1021/acs.est.5c10421",
+      "abstract": "The annual nitrogen (N) production from livestock manure is comparable to that of synthetic N fertilizers used globally in croplands. Despite its recognized value for crop nutrition, current inefficient manure application contributes ∼10% to global anthropogenic greenhouse gas (GHG) emissions. Addressing this challenge, we investigated semiliquid manure slurry, which in some regions provides up to half of the N supplied to crops. Using meta-analysis and machine learning methodology, we predicted agricultural and environmental impacts of slurry use in different climate scenarios based on 1952 paired observations in global field experiments. Current suboptimal uses of slurry generate 7% (0.1 Tg N) higher nitrous oxide emissions than synthetic fertilizers. Under future warming scenarios and without optimization, these emissions are projected to increase by an additional 3-5% (∼0.2 Tg N) and total noncarbon dioxide (CO2) GHG emissions by 30% (600 Tg CO2 equivalents year-1). Current evidence identifies the combination of subsurface slurry application and nitrification inhibitors as an effective optimization strategy. This strategy may reduce non-CO2 GHG emissions by 30%, equivalent to an 8% reduction in the total agricultural GHG emissions. We estimated that this optimization, combined with a favorable slurry N-to-total N ratio, has the technological potential to increase global cereal production by up to 20% and restore organic carbon stocks in topsoil by 5% (3400 Tg carbon). Thus, optimizing slurry use should be a priority, as it contributes to climate change mitigation, food security, and soil fertility.",
+      "authors": "Zhao, Shuaixiang, Schmidt, Susanne, Zhou, Feng, Zhang, Weifeng",
+      "journal": "ENVIRONMENTAL SCIENCE & TECHNOLOGY",
+      "year": "2026",
+      "keywords": [
+        "animal slurry",
+        "nitrogen-efficient cropping",
+        "climate change mitigation",
+        "greenhouse gas emissions",
+        "soil organic carbon"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 0,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "An Interpretable Machine Learning-Based Framework for CO<sub>2</sub> Emission Prediction and Optimization: A Case Study of a University Campus",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:001636368300001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.3390/su172310432",
+      "abstract": "Carbon peaking and carbon neutrality targets have become central to global climate governance. Building accurate CO2 emission prediction models to forecast trends and inform mitigation strategies is crucial for addressing climate change. This work proposes an interpretable, integrated prediction optimization framework grounded in fine-grained categories and emission factors, coupling seasonal, demographic, and temporal effects. A Random Forest (RF) model, interpreted via SHapley Additive exPlanations (SHAP) and correlation analysis, enables attribution of key drivers and prioritization of control strategies. Using comprehensive data from a university campus located in Shandong Province, we conduct detailed carbon accounting and derive actionable emission reduction plans under two distinct scenarios—high-comfort soft control and low-comfort hard control. Results demonstrate strong applicability to campus “large-scale community” settings, enabling differentiated control across building types and seasons. The framework achieves accurate emission predictions with R2 of 0.92, identifies energy consumption as the dominant emission source, and realizes 20–30% reduction potential in key building categories during different seasons while maintaining operational viability. This study provides substantial methodological support for regional CO2 reduction strategies, sustainable development pathways, and the achievement of carbon-neutrality goals.",
+      "authors": "Zhang, Pingyang, Ma, Yan, Wang, Xujiang, Yang, Meng, Wang, Wenlong",
+      "journal": "SUSTAINABILITY",
+      "year": "2025",
+      "keywords": [
+        "CO2 emissions",
+        "machine learning",
+        "optimization-based model"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 0,
+      "references": [],
+      "analysis": null
+    }
+  ],
+  "metadata": {
+    "query": "TS=(co2 AND mitigation AND scenario AND (machine learning OR agent based))",
+    "total_found": 16,
+    "sources": [
+      "Web of Science"
+    ],
+    "exported_count": 16,
+    "export_time": "2026-02-17T11:23:00.596739",
+    "articles_with_abstracts": 16
+  }
+}

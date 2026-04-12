@@ -1,0 +1,75 @@
+{
+  "articles": [
+    {
+      "title": "Scikit-learn: Machine Learning in Python",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000298103200003&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": null,
+      "abstract": "",
+      "authors": "Pedregosa, Fabian, Varoquaux, Gaeel, Gramfort, Alexandre, Michel, Vincent, Thirion, Bertrand, Grisel, Olivier, Blondel, Mathieu, Prettenhofer, Peter, Weiss, Ron, Dubourg, Vincent, Vanderplas, Jake, Passos, Alexandre, Cournapeau, David, Brucher, Matthieu, Perrot, Matthieu, Duchesnay, Edouard",
+      "journal": "JOURNAL OF MACHINE LEARNING RESEARCH",
+      "year": "2011",
+      "keywords": [
+        "Python",
+        "supervised learning",
+        "unsupervised learning",
+        "model selection"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 66659,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Gradient-based learning applied to document recognition",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000076557300010&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.1109/5.726791",
+      "abstract": "",
+      "authors": "Lecun, Y, Bottou, L, Bengio, Y, Haffner, P",
+      "journal": "PROCEEDINGS OF THE IEEE",
+      "year": "1998",
+      "keywords": [
+        "convolutional neural networks",
+        "document recognition",
+        "finite state transducers",
+        "gradient-based learning",
+        "graph transformer networks",
+        "machine learning",
+        "neural networks",
+        "optical character recognition (OCR)"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 39049,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "XGBoost: A Scalable Tree Boosting System",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000485529800092&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.1145/2939672.2939785",
+      "abstract": "Tree boosting is a highly effective and widely used machine learning method. In this paper, we describe a scalable end-to-end tree boosting system called XGBoost, which is used widely by data scientists to achieve state-of-the-art results on many machine learning challenges. We propose a novel sparsity-aware algorithm for sparse data and weighted quantile sketch for approximate tree learning. More importantly, we provide insights on cache access patterns, data compression and sharding to build a scalable tree boosting system. By combining these insights, XGBoost scales beyond billions of examples using far fewer resources than existing systems.",
+      "authors": "Chen, Tianqi, Guestrin, Carlos",
+      "journal": "KDD'16: PROCEEDINGS OF THE 22ND ACM SIGKDD INTERNATIONAL CONFERENCE ON KNOWLEDGE DISCOVERY AND DATA MINING",
+      "year": "2016",
+      "keywords": [
+        "Large-scale Machine Learning"
+      ],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 33774,
+      "references": [],
+      "analysis": null
+    }
+  ],
+  "metadata": {
+    "query": "machine learning",
+    "total_found": 3,
+    "sources": [
+      "Web of Science"
+    ],
+    "exported_count": 3,
+    "export_time": "2026-02-12T21:50:26.418525",
+    "articles_with_abstracts": 1
+  }
+}

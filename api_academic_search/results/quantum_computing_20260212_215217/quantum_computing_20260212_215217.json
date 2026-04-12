@@ -1,0 +1,89 @@
+{
+  "articles": [
+    {
+      "title": "Quantum Computing in the NISQ era and beyond",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000457936400001&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.22331/q-2018-08-06-79",
+      "abstract": "Noisy Intermediate-Scale Quantum (NISQ) technology will be available in the near future. Quantum computers with 50-100 qubits may be able to perform tasks which surpass the capabilities of today's classical digital computers, but noise in quantum gates will limit the size of quantum circuits that can be executed reliably. NISQ devices will be useful tools for exploring many-body quantum physics, and may have other useful applications, but the 100-qubit quantum computer will not change the world right away - we should regard it as a significant step toward the more powerful quantum technologies of the future. Quantum technologists should continue to strive for more accurate quantum gates and, eventually, fully fault-tolerant quantum computing.",
+      "authors": "Preskill, John",
+      "journal": "QUANTUM",
+      "year": "2018",
+      "keywords": [],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 5628,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Quantum computing in molecular magnets",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000168021900047&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.1038/35071024",
+      "abstract": "",
+      "authors": "Leuenberger, MN, Loss, D",
+      "journal": "NATURE",
+      "year": "2001",
+      "keywords": [],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 2719,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Linear optical quantum computing with photonic qubits",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000244867600004&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.1103/RevModPhys.79.135",
+      "abstract": "",
+      "authors": "Kok, Pieter, Munro, W. J., Nemoto, Kae, Ralph, T. C., Dowling, Jonathan P., Milburn, G. J.",
+      "journal": "REVIEWS OF MODERN PHYSICS",
+      "year": "2007",
+      "keywords": [],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 2330,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Quantum Chemistry in the Age of Quantum Computing",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000490359300003&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.1021/acs.chemrev.8b00803",
+      "abstract": "",
+      "authors": "Cao, Yudong, Romero, Jonathan, Olson, Jonathan P., Degroote, Matthias, Johnson, Peter D., Kieferova, Maria, Kivlichan, Ian D., Menke, Tim, Peropadre, Borja, Sawaya, Nicolas P. D., Sim, Sukin, Veis, Libor, Aspuru-Guzik, Alan",
+      "journal": "CHEMICAL REVIEWS",
+      "year": "2019",
+      "keywords": [],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 1149,
+      "references": [],
+      "analysis": null
+    },
+    {
+      "title": "Trapped-ion quantum computing: Progress and challenges",
+      "url": "https://www.webofscience.com/api/gateway?GWVersion=2&SrcApp=ffftest&SrcAuth=WosAPI&KeyUT=WOS:000474435200014&DestLinkType=FullRecord&DestApp=WOS_CPL",
+      "doi": "10.1063/1.5088164",
+      "abstract": "Trapped ions are among the most promising systems for practical quantum computing (QC). The basic requirements for universal QC have all been demonstrated with ions, and quantum algorithms using few-ion-qubit systems have been implemented. We review the state of the field, covering the basics of how trapped ions are used for QC and their strengths and limitations as qubits. In addition, we discuss what is being done, and what may be required, to increase the scale of trapped ion quantum computers while mitigating decoherence and control errors. Finally, we explore the outlook for trapped-ion QC. In particular, we discuss near-term applications, considerations impacting the design of future systems of trapped ions, and experiments and demonstrations that may further inform these considerations.",
+      "authors": "Bruzewicz, Colin D., Chiaverini, John, McConnell, Robert, Sage, Jeremy M.",
+      "journal": "APPLIED PHYSICS REVIEWS",
+      "year": "2019",
+      "keywords": [],
+      "source": "Web of Science",
+      "is_open_access": false,
+      "citation_count": 1062,
+      "references": [],
+      "analysis": null
+    }
+  ],
+  "metadata": {
+    "query": "TI=(quantum computing)",
+    "total_found": 5,
+    "sources": [
+      "Web of Science"
+    ],
+    "exported_count": 5,
+    "export_time": "2026-02-12T21:52:17.627393",
+    "articles_with_abstracts": 2
+  }
+}
