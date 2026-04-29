@@ -8,7 +8,7 @@ on:
       - apps/js-sdk/firecrawl/**
 
 env:
-  TEST_API_KEY: ${{ secrets.TEST_API_KEY }}
+  IDMUX_URL: ${{ secrets.IDMUX_URL }}
 
 jobs:
   test:
@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4
         with:
           version: 10
       - name: Set up Node.js
@@ -26,6 +26,13 @@ jobs:
           node-version: "20"
           cache: "pnpm"
           cache-dependency-path: './apps/js-sdk/firecrawl/pnpm-lock.yaml'
+      - name: Tailscale
+        uses: tailscale/github-action@306e68a486fd2350f2bfc3b19fcd143891a4a2d8 # v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+          use-cache: 'true'
       - name: Install dependencies
         run: pnpm install
         working-directory: ./apps/js-sdk/firecrawl

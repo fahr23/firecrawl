@@ -13,6 +13,8 @@ import {
   mergeScrapedContent,
   calculateScrapeCredits,
 } from "./scrape";
+import { trackSearchResults, trackSearchRequest } from "../lib/tracking";
+import type { BillingMetadata } from "../services/billing/types";
 
 interface SearchOptions {
   query: string;
@@ -35,8 +37,12 @@ interface SearchContext {
   apiKeyId: number | null;
   flags: TeamFlags;
   requestId: string;
+  jobId: string;
+  apiVersion: string;
   bypassBilling?: boolean;
   zeroDataRetention?: boolean;
+  billing?: BillingMetadata;
+  agentIndexOnly?: boolean;
 }
 
 interface SearchExecuteResult {
@@ -62,6 +68,7 @@ export async function executeSearch(
     requestId,
     bypassBilling,
     zeroDataRetention,
+    billing,
   } = context;
 
   const num_results_buffer = Math.floor(limit * 2);
@@ -149,6 +156,8 @@ export async function executeSearch(
         apiKeyId,
         zeroDataRetention,
         requestId,
+        billing,
+        agentIndexOnly: context.agentIndexOnly,
       };
 
       const allDocsWithCostTracking = await scrapeSearchResults(
@@ -166,6 +175,44 @@ export async function executeSearch(
       scrapeCredits = calculateScrapeCredits(allDocsWithCostTracking);
     }
   }
+
+  const scrapeFormats = scrapeOptions?.formats
+    ? scrapeOptions.formats.map((f: any) =>
+        typeof f === "string" ? f : f.type,
+      )
+    : [];
+
+  trackSearchRequest({
+    searchId: context.jobId,
+    requestId: context.requestId,
+    teamId,
+    query,
+    origin,
+    kind: billing?.endpoint ?? "search",
+    apiVersion: context.apiVersion,
+    lang: options.lang,
+    country: options.country,
+    sources: searchTypes,
+    numResults: totalResultsCount,
+    searchCredits,
+    scrapeCredits,
+    totalCredits: searchCredits + scrapeCredits,
+    hasScrapeFormats: shouldScrape ?? false,
+    scrapeFormats,
+    isSuccessful: true,
+    timeTaken: 0, // filled by caller if needed
+    zeroDataRetention: zeroDataRetention ?? false,
+  }).catch(err =>
+    logger.warn("Search request tracking failed", { error: err }),
+  );
+
+  trackSearchResults({
+    searchId: context.jobId,
+    teamId,
+    response: searchResponse,
+    zeroDataRetention: zeroDataRetention ?? false,
+    hasScrapeFormats: shouldScrape ?? false,
+  }).catch(err => logger.warn("Search tracking failed", { error: err }));
 
   return {
     response: searchResponse,

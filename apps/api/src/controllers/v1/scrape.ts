@@ -22,6 +22,7 @@ import { AbortManagerThrownError } from "../../scraper/scrapeURL/lib/abortManage
 import { logRequest } from "../../services/logging/log_job";
 import { getErrorContactMessage } from "../../lib/deployment";
 import { captureExceptionWithZdrCheck } from "../../services/sentry";
+import { getScrapeZDR } from "../../lib/zdr-helpers";
 
 export async function scrapeController(
   req: RequestWithAuth<{}, ScrapeResponse, ScrapeRequest>,
@@ -45,7 +46,7 @@ export async function scrapeController(
   }
 
   const zeroDataRetention =
-    req.acuc?.flags?.forceZDR || req.body.zeroDataRetention;
+    getScrapeZDR(req.acuc?.flags) === "forced" || req.body.zeroDataRetention;
 
   const logger = _logger.child({
     method: "scrapeController",
@@ -67,7 +68,7 @@ export async function scrapeController(
     account: req.account,
   });
 
-  await logRequest({
+  logRequest({
     id: jobId,
     kind: "scrape",
     api_version: "v1",
@@ -77,7 +78,9 @@ export async function scrapeController(
     target_hint: req.body.url,
     zeroDataRetention: zeroDataRetention || false,
     api_key_id: req.acuc?.api_key_id ?? null,
-  });
+  }).catch(err =>
+    logger.warn("Background request log failed", { error: err, jobId }),
+  );
 
   const origin = req.body.origin;
   const timeout = req.body.timeout;
@@ -158,10 +161,12 @@ export async function scrapeController(
               bypassBilling: isDirectToBullMQ,
               zeroDataRetention,
               teamFlags: req.acuc?.flags ?? null,
+              agentIndexOnly: (req as any).agentIndexOnly ?? false,
             },
             skipNuq: true,
             origin,
             integration: req.body.integration,
+            billing: { endpoint: "scrape", jobId },
             startTime: controllerStartTime,
             zeroDataRetention: zeroDataRetention ?? false,
             apiKeyId: req.acuc?.api_key_id ?? null,
@@ -190,6 +195,16 @@ export async function scrapeController(
           success: false,
           code: e.code,
           error: e.message,
+        });
+      }
+
+      if (e.code === "AGENT_INDEX_ONLY") {
+        return res.status(403).json({
+          success: false,
+          code: e.code,
+          error: e.message,
+          sponsor_status: "pending",
+          login_url: "https://firecrawl.dev/signin",
         });
       }
 

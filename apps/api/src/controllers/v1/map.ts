@@ -30,6 +30,7 @@ import {
 } from "../../services/index";
 import { MapTimeoutError } from "../../lib/error";
 import { checkPermissions } from "../../lib/permissions";
+import { getScrapeZDR } from "../../lib/zdr-helpers";
 
 configDotenv();
 const redis = new Redis(config.REDIS_URL!);
@@ -122,11 +123,12 @@ export async function getMapResults({
   headers?: Record<string, string>;
   id?: string;
 }): Promise<MapResult> {
+  const startTime = Date.now();
   const id = providedId ?? uuidv7();
   let links: string[] = [url];
   let mapResults: MapDocument[] = [];
 
-  const zeroDataRetention = flags?.forceZDR || false;
+  const zeroDataRetention = getScrapeZDR(flags) === "forced" || false;
 
   const sc: StoredCrawl = {
     originUrl: url,
@@ -353,7 +355,7 @@ export async function getMapResults({
     mapResults: mapResults,
     scrape_id: origin?.includes("website") ? id : undefined,
     job_id: id,
-    time_taken: (new Date().getTime() - Date.now()) / 1000,
+    time_taken: (Date.now() - startTime) / 1000,
   };
 }
 
@@ -369,7 +371,7 @@ export async function mapController(
   const originalRequest = req.body;
   req.body = mapRequestSchema.parse(req.body);
 
-  if (req.acuc?.flags?.forceZDR) {
+  if (getScrapeZDR(req.acuc?.flags) === "forced") {
     return res.status(400).json({
       success: false,
       error:
@@ -468,6 +470,7 @@ export async function mapController(
     req.acuc?.sub_id,
     1,
     req.acuc?.api_key_id ?? null,
+    { endpoint: "map", jobId: mapId },
   ).catch(error => {
     logger.error(
       `Failed to bill team ${req.auth.team_id} for 1 credit: ${error}`,

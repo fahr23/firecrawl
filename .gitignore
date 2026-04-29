@@ -54,3 +54,11 @@ apps/python-sdk/.venv/
 /apps/go-html-to-md-service/.gomodcache/
 target/
 examples/turkish-financial-data-scraper/.venv/
+
+.cursor/
+
+# local files
+_local/
+
+
+apps/api/src/lib/scrape-interact/*.md

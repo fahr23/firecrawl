@@ -5,7 +5,6 @@ import { config } from "../config";
 import {
   FireEngineScrapeRequestChromeCDP,
   FireEngineScrapeRequestCommon,
-  FireEngineScrapeRequestPlaywright,
   FireEngineScrapeRequestTLSClient,
 } from "../scraper/scrapeURL/engines/fire-engine/scrape";
 import { getDocFromGCS } from "../lib/gcs-jobs";
@@ -73,14 +72,15 @@ export function abTestJob(webScraperOptions: ScrapeJobData) {
   }
 }
 
+type ABTestDecision =
+  | { mode: "none" }
+  | { mode: "mirror"; mirrorPromise: Promise<MirrorResult> }
+  | { mode: "split"; baseUrl: string };
+
 export function abTestFireEngine(
   feRequest: FireEngineScrapeRequestCommon &
-    (
-      | FireEngineScrapeRequestChromeCDP
-      | FireEngineScrapeRequestPlaywright
-      | FireEngineScrapeRequestTLSClient
-    ),
-): { shouldCompare: boolean; mirrorPromise: Promise<MirrorResult> | null } {
+    (FireEngineScrapeRequestChromeCDP | FireEngineScrapeRequestTLSClient),
+): ABTestDecision {
   const abLogger = _logger.child({ method: "ABTestFireEngine" });
 
   const abRate = config.FIRE_ENGINE_AB_RATE
@@ -94,7 +94,11 @@ export function abTestFireEngine(
     config.FIRE_ENGINE_AB_URL;
 
   if (!shouldABTest) {
-    return { shouldCompare: false, mirrorPromise: null };
+    return { mode: "none" };
+  }
+
+  if (config.FIRE_ENGINE_AB_MODE === "split") {
+    return { mode: "split", baseUrl: config.FIRE_ENGINE_AB_URL! };
   }
 
   const timeout = Math.min(60000, (feRequest.timeout ?? 30000) + 10000);
@@ -182,7 +186,7 @@ export function abTestFireEngine(
   })();
 
   return {
-    shouldCompare: config.FIRE_ENGINE_AB_COMPARE_ENABLED,
+    mode: "mirror",
     mirrorPromise,
   };
 }

@@ -1,5 +1,4 @@
 import { Logger } from "winston";
-import * as Sentry from "@sentry/node";
 import { z } from "zod";
 
 import { InternalAction } from "../../../../controllers/v1/types";
@@ -8,6 +7,7 @@ import { MockState } from "../../lib/mock";
 import { getDocFromGCS } from "../../../../lib/gcs-jobs";
 import {
   ActionError,
+  AddFeatureError,
   DNSResolutionError,
   EngineError,
   FEPageLoadFailed,
@@ -17,12 +17,11 @@ import {
   UnsupportedFileError,
 } from "../../error";
 import { Meta } from "../..";
-import { abTestFireEngine } from "../../../../services/ab-test";
-import { scheduleABComparison } from "../../../../services/ab-test-comparison";
 
 import { config } from "../../../../config";
 export type FireEngineScrapeRequestCommon = {
   url: string;
+  scrapeId?: string;
 
   headers?: { [K: string]: string };
 
@@ -55,17 +54,7 @@ export type FireEngineScrapeRequestChromeCDP = {
   blockMedia?: boolean;
   mobile?: boolean;
   disableSmartWaitCache?: boolean;
-};
-
-export type FireEngineScrapeRequestPlaywright = {
-  engine: "playwright";
-  blockAds?: boolean; // default: true
-
-  // mutually exclusive, default: false
-  screenshot?: boolean;
-  fullPageScreenshot?: boolean;
-
-  wait?: number; // default: 0
+  persistentStorage?: { uniqueId: string };
 };
 
 export type FireEngineScrapeRequestTLSClient = {
@@ -90,10 +79,6 @@ const successSchema = z.object({
   // timeTakenCookie: z.number().optional(),
   // timeTakenRequest: z.number().optional(),
 
-  // legacy: playwright only
-  screenshot: z.string().optional(),
-
-  // new: actions
   screenshots: z.string().array().optional(),
   actionContent: z
     .object({
@@ -168,6 +153,7 @@ const processingSchema = z.object({
 
 const failedSchema = z.object({
   error: z.string(),
+  retryWithStealth: z.boolean().optional(),
 });
 
 export const fireEngineURL =
@@ -178,7 +164,6 @@ export const fireEngineStagingURL =
 export async function fireEngineScrape<
   Engine extends
     | FireEngineScrapeRequestChromeCDP
-    | FireEngineScrapeRequestPlaywright
     | FireEngineScrapeRequestTLSClient,
 >(
   meta: Meta,
@@ -186,13 +171,10 @@ export async function fireEngineScrape<
   request: FireEngineScrapeRequestCommon & Engine,
   mock: MockState | null,
   abort?: AbortSignal,
-  production = true,
+  baseUrl: string = fireEngineURL,
 ): Promise<z.infer<typeof processingSchema> | FireEngineCheckStatusSuccess> {
-  const abTest = abTestFireEngine(request);
-  const productionStartTime = Date.now();
-
   let status = await robustFetch({
-    url: `${production ? fireEngineURL : fireEngineStagingURL}/scrape`,
+    url: `${baseUrl}/scrape`,
     method: "POST",
     headers: {},
     body: request,
@@ -217,23 +199,15 @@ export async function fireEngineScrape<
   const failedParse = failedSchema.safeParse(status);
 
   if (successParse.success) {
-    logger.debug("Scrape succeeded!");
-
-    // Schedule A/B comparison if enabled (fire-and-forget)
-    if (abTest.shouldCompare && abTest.mirrorPromise) {
-      const productionTimeTaken = Date.now() - productionStartTime;
-      scheduleABComparison(
-        meta.url,
-        {
-          content: successParse.data.content,
-          pageStatusCode: successParse.data.pageStatusCode,
-        },
-        productionTimeTaken,
-        abTest.mirrorPromise,
-        logger,
-      );
+    // Check if this is an unsupported media type error (e.g., binary file)
+    if (
+      successParse.data.pageStatusCode === 415 &&
+      successParse.data.pageError?.startsWith("Unsupported Media Type:")
+    ) {
+      throw new UnsupportedFileError(successParse.data.pageError);
     }
 
+    logger.debug("Scrape succeeded!");
     return successParse.data;
   } else if (processingParse.success) {
     return processingParse.data;
@@ -241,6 +215,16 @@ export async function fireEngineScrape<
     logger.debug("Scrape job failed", {
       status,
     });
+    if (
+      failedParse.data.retryWithStealth &&
+      meta.options.proxy === "auto" &&
+      !meta.featureFlags.has("stealthProxy")
+    ) {
+      logger.info(
+        "Scrape signaled retryWithStealth. Adding stealthProxy flag.",
+      );
+      throw new AddFeatureError(["stealthProxy"]);
+    }
     if (
       typeof status.error === "string" &&
       status.error.includes("Chrome error: ")

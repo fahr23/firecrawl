@@ -7,6 +7,7 @@ import {
   MAX_MAP_LIMIT,
 } from "../controllers/v2/types";
 import { crawlToCrawler, StoredCrawl } from "./crawl-redis";
+import { getScrapeZDR } from "./zdr-helpers";
 import {
   checkAndUpdateURLForMap,
   isSameDomain,
@@ -24,7 +25,7 @@ import { performCosineSimilarityV2 } from "./map-cosine";
 import { Logger } from "winston";
 
 // Max Links that "Smart /map" can return
-const MAX_FIRE_ENGINE_RESULTS = 500;
+const MAX_FIRE_ENGINE_RESULTS = 100;
 
 export interface MapResult {
   success: boolean;
@@ -130,7 +131,7 @@ export async function getMapResults({
 
   const id = providedId ?? uuidv7();
   let mapResults: MapDocument[] = [];
-  const zeroDataRetention = flags?.forceZDR || false;
+  const zeroDataRetention = getScrapeZDR(flags) === "forced" || false;
 
   const sc: StoredCrawl = {
     originUrl: url,
@@ -210,30 +211,35 @@ export async function getMapResults({
       ? null
       : await redisEvictConnection.get(cacheKey);
 
-    let pagePromises: (Promise<any> | any)[];
-
-    if (cachedResult) {
-      pagePromises = JSON.parse(cachedResult);
-    } else {
-      const fetchPage = async (page: number) => {
-        return await fireEngineMap(
-          mapUrl,
-          {
-            numResults: resultsPerPage,
-            page: page,
-          },
-          abort,
-        );
-      };
-
-      pagePromises = Array.from({ length: maxPages }, (_, i) =>
-        fetchPage(i + 1),
+    const fetchPage = async (page: number) => {
+      return await fireEngineMap(
+        mapUrl,
+        {
+          numResults: resultsPerPage,
+          page,
+        },
+        abort,
       );
-    }
+    };
+
+    const fetchAllPages = async (): Promise<any[]> => {
+      if (cachedResult) {
+        return JSON.parse(cachedResult);
+      }
+      // if page 1 has no results, don't fetch remaining pages
+      const page1Result = await fetchPage(1);
+      if (!page1Result || page1Result.length === 0 || maxPages === 1) {
+        return [page1Result];
+      }
+      const remainingPages = await Promise.all(
+        Array.from({ length: maxPages - 1 }, (_, i) => fetchPage(i + 2)),
+      );
+      return [page1Result, ...remainingPages];
+    };
 
     const [indexResults, searchResults] = await Promise.all([
       queryIndex(url, limit, useIndex, includeSubdomains),
-      Promise.all(pagePromises),
+      fetchAllPages(),
     ]);
 
     if (!zeroDataRetention) {
