@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "dgSpecHash": "BXKtbwjSxolCLZ63YXEnKfDDrsZlHp626L1s+uNOOcU1KoCa9s956sIwYhuameIa7WjFNYd6TNkp2qyS5E9teQ==",
+  "success": true,
+  "projectFilePath": "/Users/FF/Projects/myProjects/backtofuture_scraper/firecrawl/apps/dot-net-sdk/Firecrawl/Firecrawl.csproj",
+  "expectedPackageFiles": [
+    "/Users/FF/.nuget/packages/system.io.pipelines/9.0.3/system.io.pipelines.9.0.3.nupkg.sha512",
+    "/Users/FF/.nuget/packages/system.text.encodings.web/9.0.3/system.text.encodings.web.9.0.3.nupkg.sha512",
+    "/Users/FF/.nuget/packages/system.text.json/9.0.3/system.text.json.9.0.3.nupkg.sha512"
+  ],
+  "logs": []
+}
