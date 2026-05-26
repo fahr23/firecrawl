@@ -32,6 +32,8 @@ import {
   ScrapeRetryLimitError,
   BrandingNotSupportedError,
   AudioUnsupportedUrlError,
+  VideoUnsupportedUrlError,
+  XTwitterConfigurationError,
 } from "../scraper/scrapeURL/error";
 
 // TODO: figure out correct typing for this
@@ -64,6 +66,8 @@ const errorMap: Record<ErrorCodes, any> = {
   SCRAPE_SITEMAP_ERROR: SitemapError,
   CRAWL_DENIAL: CrawlDenialError,
   SCRAPE_AUDIO_UNSUPPORTED_URL: AudioUnsupportedUrlError,
+  SCRAPE_VIDEO_UNSUPPORTED_URL: VideoUnsupportedUrlError,
+  SCRAPE_X_TWITTER_CONFIGURATION_ERROR: XTwitterConfigurationError,
   MAP_FAILED: MapFailedError,
 
   // Zod errors

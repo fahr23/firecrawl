@@ -275,8 +275,10 @@ class Document(BaseModel):
     images: Optional[List[str]] = None
     screenshot: Optional[str] = None
     audio: Optional[str] = None
+    video: Optional[str] = None
     actions: Optional[Dict[str, Any]] = None
     answer: Optional[str] = None
+    highlights: Optional[str] = None
     warning: Optional[str] = None
     change_tracking: Optional[Dict[str, Any]] = None
     branding: Optional[BrandingProfile] = None
@@ -339,6 +341,23 @@ class AgentWebhookConfig(BaseModel):
     events: Optional[List[Literal["started", "action", "completed", "failed", "cancelled"]]] = None
 
 
+class MonitorWebhookConfig(BaseModel):
+    """Configuration for monitor webhooks.
+
+    Monitor webhooks support different events than crawl webhooks:
+    - monitor.page: One event per scraped URL as it finishes, with the
+      page-level diff status (`same` | `changed` | `new` | `removed` |
+      `error`).
+    - monitor.check.completed: A summary event sent after the full
+      monitor check is reconciled.
+    """
+
+    url: str
+    headers: Optional[Dict[str, str]] = None
+    metadata: Optional[Dict[str, str]] = None
+    events: Optional[List[Literal["monitor.page", "monitor.check.completed"]]] = None
+
+
 class WebhookData(BaseModel):
     """Data sent to webhooks."""
 
@@ -388,6 +407,7 @@ FormatString = Literal[
     "branding",
     "query",
     "audio",
+    "video",
     # snake_case versions (user-friendly)
     "raw_html",
     "change_tracking",
@@ -410,6 +430,7 @@ class Format(BaseModel):
 class JsonFormat(Format):
     """Configuration for JSON extraction."""
 
+    type: Literal["json"] = "json"
     prompt: Optional[str] = None
     schema: Optional[Any] = None
 
@@ -417,6 +438,7 @@ class JsonFormat(Format):
 class ChangeTrackingFormat(Format):
     """Configuration for change tracking."""
 
+    type: Literal["change_tracking", "changeTracking"] = "change_tracking"
     modes: List[Literal["git-diff", "json"]]
     schema: Optional[Dict[str, Any]] = None
     prompt: Optional[str] = None
@@ -446,11 +468,26 @@ class AttributesFormat(Format):
     selectors: List[AttributeSelector]
 
 
+class QuestionFormat(Format):
+    """Configuration for question format - ask a question about the page content."""
+
+    type: Literal["question"] = "question"
+    question: str
+
+
+class HighlightsFormat(Format):
+    """Configuration for highlights format - extract direct highlights from page content."""
+
+    type: Literal["highlights"] = "highlights"
+    query: str
+
+
 class QueryFormat(Format):
-    """Configuration for query format - ask a question about the page content."""
+    """Deprecated query format. Use QuestionFormat or HighlightsFormat instead."""
 
     type: Literal["query"] = "query"
     prompt: str
+    mode: Optional[Literal["freeform", "directQuote"]] = None
 
 
 FormatOption = Union[
@@ -460,6 +497,8 @@ FormatOption = Union[
     ChangeTrackingFormat,
     ScreenshotFormat,
     AttributesFormat,
+    QuestionFormat,
+    HighlightsFormat,
     QueryFormat,
     Format,
 ]
@@ -494,10 +533,16 @@ class ScrapeFormats(BaseModel):
                     raise ValueError("query format must be an object with 'type' and 'prompt' fields")
                 normalized_formats.append(Format(type=format_item))
             elif isinstance(format_item, dict):
-                # Reject query dicts missing prompt early
+                fmt_type = format_item.get('type')
                 prompt = format_item.get('prompt')
-                if format_item.get('type') == 'query' and (not isinstance(prompt, str) or not prompt.strip()):
+                question = format_item.get('question')
+                query = format_item.get('query')
+                if fmt_type == 'query' and (not isinstance(prompt, str) or not prompt.strip()):
                     raise ValueError("query format requires a non-empty 'prompt' string")
+                if fmt_type == 'question' and (not isinstance(question, str) or not question.strip()):
+                    raise ValueError("question format requires a non-empty 'question' string")
+                if fmt_type == 'highlights' and (not isinstance(query, str) or not query.strip()):
+                    raise ValueError("highlights format requires a non-empty 'query' string")
                 # Preserve dicts as-is to avoid dropping custom fields like 'schema'
                 normalized_formats.append(format_item)
             elif isinstance(format_item, Format):
@@ -796,6 +841,186 @@ class MapResponse(BaseResponse[MapData]):
     pass
 
 
+# Monitor types
+class MonitorSchedule(BaseModel):
+    """Schedule for a monitor.
+
+    On create / update you provide exactly one of `cron` or `text`:
+
+    - `cron`: a 5-field cron expression (e.g. ``"*/30 * * * *"``).
+    - `text`: a natural-language schedule (e.g. ``"every 30 minutes"``,
+      ``"hourly"``, ``"daily at 9:00"``). Firecrawl normalizes this to a
+      cron expression server-side.
+
+    On read, the API always returns the normalized ``cron`` value, so
+    `cron` is populated in responses even when the monitor was created
+    with `text`.
+    """
+
+    cron: Optional[str] = None
+    text: Optional[str] = None
+    timezone: str = "UTC"
+
+
+class MonitorEmailNotification(BaseModel):
+    enabled: bool = False
+    recipients: List[str] = []
+    include_diffs: bool = Field(default=False, alias="includeDiffs")
+
+    model_config = {"populate_by_name": True}
+
+
+class MonitorNotification(BaseModel):
+    email: Optional[MonitorEmailNotification] = None
+
+
+class MonitorTarget(BaseModel):
+    """A scrape or crawl target stored on a monitor."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    id: Optional[str] = None
+    type: Literal["scrape", "crawl"]
+    urls: Optional[List[str]] = None
+    url: Optional[str] = None
+    scrape_options: Optional[Union[ScrapeOptions, Dict[str, Any]]] = Field(default=None, alias="scrapeOptions")
+    crawl_options: Optional[Dict[str, Any]] = Field(default=None, alias="crawlOptions")
+
+
+class MonitorCreateRequest(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    name: str
+    schedule: MonitorSchedule
+    webhook: Optional[MonitorWebhookConfig] = None
+    notification: Optional[MonitorNotification] = None
+    targets: List[Union[MonitorTarget, Dict[str, Any]]]
+    retention_days: Optional[int] = Field(default=None, alias="retentionDays")
+    goal: Optional[str] = None
+    judge_enabled: Optional[bool] = Field(default=None, alias="judgeEnabled")
+
+
+class MonitorUpdateRequest(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    name: Optional[str] = None
+    status: Optional[Literal["active", "paused"]] = None
+    schedule: Optional[MonitorSchedule] = None
+    webhook: Optional[Union[MonitorWebhookConfig, Dict[str, Any]]] = None
+    notification: Optional[Union[MonitorNotification, Dict[str, Any]]] = None
+    targets: Optional[List[Union[MonitorTarget, Dict[str, Any]]]] = None
+    retention_days: Optional[int] = Field(default=None, alias="retentionDays")
+    goal: Optional[str] = None
+    judge_enabled: Optional[bool] = Field(default=None, alias="judgeEnabled")
+
+
+class MonitorSummary(BaseModel):
+    total_pages: int = Field(default=0, alias="totalPages")
+    same: int = 0
+    changed: int = 0
+    new: int = 0
+    removed: int = 0
+    error: int = 0
+
+    model_config = {"populate_by_name": True}
+
+
+class Monitor(BaseModel):
+    model_config = {"populate_by_name": True, "extra": "allow"}
+
+    id: str
+    name: str
+    status: Literal["active", "paused", "deleted"]
+    schedule: MonitorSchedule
+    next_run_at: Optional[str] = Field(default=None, alias="nextRunAt")
+    last_run_at: Optional[str] = Field(default=None, alias="lastRunAt")
+    current_check_id: Optional[str] = Field(default=None, alias="currentCheckId")
+    targets: List[Dict[str, Any]]
+    webhook: Optional[Dict[str, Any]] = None
+    notification: Optional[Dict[str, Any]] = None
+    retention_days: int = Field(alias="retentionDays")
+    estimated_credits_per_month: Optional[int] = Field(default=None, alias="estimatedCreditsPerMonth")
+    last_check_summary: Optional[MonitorSummary] = Field(default=None, alias="lastCheckSummary")
+    goal: Optional[str] = None
+    judge_enabled: Optional[bool] = Field(default=None, alias="judgeEnabled")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class MonitorPageJudgment(BaseModel):
+    meaningful: bool
+    confidence: Literal["high", "medium", "low"]
+    reason: str
+    fields: List[str]
+
+
+class MonitorCheck(BaseModel):
+    model_config = {"populate_by_name": True, "extra": "allow"}
+
+    id: str
+    monitor_id: str = Field(alias="monitorId")
+    status: Literal["queued", "running", "completed", "failed", "partial", "skipped_overlap"]
+    trigger: Literal["scheduled", "manual"]
+    scheduled_for: Optional[str] = Field(default=None, alias="scheduledFor")
+    started_at: Optional[str] = Field(default=None, alias="startedAt")
+    finished_at: Optional[str] = Field(default=None, alias="finishedAt")
+    estimated_credits: Optional[int] = Field(default=None, alias="estimatedCredits")
+    reserved_credits: Optional[int] = Field(default=None, alias="reservedCredits")
+    actual_credits: Optional[int] = Field(default=None, alias="actualCredits")
+    billing_status: Literal["not_applicable", "reserved", "confirmed", "released", "failed"] = Field(alias="billingStatus")
+    summary: MonitorSummary
+    target_results: Optional[Any] = Field(default=None, alias="targetResults")
+    notification_status: Optional[Any] = Field(default=None, alias="notificationStatus")
+    error: Optional[str] = None
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+
+
+class MonitorPageDiff(BaseModel):
+    """Diff payload returned alongside a monitor page.
+
+    Markdown-only monitors populate both `text` (unified diff) and `json`
+    (the parseDiff AST). JSON-extraction monitors populate `json` only,
+    where `json` is the per-field `{previous, current}` map. Mixed-mode
+    monitors (JSON + git-diff) populate both `json` (field diff) and
+    `text` (markdown sidecar).
+    """
+    model_config = {"populate_by_name": True, "extra": "allow"}
+
+    text: Optional[str] = None
+    json: Optional[Any] = None  # markdown→parseDiff AST | json→field diff
+
+
+class MonitorPageSnapshot(BaseModel):
+    """Current JSON extraction at this run. JSON / mixed mode only."""
+    model_config = {"populate_by_name": True, "extra": "allow"}
+
+    json: Optional[Dict[str, Any]] = None
+
+
+class MonitorCheckPage(BaseModel):
+    model_config = {"populate_by_name": True, "extra": "allow"}
+
+    id: str
+    target_id: str = Field(alias="targetId")
+    url: str
+    status: Literal["same", "new", "changed", "removed", "error"]
+    previous_scrape_id: Optional[str] = Field(default=None, alias="previousScrapeId")
+    current_scrape_id: Optional[str] = Field(default=None, alias="currentScrapeId")
+    status_code: Optional[int] = Field(default=None, alias="statusCode")
+    error: Optional[str] = None
+    metadata: Optional[Any] = None
+    diff: Optional[MonitorPageDiff] = None
+    snapshot: Optional[MonitorPageSnapshot] = None
+    judgment: Optional[MonitorPageJudgment] = None
+    created_at: str = Field(alias="createdAt")
+
+
+class MonitorCheckDetail(MonitorCheck):
+    pages: List[MonitorCheckPage] = []
+    next: Optional[str] = None
+
+
 # Extract types
 class ExtractRequest(BaseModel):
     """Request for extract operations."""
@@ -822,6 +1047,8 @@ class ExtractResponse(BaseModel):
     data: Optional[Any] = None
     error: Optional[str] = None
     warning: Optional[str] = None
+    warnings: Optional[List[str]] = None
+    replacement: Optional[str] = None
     sources: Optional[Dict[str, Any]] = None
     expires_at: Optional[datetime] = None
     credits_used: Optional[int] = None
@@ -1070,6 +1297,8 @@ class SearchRequest(BaseModel):
     query: str
     sources: Optional[List[SourceOption]] = None
     categories: Optional[List[CategoryOption]] = None
+    include_domains: Optional[List[str]] = None
+    exclude_domains: Optional[List[str]] = None
     limit: Optional[int] = 5
     tbs: Optional[str] = None
     location: Optional[str] = None
@@ -1118,6 +1347,15 @@ class SearchRequest(BaseModel):
 
         return normalized_categories
 
+    @model_validator(mode="after")
+    def validate_domain_filters(self):
+        """Validate mutually exclusive search domain filters."""
+        if self.include_domains and self.exclude_domains:
+            raise ValueError(
+                "include_domains and exclude_domains cannot both be specified"
+            )
+        return self
+
     # NOTE: parsers validation does not belong on SearchRequest; it is part of ScrapeOptions.
 
 
@@ -1139,6 +1377,20 @@ class SearchData(BaseModel):
     web: Optional[List[Union[SearchResultWeb, Document]]] = None
     news: Optional[List[Union[SearchResultNews, Document]]] = None
     images: Optional[List[Union[SearchResultImages, Document]]] = None
+
+    @property
+    def data(self):
+        parts = []
+        if self.web:
+            parts.append(f".web ({len(self.web)} results)")
+        if self.news:
+            parts.append(f".news ({len(self.news)} results)")
+        if self.images:
+            parts.append(f".images ({len(self.images)} results)")
+        available = ", ".join(parts) if parts else ".web, .news, or .images"
+        raise AttributeError(
+            f"SearchData has no '.data'. Results are grouped by source: {available}"
+        )
 
 
 class SearchResponse(BaseResponse[SearchData]):

@@ -52,6 +52,7 @@ import {
   ProxySelectionError,
   ScrapeRetryLimitError,
   BrandingNotSupportedError,
+  XTwitterConfigurationError,
 } from "./error";
 import { ScrapeRetryTracker } from "./retryTracker";
 import { executeTransformers } from "./transformers";
@@ -97,6 +98,18 @@ export type ScrapeUrlResponse =
       error: any;
     };
 
+export type BrowserCookie = {
+  name: string;
+  value: string;
+  domain?: string;
+  path?: string;
+  expires?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: string;
+  [key: string]: unknown;
+};
+
 export type Meta = {
   id: string;
   url: string;
@@ -140,6 +153,7 @@ export type Meta = {
   costTracking: CostTracking;
   winnerEngine?: Engine;
   abortHandle?: NodeJS.Timeout;
+  audioCookies?: BrowserCookie[];
 };
 
 function buildFeatureFlags(
@@ -173,6 +187,10 @@ function buildFeatureFlags(
 
   if (hasFormatOfType(options.formats, "audio")) {
     flags.add("audio");
+  }
+
+  if (hasFormatOfType(options.formats, "video")) {
+    flags.add("video");
   }
 
   if (options.waitFor !== 0) {
@@ -506,9 +524,17 @@ async function scrapeURLLoopIter(
     );
     const hasJson = hasFormatOfType(meta.options.formats, "json");
     const hasSummary = hasFormatOfType(meta.options.formats, "summary");
+    const hasQuestion = hasFormatOfType(meta.options.formats, "question");
+    const hasHighlights = hasFormatOfType(meta.options.formats, "highlights");
     const hasQuery = hasFormatOfType(meta.options.formats, "query");
     const needsMarkdown =
-      hasMarkdown || hasChangeTracking || hasJson || hasSummary || hasQuery;
+      hasMarkdown ||
+      hasChangeTracking ||
+      hasJson ||
+      hasSummary ||
+      hasQuestion ||
+      hasHighlights ||
+      hasQuery;
 
     let checkMarkdown: string;
     const htmlSize = engineResult.html?.length ?? 0;
@@ -776,7 +802,12 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
           break;
         } catch (error) {
           if (error instanceof WrappedEngineError) {
-            if (error.error instanceof EngineError) {
+            if (error.engine === "x-twitter") {
+              meta.logger.warn("X/Twitter scrape failed fatally.", {
+                error: error.error,
+              });
+              throw error.error;
+            } else if (error.error instanceof EngineError) {
               meta.logger.warn(
                 "Engine " + error.engine + " could not scrape the page.",
                 {
@@ -806,7 +837,8 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
               error.error instanceof PDFInsufficientTimeError ||
               error.error instanceof ProxySelectionError ||
               error.error instanceof NoCachedDataError ||
-              error.error instanceof AgentIndexOnlyError
+              error.error instanceof AgentIndexOnlyError ||
+              error.error instanceof XTwitterConfigurationError
             ) {
               throw error.error;
             } else if (error.error instanceof LLMRefusalError) {
@@ -914,6 +946,9 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
 
     meta.winnerEngine = result.engine;
     let engineResult: EngineScrapeResult = result.result;
+    meta.audioCookies = (
+      engineResult as { audioCookies?: BrowserCookie[] }
+    ).audioCookies;
 
     for (const postprocessor of postprocessors) {
       if (

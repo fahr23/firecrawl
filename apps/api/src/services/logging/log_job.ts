@@ -222,6 +222,8 @@ export type LoggedScrape = {
   skipNuq: boolean;
   zeroDataRetention: boolean;
   is_parse?: boolean;
+  monitor_id?: string | null;
+  monitor_check_id?: string | null;
 };
 
 export async function logScrape(scrape: LoggedScrape, force: boolean = false) {
@@ -259,6 +261,12 @@ export async function logScrape(scrape: LoggedScrape, force: boolean = false) {
         ? null
         : (scrape.pdf_num_pages ?? null),
       credits_cost: scrape.credits_cost,
+      ...(scrape.is_parse
+        ? {}
+        : {
+            monitor_id: scrape.monitor_id ?? null,
+            monitor_check_id: scrape.monitor_check_id ?? null,
+          }),
     },
     force,
     logger,
@@ -270,7 +278,7 @@ export async function logScrape(scrape: LoggedScrape, force: boolean = false) {
     config.GCS_BUCKET_NAME &&
     !(scrape.skipNuq && scrape.zeroDataRetention)
   ) {
-    await saveScrapeToGCS(scrape);
+    await saveScrapeToGCS(scrape, logger);
   }
 
   if (
@@ -322,6 +330,8 @@ type LoggedCrawl = {
   credits_cost: number;
   zeroDataRetention: boolean;
   cancelled: boolean;
+  monitor_id?: string | null;
+  monitor_check_id?: string | null;
 };
 
 export async function logCrawl(crawl: LoggedCrawl, force: boolean = false) {
@@ -350,6 +360,8 @@ export async function logCrawl(crawl: LoggedCrawl, force: boolean = false) {
       num_docs: crawl.num_docs,
       credits_cost: crawl.credits_cost,
       cancelled: crawl.cancelled,
+      monitor_id: crawl.monitor_id ?? null,
+      monitor_check_id: crawl.monitor_check_id ?? null,
     },
     force,
     logger,
@@ -449,7 +461,7 @@ export async function logSearch(search: LoggedSearch, force: boolean = false) {
   );
 
   if (search.results && !search.zeroDataRetention) {
-    await saveSearchToGCS(search);
+    await saveSearchToGCS(search, logger);
   }
 }
 
@@ -502,7 +514,7 @@ export async function logExtract(
 
   if (extract.result) {
     if (config.GCS_BUCKET_NAME) {
-      await saveExtractToGCS(extract);
+      await saveExtractToGCS(extract, logger);
     } else {
       // Fallback: save result to Redis with 24h TTL when GCS is not configured
       await saveExtractResult(extract.id, extract.result);
@@ -552,7 +564,7 @@ export async function logMap(map: LoggedMap, force: boolean = false) {
   );
 
   if (map.results && !map.zeroDataRetention) {
-    await saveMapToGCS(map);
+    await saveMapToGCS(map, logger);
   }
 }
 
@@ -600,7 +612,7 @@ export async function logLlmsTxt(
   );
 
   if (llmsTxt.result) {
-    await saveLlmsTxtToGCS(llmsTxt);
+    await saveLlmsTxtToGCS(llmsTxt, logger);
   }
 }
 
@@ -649,6 +661,6 @@ export async function logDeepResearch(
   );
 
   if (deepResearch.result) {
-    await saveDeepResearchToGCS(deepResearch);
+    await saveDeepResearchToGCS(deepResearch, logger);
   }
 }

@@ -284,6 +284,10 @@ export async function x402SearchController(
     const { query: searchQuery, categoryMap } = buildSearchQuery(
       req.body.query,
       req.body.categories as CategoryOption[],
+      {
+        includeDomains: req.body.includeDomains,
+        excludeDomains: req.body.excludeDomains,
+      },
     );
 
     const searchResponse = (await search({
@@ -392,10 +396,15 @@ export async function x402SearchController(
         scrapeInput: ScrapeJobInput;
       }> = [];
 
+      const blockContext = {
+        team_id: req.auth.team_id,
+        origin: req.body.origin ?? null,
+      };
+
       // Add web results (skip blocked URLs)
       if (searchResponse.web) {
         searchResponse.web.forEach(item => {
-          if (!isUrlBlocked(item.url, req.acuc?.flags ?? null)) {
+          if (!isUrlBlocked(item.url, req.acuc?.flags ?? null, blockContext)) {
             itemsToScrape.push({
               item,
               type: "web",
@@ -416,7 +425,9 @@ export async function x402SearchController(
         searchResponse.news
           .filter(item => item.url)
           .forEach(item => {
-            if (!isUrlBlocked(item.url!, req.acuc?.flags ?? null)) {
+            if (
+              !isUrlBlocked(item.url!, req.acuc?.flags ?? null, blockContext)
+            ) {
               itemsToScrape.push({
                 item,
                 type: "news",
@@ -437,7 +448,9 @@ export async function x402SearchController(
         searchResponse.images
           .filter(item => item.url)
           .forEach(item => {
-            if (!isUrlBlocked(item.url!, req.acuc?.flags ?? null)) {
+            if (
+              !isUrlBlocked(item.url!, req.acuc?.flags ?? null, blockContext)
+            ) {
               itemsToScrape.push({
                 item,
                 type: "image",

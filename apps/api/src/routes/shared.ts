@@ -27,7 +27,6 @@ import { supabase_service } from "../services/supabase";
 import {
   autumnService,
   isAutumnCheckEnabled,
-  isAutumnCheckDryRun,
 } from "../services/autumn/autumn.service";
 
 export function checkCreditsMiddleware(
@@ -144,31 +143,8 @@ export function checkCreditsMiddleware(
       let { success, remainingCredits, chunk } = legacyCheck;
 
       if (autumnResult !== null) {
-        const dryRun = isAutumnCheckDryRun();
-        if (autumnResult.allowed !== legacyCheck.success) {
-          logger.warn("Autumn check result diverged from legacy credit gate", {
-            teamId: req.auth.team_id,
-            path: req.path,
-            requestedCredits,
-            autumnAllowed: autumnResult.allowed,
-            autumnRemaining: autumnResult.remaining,
-            legacyAllowed: legacyCheck.success,
-            dryRun,
-          });
-        }
-        if (dryRun) {
-          logger.info("Autumn check dry-run result (not enforced)", {
-            teamId: req.auth.team_id,
-            path: req.path,
-            requestedCredits,
-            autumnAllowed: autumnResult.allowed,
-            autumnRemaining: autumnResult.remaining,
-            legacyAllowed: legacyCheck.success,
-          });
-        } else {
-          success = autumnResult.allowed;
-          remainingCredits = autumnResult.remaining;
-        }
+        success = autumnResult.allowed;
+        remainingCredits = autumnResult.remaining;
       }
 
       if (chunk) {
@@ -298,7 +274,10 @@ export function blocklistMiddleware(
 ) {
   if (
     typeof req.body.url === "string" &&
-    isUrlBlocked(req.body.url, req.acuc?.flags ?? null)
+    isUrlBlocked(req.body.url, req.acuc?.flags ?? null, {
+      team_id: req.acuc?.team_id ?? null,
+      origin: typeof req.body.origin === "string" ? req.body.origin : null,
+    })
   ) {
     if (!res.headersSent) {
       return res.status(403).json({
