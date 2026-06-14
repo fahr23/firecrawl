@@ -9,6 +9,12 @@ const delimitedList = (separator = ",") => {
   });
 };
 
+const emptyStringAsUndefined = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess(value => (value === "" ? undefined : value), schema.optional());
+
+const emptyStringAsDefault = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess(value => (value === "" ? undefined : value), schema);
+
 // Ethereum address schema: validates 0x followed by 40 hex characters
 const ethereumAddress = z
   .string()
@@ -39,6 +45,7 @@ const configSchema = z.object({
   FIRECRAWL_DASHBOARD_URL: z.url().default("https://www.firecrawl.dev"),
   SUPPORT_AGENT_URL: z.string().url().optional(),
   SUPPORT_AGENT_VERCEL_BYPASS_SECRET: z.string().optional(),
+  RESEARCH_PROXY_URL: z.string().url().optional(),
 
   // Express
   EXPRESS_TRUST_PROXY: z.coerce.number().optional(),
@@ -52,10 +59,6 @@ const configSchema = z.object({
   LLAMAPARSE_API_KEY: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
   AUTUMN_SECRET_KEY: z.string().optional(),
-  AUTUMN_CHECK_ENABLED: z.string().optional(),
-  AUTUMN_CHECK_EXPERIMENT_PERCENT: z.coerce.number().default(100),
-  AUTUMN_EXPERIMENT: z.string().optional(),
-  AUTUMN_EXPERIMENT_PERCENT: z.coerce.number().default(100),
   AUTUMN_REQUEST_TRACK_EXPERIMENT: z.string().optional(),
   AUTUMN_REQUEST_TRACK_EXPERIMENT_PERCENT: z.coerce.number().default(100),
   RESEND_API_KEY: z.string().optional(),
@@ -73,27 +76,45 @@ const configSchema = z.object({
   OAUTH_INTROSPECT_URL: z.string().optional(),
   OAUTH_INTROSPECT_SECRET: z.string().optional(),
 
+  // Agent auth discovery (RFC 9728 WWW-Authenticate on 401)
+  AGENT_AUTH_RESOURCE_METADATA_URL: z
+    .url()
+    .default("https://www.firecrawl.dev/.well-known/oauth-protected-resource"),
+
   // Database & Storage
   POSTGRES_HOST: z.string().default("localhost"),
   POSTGRES_PORT: z.string().default("5432"),
   POSTGRES_DB: z.string().default("postgres"),
   POSTGRES_USER: z.string().default("postgres"),
   POSTGRES_PASSWORD: z.string().default("postgres"),
+  DATABASE_URL: z.string().optional(),
+  DATABASE_REPLICA_URL: z.string().optional(),
+  INDEX_DATABASE_URL: z.string().optional(),
+  INDEX_CACHE_REDIS_URL: z.string().optional(),
+  // Negative (miss) caching TTL for index URL->id lookups, in ms. 0 disables
+  // it; the cache then only shields lookups that find data. A positive value
+  // (e.g. 600000 = 10min) also short-circuits repeat lookups for URLs with no
+  // index entry. Kept short so any missed cache-clear self-heals quickly.
+  INDEX_CACHE_NEGATIVE_TTL_MS: z.coerce.number().default(0),
   REDIS_URL: z.string().optional(),
   REDIS_EVICT_URL: z.string().optional(),
   REDIS_RATE_LIMIT_URL: z.string().optional(),
   NUQ_DATABASE_URL: z.string().optional(),
   NUQ_DATABASE_URL_LISTEN: z.string().optional(),
   NUQ_RABBITMQ_URL: z.string().optional(),
-
-  // Supabase
-  SUPABASE_URL: z.string().optional(),
-  SUPABASE_ANON_TOKEN: z.string().optional(),
-  SUPABASE_SERVICE_TOKEN: z.string().optional(),
-  SUPABASE_REPLICA_URL: z.string().optional(),
-  INDEX_SUPABASE_URL: z.string().optional(),
-  INDEX_SUPABASE_SERVICE_TOKEN: z.string().optional(),
-  SEARCH_INDEX_SUPABASE_URL: z.string().optional(),
+  FDB_CLUSTER_FILE: emptyStringAsUndefined(z.string()),
+  NUQ_BACKEND: emptyStringAsUndefined(z.enum(["pg", "fdb"])),
+  NUQ_FDB_READY_SHARDS: emptyStringAsDefault(
+    z.coerce.number().int().positive().default(2048),
+  ),
+  // 1 = strict (priority, FIFO) promotion order per team; raise for teams with
+  // extreme finish rates at the cost of approximate cross-shard ordering
+  NUQ_FDB_TEAM_PENDING_SHARDS: emptyStringAsDefault(
+    z.coerce.number().int().positive().default(1),
+  ),
+  NUQ_FDB_TIME_BUCKETS: emptyStringAsDefault(
+    z.coerce.number().int().positive().default(16),
+  ),
 
   // Google Cloud Storage
   GCS_BUCKET_NAME: z.string().optional(),
@@ -105,6 +126,9 @@ const configSchema = z.object({
   // ClickHouse (Search Analytics)
   CLICKHOUSE_ANALYTICS_URL: z.string().optional(),
   CLICKHOUSE_ANALYTICS_DATABASE: z.string().optional(),
+
+  // Search highlights (beta): semantic highlight model endpoint
+  HIGHLIGHT_MODEL_URL: z.string().optional(),
 
   // Fire Engine
   FIRE_ENGINE_BETA_URL: z.string().optional(),
@@ -266,6 +290,7 @@ const configSchema = z.object({
   GITHUB_REF_NAME: z.string().optional(),
   RESTRICTED_COUNTRIES: delimitedList(",").optional(),
   DISABLE_ENGPICKER: z.stringbool().optional(),
+  DISABLE_MONITORING: z.stringbool().default(false),
 
   EXTRACT_V3_BETA_URL: z.string().optional(),
   AGENT_INTEROP_SECRET: z.string().optional(),
@@ -282,9 +307,19 @@ const configSchema = z.object({
   // Audio (avgrab)
   AVGRAB_SERVICE_URL: z.string().optional(),
 
+  // PII Redaction (fire-privacy)
+  FIRE_PRIVACY_URL: z.string().optional(),
+  FIRE_PRIVACY_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+
   NUQ_PREFETCH_WORKER_HEARTBEAT_URL: z.string().optional(),
 
   ZDRCLEANER_HEARTBEAT_URL: z.string().optional(),
+
+  // Deterministic JSON extraction (reusable-json-mode)
+  EXTRACT_CODEGEN_MODEL: z.string().default("gemini-3.1-flash-lite"),
+  EXTRACT_ANCHOR_MODEL: z.string().default("openai/gpt-oss-120b"),
+  EXTRACT_LIGHT_MODEL: z.string().default("openai/gpt-oss-20b"),
+  CODE_SANDBOX_URL: z.string().default("ws://code-sandbox:3001"),
 });
 
 export const config = configSchema.parse(process.env);

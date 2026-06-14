@@ -116,6 +116,7 @@ const createMonitorBaseSchema = z.strictObject({
   retentionDays: z.number().int().positive().max(365).optional().default(30),
   goal: z.string().max(2000).nullish(),
   judgeEnabled: z.boolean().optional(),
+  origin: z.string().optional().prefault("api"),
 });
 
 export const createMonitorSchema = createMonitorBaseSchema.transform(
@@ -146,6 +147,7 @@ export const listMonitorChecksQuerySchema = z.object({
       "failed",
       "partial",
       "skipped_overlap",
+      "skipped_no_credits",
     ])
     .optional(),
 });
@@ -199,7 +201,8 @@ export type MonitorCheckRow = {
     | "completed"
     | "failed"
     | "partial"
-    | "skipped_overlap";
+    | "skipped_overlap"
+    | "skipped_no_credits";
   scheduled_for: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -237,7 +240,7 @@ export type MonitorPageRow = {
   team_id: string;
   target_id: string;
   url: string;
-  url_hash: string;
+  url_hash: Buffer;
   source: MonitorPageSource;
   first_seen_check_id: string | null;
   last_seen_check_id: string | null;
@@ -266,7 +269,7 @@ export type MonitorCheckPageInsert = {
   team_id: string;
   target_id: string;
   url: string;
-  url_hash?: string;
+  url_hash?: Buffer;
   status: MonitorPageStatus;
   previous_scrape_id?: string | null;
   current_scrape_id?: string | null;
@@ -280,7 +283,12 @@ export type MonitorCheckPageInsert = {
     meaningful: boolean;
     confidence: "high" | "medium" | "low";
     reason: string;
-    fields: string[];
+    meaningfulChanges: Array<{
+      type: "added" | "removed" | "changed";
+      before: string | null;
+      after: string | null;
+      reason: string;
+    }>;
   } | null;
 };
 

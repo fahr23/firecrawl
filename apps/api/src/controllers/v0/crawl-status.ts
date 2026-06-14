@@ -11,9 +11,10 @@ import { configDotenv } from "dotenv";
 import { toLegacyDocument } from "../v1/types";
 import type { DBScrape, PseudoJob } from "../v1/crawl-status";
 import { getJobFromGCS } from "../../lib/gcs-jobs";
-import { scrapeQueue, NuQJob } from "../../services/worker/nuq";
+import { scrapeQueue, NuQJob } from "../../services/worker/nuq-router";
 import { includesFormat } from "../../lib/format-utils";
 import { getScrapeZDR } from "../../lib/zdr-helpers";
+import { applyAgentAuthDiscoveryHeader } from "../../lib/agent-auth-discovery";
 configDotenv();
 
 async function getJobs(
@@ -94,6 +95,7 @@ export async function crawlStatusController(req: Request, res: Response) {
   try {
     const auth = await authenticateUser(req, res, RateLimiterMode.CrawlStatus);
     if (!auth.success) {
+      if (auth.status === 401) applyAgentAuthDiscoveryHeader(res);
       return res.status(auth.status).json({ error: auth.error });
     }
 

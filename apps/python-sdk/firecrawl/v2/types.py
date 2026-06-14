@@ -262,6 +262,16 @@ class BrandingProfile(BaseModel):
     personality: Optional[Dict[str, Any]] = None
 
 
+RedactPIIEntity = Literal[
+    "PERSON",
+    "EMAIL",
+    "PHONE",
+    "LOCATION",
+    "FINANCIAL",
+    "SECRET",
+]
+
+
 class Document(BaseModel):
     """A scraped document."""
 
@@ -553,6 +563,25 @@ class ScrapeFormats(BaseModel):
         return normalized_formats
 
 
+class RedactPIIOptions(BaseModel):
+    """Tuning options for the PII redaction step."""
+
+    # accurate (default): model-only. Best precision, cleanest output.
+    # aggressive: model + Presidio + spaCy. Higher recall, lower precision.
+    # fast: Presidio only, no model call. Lower F1, ~2x throughput.
+    mode: Optional[Literal["accurate", "aggressive", "fast"]] = None
+    # Restrict redaction to these entity buckets. Unset means all entities.
+    entities: Optional[List[RedactPIIEntity]] = None
+    # tag (default): replace spans with `<KIND>` placeholders.
+    # mask: replace spans with `*` of equal length.
+    # remove: drop span characters entirely.
+    replace_style: Optional[Literal["tag", "mask", "remove"]] = Field(
+        default=None, alias="replaceStyle"
+    )
+
+    model_config = {"populate_by_name": True}
+
+
 class ScrapeOptions(BaseModel):
     """Options for scraping operations."""
 
@@ -591,8 +620,13 @@ class ScrapeOptions(BaseModel):
     min_age: Optional[int] = None
     store_in_cache: Optional[bool] = None
     lockdown: Optional[bool] = None
+    redact_pii: Optional[Union[bool, RedactPIIOptions]] = Field(
+        default=None, alias="redactPII"
+    )
     profile: Optional[Dict[str, Any]] = None
     integration: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
 
     @field_validator("formats")
     @classmethod
@@ -874,6 +908,30 @@ class MonitorNotification(BaseModel):
     email: Optional[MonitorEmailNotification] = None
 
 
+class MonitorEmailRecipientSubscription(BaseModel):
+    """Per-recipient opt-in state for monitor email notifications.
+
+    External recipients (not members of the team that owns the monitor) must
+    confirm their subscription via a one-time email before they receive any
+    monitor notifications. Team members are auto-confirmed.
+
+    Statuses:
+      - ``pending``      - confirmation email sent, no notifications yet
+      - ``confirmed``    - notifications enabled
+      - ``unsubscribed`` - recipient opted out and cannot be re-added without
+                            a new confirmation flow
+    """
+
+    model_config = {"populate_by_name": True}
+
+    email: str
+    status: Literal["pending", "confirmed", "unsubscribed"]
+    source: Literal["team", "opt_in", "legacy"]
+    confirmation_email_sent: Optional[bool] = Field(
+        default=None, alias="confirmationEmailSent"
+    )
+
+
 class MonitorTarget(BaseModel):
     """A scrape or crawl target stored on a monitor."""
 
@@ -938,6 +996,12 @@ class Monitor(BaseModel):
     targets: List[Dict[str, Any]]
     webhook: Optional[Dict[str, Any]] = None
     notification: Optional[Dict[str, Any]] = None
+    # Present on create/update/get when the API has reconciled email
+    # recipients (i.e. notification.email.recipients is non-empty). Each
+    # entry reports a recipient's opt-in status.
+    email_recipient_subscriptions: Optional[List[MonitorEmailRecipientSubscription]] = (
+        Field(default=None, alias="emailRecipientSubscriptions")
+    )
     retention_days: int = Field(alias="retentionDays")
     estimated_credits_per_month: Optional[int] = Field(default=None, alias="estimatedCreditsPerMonth")
     last_check_summary: Optional[MonitorSummary] = Field(default=None, alias="lastCheckSummary")
@@ -947,11 +1011,20 @@ class Monitor(BaseModel):
     updated_at: str = Field(alias="updatedAt")
 
 
+class MonitorMeaningfulChange(BaseModel):
+    type: Literal["added", "removed", "changed"]
+    before: Optional[str] = None
+    after: Optional[str] = None
+    reason: str
+
+
 class MonitorPageJudgment(BaseModel):
+    model_config = {"populate_by_name": True}
+
     meaningful: bool
     confidence: Literal["high", "medium", "low"]
     reason: str
-    fields: List[str]
+    meaningful_changes: List[MonitorMeaningfulChange] = Field(default_factory=list, alias="meaningfulChanges")
 
 
 class MonitorCheck(BaseModel):

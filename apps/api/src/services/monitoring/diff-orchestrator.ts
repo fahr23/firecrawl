@@ -14,13 +14,18 @@ import {
 } from "./diff";
 import { judgeChange } from "./judgeChange";
 
-type MonitorPageDiffStatus = "same" | "new" | "changed";
+type MonitorPageDiffStatus = "same" | "new" | "changed" | "error";
 
 type Judgment = {
   meaningful: boolean;
   confidence: "high" | "medium" | "low";
   reason: string;
-  fields: string[];
+  meaningfulChanges: Array<{
+    type: "added" | "removed" | "changed";
+    before: string | null;
+    after: string | null;
+    reason: string;
+  }>;
 };
 
 type MonitorPageDiffResult = {
@@ -31,6 +36,7 @@ type MonitorPageDiffResult = {
   judgment?: Judgment;
   diffText?: string;
   diffJson?: Record<string, { previous: unknown; current: unknown }>;
+  error?: string;
 };
 
 type PreviousPageRef = {
@@ -98,15 +104,17 @@ export async function computeAndPersistPageDiff(params: {
       ? (doc.json as Record<string, unknown>)
       : undefined;
 
-    // If the current scrape didn't produce a JSON document we can't
-    // compute a JSON diff; treat as `changed` to be safe (matches the
-    // markdown-missing branch's behavior).
+    // If the current scrape didn't produce a JSON document we can't compute a
+    // JSON diff (e.g. the extraction step failed) - report `error` rather than
+    // a false `changed`, so the user isn't alerted to a content change that
+    // didn't happen.
     if (!currentJson) {
       return {
-        status: "changed",
+        status: "error",
         diffGcsKey: null,
         diffTextBytes: null,
         diffJsonBytes: null,
+        error: "JSON extraction produced no result for this check.",
       };
     }
 
@@ -161,8 +169,6 @@ export async function computeAndPersistPageDiff(params: {
           jsonDiff: result.status === "changed" ? result.json : undefined,
           markdownDiff: markdownSidecar
             ? {
-                previous: previousDoc?.markdown ?? "",
-                current: doc?.markdown ?? "",
                 diffText: markdownSidecar.text,
               }
             : undefined,
@@ -227,8 +233,6 @@ export async function computeAndPersistPageDiff(params: {
         goal,
         extractionPrompt,
         markdownDiff: {
-          previous: previousMarkdown,
-          current: currentMarkdown,
           diffText: diff.text,
         },
       })
@@ -248,8 +252,6 @@ async function runJudge(args: {
   extractionPrompt?: string | null;
   jsonDiff?: Record<string, { previous: unknown; current: unknown }>;
   markdownDiff?: {
-    previous: string;
-    current: string;
     diffText?: string;
   };
 }): Promise<Judgment | undefined> {
