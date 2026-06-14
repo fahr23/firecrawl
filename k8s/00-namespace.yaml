@@ -1,0 +1,8 @@
+# Namespace for Firecrawl
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: firecrawl
+  labels:
+    app: firecrawl
+    managed-by: skaffold

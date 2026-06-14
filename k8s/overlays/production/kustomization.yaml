@@ -1,0 +1,34 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: firecrawl-prod
+
+namePrefix: prod-
+
+bases:
+- ../../
+
+patchesStrategicMerge:
+- replica-patch.yaml
+- resource-patch.yaml
+- security-patch.yaml
+
+configMapGenerator:
+- name: firecrawl-prod-config
+  literals:
+  - ENV=production
+  - LOGGING_LEVEL=info
+  - NUM_WORKERS_PER_QUEUE=16
+  - CRAWL_CONCURRENT_REQUESTS=20
+  - MAX_CONCURRENT_JOBS=10
+  - BROWSER_POOL_SIZE=10
+
+images:
+- name: ghcr.io/firecrawl/firecrawl
+  newTag: stable
+- name: ghcr.io/firecrawl/playwright-service
+  newTag: stable
+- name: ghcr.io/firecrawl/go-html-to-md-service
+  newTag: stable
+- name: ghcr.io/firecrawl/nuq-postgres
+  newTag: stable

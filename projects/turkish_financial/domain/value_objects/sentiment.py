@@ -94,3 +94,36 @@ class SentimentAnalysis:
             return "medium"
         else:
             return "high"
+
+    def to_score(self) -> float:
+        """
+        Convert sentiment to a numeric score in [-1.0, 1.0].
+
+        Positive maps to +confidence, neutral to 0, negative to -confidence.
+
+        Returns:
+            Float sentiment score
+        """
+        base = self.confidence.value
+        if self.overall_sentiment == SentimentType.POSITIVE:
+            return round(base, 4)
+        elif self.overall_sentiment == SentimentType.NEGATIVE:
+            return round(-base, 4)
+        else:
+            return 0.0
+
+    def to_dict(self) -> dict:
+        """Serialise to a plain dictionary for JSON output."""
+        return {
+            "overall_sentiment": self.overall_sentiment.value,
+            "confidence": self.confidence.value,
+            "sentiment_score": self.to_score(),
+            "impact_horizon": self.impact_horizon.value,
+            "risk_level": self.get_risk_level(),
+            "key_drivers": list(self.key_drivers),
+            "risk_flags": list(self.risk_flags),
+            "tone_descriptors": list(self.tone_descriptors),
+            "target_audience": self.target_audience,
+            "analysis_text": self.analysis_text,
+            "analyzed_at": self.analyzed_at.isoformat(),
+        }

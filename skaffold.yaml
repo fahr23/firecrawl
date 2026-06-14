@@ -1,0 +1,129 @@
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: firecrawl
+
+build:
+  artifacts:
+  - image: ghcr.io/firecrawl/firecrawl
+    context: apps/api
+    docker:
+      dockerfile: Dockerfile
+    sync:
+      manual:
+      - src: "src/**/*"
+        dest: /usr/src/app/src
+      - src: "package.json"
+        dest: /usr/src/app/package.json
+  - image: ghcr.io/firecrawl/playwright-service
+    context: apps/playwright-service-ts
+    docker:
+      dockerfile: Dockerfile
+    sync:
+      manual:
+      - src: "**/*.ts"
+        dest: /app
+      - src: "package.json"
+        dest: /app/package.json
+  - image: ghcr.io/firecrawl/go-html-to-md-service
+    context: apps/go-html-to-md-service
+    docker:
+      dockerfile: Dockerfile
+    sync:
+      manual:
+      - src: "**/*.go"
+        dest: /app
+      - src: "go.mod"
+        dest: /app/go.mod
+  - image: ghcr.io/firecrawl/nuq-postgres
+    context: apps/nuq-postgres
+    docker:
+      dockerfile: Dockerfile
+
+manifests:
+  rawYaml:
+  - k8s/*.yaml
+
+deploy:
+  kubectl:
+    flags:
+      global: ["--namespace=firecrawl"]
+
+profiles:
+# Development profile - faster builds, file sync
+- name: dev
+  build:
+    local:
+      push: false
+    tagPolicy:
+      gitCommit: {}
+  deploy:
+    kubectl:
+      flags:
+        global: ["--namespace=firecrawl"]
+        apply: ["--wait=true"]
+
+# Production profile - optimized builds
+- name: prod
+  build:
+    cluster:
+      namespace: firecrawl-build
+      dockerConfig:
+        secretName: docker-registry-secret
+    tagPolicy:
+      sha256: {}
+  deploy:
+    kubectl:
+      flags:
+        global: ["--namespace=firecrawl"]
+        apply: ["--wait=true", "--timeout=600s"]
+
+# Local development without building (uses pre-built images)
+- name: local
+  build:
+    artifacts:
+    - image: ghcr.io/firecrawl/firecrawl
+      context: apps/api
+      docker:
+        dockerfile: Dockerfile
+    - image: ghcr.io/firecrawl/playwright-service
+      context: apps/playwright-service-ts
+      docker:
+        dockerfile: Dockerfile
+    - image: ghcr.io/firecrawl/go-html-to-md-service
+      context: apps/go-html-to-md-service
+      docker:
+        dockerfile: Dockerfile
+    - image: ghcr.io/firecrawl/nuq-postgres
+      context: apps/nuq-postgres
+      docker:
+        dockerfile: Dockerfile
+    local:
+      push: false
+    tagPolicy:
+      gitCommit: {}
+
+portForward:
+- resourceType: service
+  resourceName: firecrawl-api
+  namespace: firecrawl
+  port: 3002
+  localPort: 3002
+- resourceType: service
+  resourceName: firecrawl-api
+  namespace: firecrawl
+  port: 8000
+  localPort: 8000
+- resourceType: service
+  resourceName: rabbitmq
+  namespace: firecrawl
+  port: 15672
+  localPort: 15672
+
+verify:
+- name: api-health
+  container:
+    name: api-health-check
+    image: curlimages/curl:latest
+    command: ["/bin/sh"]
+    args: ["-c", "curl -f http://firecrawl-api:3002/health || exit 1"]

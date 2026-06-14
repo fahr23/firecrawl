@@ -3,7 +3,7 @@ Base scraper class using Firecrawl
 """
 import asyncio
 import logging
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, List, Callable, Union
 from abc import ABC, abstractmethod
 from firecrawl import FirecrawlApp
 from config import config
@@ -32,6 +32,87 @@ class BaseScraper(ABC):
         self.config = config
         
         logger.info(f"Initialized {self.__class__.__name__}")
+
+    def _normalize_document(self, result: Any) -> Dict[str, Any]:
+        """Normalize Firecrawl document-like responses across SDK versions."""
+        if isinstance(result, dict):
+            return dict(result)
+
+        data: Dict[str, Any] = {}
+        for attr in ("html", "markdown", "metadata", "links", "summary", "json"):
+            value = getattr(result, attr, None)
+            if value is not None:
+                data[attr] = value
+
+        raw_html = getattr(result, "rawHtml", None)
+        if raw_html is not None:
+            data["rawHtml"] = raw_html
+
+        action_results = getattr(result, "actions", None)
+        if action_results is not None:
+            data["action_results"] = action_results
+
+        return data
+
+    def _normalize_links(self, result: Any) -> List[str]:
+        """Normalize map() results into a plain list of URLs."""
+        raw_links = result.links if hasattr(result, "links") else (result or [])
+        links: List[str] = []
+        for item in raw_links:
+            if isinstance(item, str):
+                links.append(item)
+            elif isinstance(item, dict) and item.get("url"):
+                links.append(item["url"])
+            elif hasattr(item, "url") and getattr(item, "url"):
+                links.append(item.url)
+        return links
+
+    def _normalize_search_results(self, result: Any) -> List[Any]:
+        """Flatten v2 grouped search results while tolerating older SDK responses."""
+        data = getattr(result, "data", None)
+        if isinstance(data, list):
+            return list(data)
+        if isinstance(result, dict):
+            return list(result.get("data") or result.get("results") or [])
+
+        items: List[Any] = []
+        for attr in ("web", "news", "images"):
+            group = getattr(result, attr, None)
+            if group:
+                items.extend(group)
+        return items
+
+    def _build_v2_scrape_kwargs(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Translate legacy params dicts into Firecrawl v2 keyword arguments."""
+        kwargs: Dict[str, Any] = {}
+        mapping = {
+            "waitFor": "wait_for",
+            "onlyMainContent": "only_main_content",
+            "skipTLSVerification": "skip_tls_verification",
+            "removeBase64Images": "remove_base64_images",
+            "fastMode": "fast_mode",
+            "useMock": "use_mock",
+            "blockAds": "block_ads",
+            "maxAge": "max_age",
+            "storeInCache": "store_in_cache",
+        }
+        for key, value in params.items():
+            if value is None:
+                continue
+            kwargs[mapping.get(key, key)] = value
+        return kwargs
+
+    def _call_scrape(self, url: str, params: Dict[str, Any]) -> Any:
+        """Call the installed Firecrawl scrape method with v2-first compatibility."""
+        scrape = getattr(self.firecrawl, "scrape", None)
+        if callable(scrape):
+            return scrape(url, **self._build_v2_scrape_kwargs(params))
+
+        scrape_url = getattr(self.firecrawl, "scrape_url", None)
+        if callable(scrape_url):
+            return scrape_url(url, params=params)
+
+        raise AttributeError("Firecrawl client does not expose scrape() or scrape_url()")
     
     async def scrape_url(
         self,
@@ -39,64 +120,65 @@ class BaseScraper(ABC):
         wait_for: Optional[int] = None,
         formats: Optional[List[str]] = None,
         timeout: Optional[int] = None,
+        proxy: str = "auto",
+        only_main_content: bool = True,
+        location: Optional[Dict[str, Any]] = None,
+        mobile: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
         Scrape a single URL using Firecrawl
-        
+
         Args:
             url: URL to scrape
             wait_for: Time to wait for JS rendering (ms)
             formats: Output formats (markdown, html, etc.)
             timeout: Request timeout (ms)
+            proxy: Proxy type – 'basic', 'stealth', 'enhanced', or 'auto'
+            only_main_content: Strip nav/footer/ads for cleaner output
+            location: Geolocation dict, e.g. {"country": "TR"}
+            mobile: Emulate a mobile device
             **kwargs: Additional Firecrawl parameters
-            
+
         Returns:
             Scraped data
         """
         wait_for = wait_for or config.firecrawl.wait_for
         formats = formats or config.firecrawl.formats
         timeout = timeout or config.firecrawl.timeout
-        
+
+        params: Dict[str, Any] = {
+            "formats": formats,
+            "waitFor": wait_for,
+            "timeout": timeout,
+            "onlyMainContent": only_main_content,
+            "proxy": proxy,
+            "mobile": mobile,
+            **kwargs,
+        }
+        if location:
+            params["location"] = location
+
         try:
             logger.info(f"Scraping URL: {url}")
-            
-            result = self.firecrawl.scrape(
-                url,
-                formats=formats,
-                wait_for=wait_for,
-                timeout=timeout,
-                **kwargs
-            )
-            
-            # Handle new Document object format
-            data = {}
-            if hasattr(result, 'html'):
-                data['html'] = result.html
-            if hasattr(result, 'markdown'):
-                data['markdown'] = result.markdown
-            if hasattr(result, 'metadata'):
-                data['metadata'] = result.metadata
-            
-            # Fallback for dict format (backward compatibility)
-            if not data and isinstance(result, dict):
-                data = result
-            
+            result = self._call_scrape(url, params)
+            data = self._normalize_document(result)
+
             logger.info(f"Successfully scraped: {url}")
             return {
                 "success": True,
                 "url": url,
                 "data": data,
-                "scraper": self.__class__.__name__
+                "scraper": self.__class__.__name__,
             }
-            
+
         except Exception as e:
             logger.error(f"Error scraping {url}: {e}")
             return {
                 "success": False,
                 "url": url,
                 "error": str(e),
-                "scraper": self.__class__.__name__
+                "scraper": self.__class__.__name__,
             }
     
     async def crawl_website(
@@ -359,10 +441,309 @@ class BaseScraper(ABC):
             logger.error(f"Error in parallel pagination scraping: {e}", exc_info=True)
             return []
     
+    # ------------------------------------------------------------------
+    # NEW: map() – discover all URLs on a website
+    # ------------------------------------------------------------------
+
+    async def map_url(
+        self,
+        url: str,
+        search: Optional[str] = None,
+        limit: int = 5000,
+        sitemap_only: bool = False,
+        include_subdomains: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Use Firecrawl map() to discover all URLs under a domain.
+
+        Args:
+            url: Base URL to map
+            search: Optional search query to filter discovered links
+            limit: Max links to return (up to 30 000)
+            sitemap_only: Return only sitemap.xml links
+            include_subdomains: Include subdomain links
+
+        Returns:
+            Dict with 'links' list and metadata
+        """
+        try:
+            logger.info(f"Mapping URL: {url} (search={search!r}, limit={limit})")
+            map_call = getattr(self.firecrawl, "map", None)
+            if callable(map_call):
+                result = map_call(
+                    url,
+                    limit=limit,
+                    search=search,
+                    include_subdomains=include_subdomains,
+                    sitemap="only" if sitemap_only else None,
+                )
+            else:
+                params: Dict[str, Any] = {
+                    "limit": limit,
+                    "sitemapOnly": sitemap_only,
+                    "includeSubdomains": include_subdomains,
+                }
+                if search:
+                    params["search"] = search
+                result = self.firecrawl.map_url(url, params=params)
+
+            links = self._normalize_links(result)
+            logger.info(f"Map found {len(links)} links for {url}")
+            return {
+                "success": True,
+                "url": url,
+                "links": links,
+                "total": len(links),
+                "scraper": self.__class__.__name__,
+            }
+        except Exception as e:
+            logger.error(f"Error mapping {url}: {e}")
+            return {
+                "success": False,
+                "url": url,
+                "links": [],
+                "error": str(e),
+                "scraper": self.__class__.__name__,
+            }
+
+    # ------------------------------------------------------------------
+    # NEW: batch_scrape() – scrape many URLs in one job
+    # ------------------------------------------------------------------
+
+    async def batch_scrape_urls(
+        self,
+        urls: List[str],
+        formats: Optional[List[str]] = None,
+        wait_for: Optional[int] = None,
+        proxy: str = "auto",
+        only_main_content: bool = True,
+        poll_interval: int = 5,
+        max_concurrency: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Use Firecrawl batch_scrape() to scrape multiple URLs in a single job.
+
+        Significantly more efficient than scraping one-by-one for 5+ URLs.
+
+        Args:
+            urls: List of URLs to scrape
+            formats: Output formats (default: markdown)
+            wait_for: Wait time for JS rendering (ms)
+            proxy: Proxy type – 'basic', 'stealth', 'enhanced', or 'auto'
+            only_main_content: Strip nav/footer/ads
+            poll_interval: Seconds between status polls
+            max_concurrency: Max concurrent scrapes per job
+
+        Returns:
+            Dict with 'data' list (one entry per URL)
+        """
+        formats = formats or config.firecrawl.formats
+        wait_for = wait_for or config.firecrawl.wait_for
+
+        scrape_options: Dict[str, Any] = {
+            "formats": formats,
+            "waitFor": wait_for,
+            "onlyMainContent": only_main_content,
+            "proxy": proxy,
+        }
+
+        kwargs: Dict[str, Any] = {
+            "poll_interval": poll_interval,
+        }
+        if max_concurrency is not None:
+            kwargs["max_concurrency"] = max_concurrency
+
+        try:
+            logger.info(f"Batch scraping {len(urls)} URLs")
+            batch_scrape = getattr(self.firecrawl, "batch_scrape", None)
+            if callable(batch_scrape):
+                result = batch_scrape(urls, **self._build_v2_scrape_kwargs(scrape_options), **kwargs)
+                pages = result.data if hasattr(result, "data") else []
+            else:
+                kwargs["scrape_options"] = scrape_options
+                async_batch_scrape = getattr(self.firecrawl, "async_batch_scrape_urls", None)
+                if callable(async_batch_scrape):
+                    result = async_batch_scrape(urls, **kwargs)
+                    status = result.wait_for_completion(poll_interval=poll_interval)
+                    pages = status.data if hasattr(status, "data") else []
+                else:
+                    legacy_batch_scrape = getattr(self.firecrawl, "batch_scrape_urls", None)
+                    if not callable(legacy_batch_scrape):
+                        raise AttributeError("Firecrawl client does not expose batch_scrape() or batch_scrape_urls()")
+                    result = legacy_batch_scrape(urls, **kwargs)
+                    pages = result.data if hasattr(result, "data") else []
+            logger.info(f"Batch scrape completed: {len(pages)} pages")
+            return {
+                "success": True,
+                "total": len(pages),
+                "data": pages,
+                "scraper": self.__class__.__name__,
+            }
+        except Exception as e:
+            logger.error(f"Batch scrape failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "data": [],
+                "scraper": self.__class__.__name__,
+            }
+
+    # ------------------------------------------------------------------
+    # NEW: search() – web search + optional scrape of results
+    # ------------------------------------------------------------------
+
+    async def search_web(
+        self,
+        query: str,
+        limit: int = 10,
+        lang: str = "tr",
+        country: str = "TR",
+        tbs: Optional[str] = None,
+        scrape_results: bool = False,
+        scrape_formats: Optional[List[str]] = None,
+        only_main_content: bool = True,
+    ) -> Dict[str, Any]:
+        """
+        Use Firecrawl search() to run a web search and optionally scrape results.
+
+        Args:
+            query: Search query string
+            limit: Max results (up to 100)
+            lang: Language code (default 'tr' for Turkish)
+            country: Country code (default 'TR')
+            tbs: Time-based filter ('qdr:d' past day, 'qdr:w' past week, etc.)
+            scrape_results: Whether to scrape the returned URLs
+            scrape_formats: Formats to use when scraping results
+            only_main_content: Strip nav/footer when scraping
+
+        Returns:
+            Dict with 'results' list and optional scraped content
+        """
+        params: Dict[str, Any] = {
+            "limit": limit,
+            "lang": lang,
+            "country": country,
+        }
+        if tbs:
+            params["tbs"] = tbs
+        if scrape_results:
+            params["scrape_options"] = {
+                "formats": scrape_formats or ["markdown"],
+                "only_main_content": only_main_content,
+            }
+
+        try:
+            logger.info(f"Searching: {query!r} (lang={lang}, country={country})")
+            search_call = getattr(self.firecrawl, "search", None)
+            if not callable(search_call):
+                raise AttributeError("Firecrawl client does not expose search()")
+
+            result = search_call(
+                query,
+                limit=params["limit"],
+                tbs=params.get("tbs"),
+                location=country or lang,
+                scrape_options=params.get("scrape_options"),
+            )
+            items = self._normalize_search_results(result)
+            logger.info(f"Search returned {len(items)} results")
+            return {
+                "success": True,
+                "query": query,
+                "total": len(items),
+                "results": items,
+                "scraper": self.__class__.__name__,
+            }
+        except Exception as e:
+            logger.error(f"Search failed for {query!r}: {e}")
+            return {
+                "success": False,
+                "query": query,
+                "error": str(e),
+                "results": [],
+                "scraper": self.__class__.__name__,
+            }
+
+    # ------------------------------------------------------------------
+    # NEW: scrape_with_actions() – interactive browser automation
+    # ------------------------------------------------------------------
+
+    async def scrape_with_actions(
+        self,
+        url: str,
+        actions: List[Dict[str, Any]],
+        formats: Optional[List[str]] = None,
+        wait_for: Optional[int] = None,
+        proxy: str = "stealth",
+        location: Optional[Dict[str, Any]] = None,
+        only_main_content: bool = True,
+        mobile: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Scrape a page after executing browser actions (click, scroll, write, etc.).
+
+        Useful for SPAs (like KAP) that load content dynamically.
+
+        Args:
+            url: URL to scrape
+            actions: List of action dicts, e.g.:
+                [{"type": "wait", "milliseconds": 2000},
+                 {"type": "click", "selector": "#loadMore"},
+                 {"type": "scroll", "direction": "down"},
+                 {"type": "scrape"}]
+            formats: Output formats
+            wait_for: Initial wait time (ms)
+            proxy: Proxy type ('stealth' recommended for bot-protected sites)
+            location: Geolocation, e.g. {"country": "TR", "languages": ["tr-TR"]}
+            only_main_content: Strip nav/footer/ads
+            mobile: Emulate mobile device
+
+        Returns:
+            Dict with scraped content after actions
+        """
+        formats = formats or ["markdown", "html"]
+        wait_for = wait_for or config.firecrawl.wait_for
+
+        scrape_params: Dict[str, Any] = {
+            "formats": formats,
+            "actions": actions,
+            "waitFor": wait_for,
+            "onlyMainContent": only_main_content,
+            "proxy": proxy,
+            "mobile": mobile,
+        }
+        if location:
+            scrape_params["location"] = location
+
+        try:
+            logger.info(f"Scraping with {len(actions)} actions: {url}")
+            result = self._call_scrape(url, scrape_params)
+            data = self._normalize_document(result)
+
+            logger.info(f"Action-based scrape completed: {url}")
+            return {
+                "success": bool(data),
+                "url": url,
+                "data": data,
+                "scraper": self.__class__.__name__,
+            }
+        except Exception as e:
+            logger.error(f"Action-based scrape failed for {url}: {e}")
+            return {
+                "success": False,
+                "url": url,
+                "error": str(e),
+                "scraper": self.__class__.__name__,
+            }
+
+    # ------------------------------------------------------------------
+    # UPGRADED: scrape_url() – add proxy, location, onlyMainContent
+    # ------------------------------------------------------------------
+
     def save_to_db(self, data: Dict[str, Any], table_name: str):
         """
         Save scraped data to database
-        
+
         Args:
             data: Data to save
             table_name: Target table name
@@ -370,7 +751,7 @@ class BaseScraper(ABC):
         if not self.db_manager:
             logger.warning("No database manager configured")
             return
-        
+
         try:
             self.db_manager.insert_data(table_name, data)
             logger.info(f"Saved data to {table_name}")

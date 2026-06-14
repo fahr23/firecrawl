@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: firecrawl-api
+spec:
+  template:
+    spec:
+      containers:
+      - name: api
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2000m"
+          limits:
+            memory: "12Gi"
+            cpu: "6000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: playwright-service
+spec:
+  template:
+    spec:
+      containers:
+      - name: playwright-service
+        resources:
+          requests:
+            memory: "3Gi"
+            cpu: "1500m"
+          limits:
+            memory: "6Gi"
+            cpu: "3000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nuq-postgres
+spec:
+  template:
+    spec:
+      containers:
+      - name: postgres
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"

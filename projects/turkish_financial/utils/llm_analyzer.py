@@ -15,12 +15,23 @@ from datetime import datetime
 import os
 
 # Try to import Google Generative AI (optional dependency)
+# Prefer the new google.genai package; fall back to deprecated google.generativeai
 try:
-    import google.generativeai as genai
+    import google.genai as genai
     GEMINI_AVAILABLE = True
+    _GEMINI_LEGACY = False
 except ImportError:
-    GEMINI_AVAILABLE = False
-    genai = None
+    try:
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            import google.generativeai as genai  # type: ignore[no-redef]
+        GEMINI_AVAILABLE = True
+        _GEMINI_LEGACY = True
+    except ImportError:
+        GEMINI_AVAILABLE = False
+        _GEMINI_LEGACY = False
+        genai = None
 
 logger = logging.getLogger(__name__)
 

@@ -124,3 +124,67 @@ def test_kap_report_has_financial_data():
     
     assert report_with_data.has_financial_data() is True
     assert report_without_data.has_financial_data() is False
+
+
+def test_kap_report_company_code_too_long():
+    """Company code longer than 10 chars should raise ValueError."""
+    with pytest.raises(ValueError, match="10 characters or less"):
+        KAPReport(
+            id=1,
+            company_code="TOOLONGCODE",  # 11 chars
+            company_name=None,
+            report_type=None,
+            report_date=None,
+            title=None,
+            summary=None,
+            data=None,
+            scraped_at=datetime.now()
+        )
+
+
+def test_kap_report_no_financial_data_when_none():
+    """Report with None data has no financial data."""
+    report = KAPReport(
+        id=1,
+        company_code="AKBNK",
+        company_name=None,
+        report_type=None,
+        report_date=None,
+        title=None,
+        summary=None,
+        data=None,
+        scraped_at=datetime.now()
+    )
+    assert report.has_financial_data() is False
+
+
+def test_kap_report_is_recent_no_date():
+    """Report with no date is not recent."""
+    report = KAPReport(
+        id=1,
+        company_code="AKBNK",
+        company_name=None,
+        report_type=None,
+        report_date=None,
+        title=None,
+        summary=None,
+        data=None,
+        scraped_at=datetime.now()
+    )
+    assert report.is_recent() is False
+
+
+def test_kap_report_get_content_all_none():
+    """get_content returns empty string when all fields are None."""
+    report = KAPReport(
+        id=1,
+        company_code="AKBNK",
+        company_name=None,
+        report_type=None,
+        report_date=None,
+        title=None,
+        summary=None,
+        data=None,
+        scraped_at=datetime.now()
+    )
+    assert report.get_content() == ""

@@ -781,6 +781,173 @@ class KAPScraper(BaseScraper):
         
         return scrape_result
 
+    # ------------------------------------------------------------------
+    # NEW: map_kap_disclosures() – discover all KAP disclosure URLs
+    # ------------------------------------------------------------------
+
+    async def map_kap_disclosures(
+        self,
+        company_code: Optional[str] = None,
+        limit: int = 1000,
+    ) -> Dict[str, Any]:
+        """
+        Use Firecrawl map() to discover disclosure URLs on KAP.
+
+        Because KAP is a SPA, the map call crawls the sitemap and indexed
+        pages to surface direct disclosure links.
+
+        Args:
+            company_code: If given, filter discovered links to this company code
+            limit: Maximum links to return
+
+        Returns:
+            Dict with 'links' list filtered to KAP disclosure URLs
+        """
+        search_query = f"{company_code} bildirimi" if company_code else None
+        result = await self.map_url(
+            self.BASE_URL,
+            search=search_query,
+            limit=limit,
+        )
+        # Filter to known disclosure URL patterns
+        if result.get("success"):
+            links = result.get("links", [])
+            disclosure_links = [
+                lnk for lnk in links
+                if "/BildirimPdf/" in lnk
+                or "/bildirimi/" in lnk
+                or "/tr/Bildirim" in lnk
+            ]
+            result["disclosure_links"] = disclosure_links
+            result["disclosure_count"] = len(disclosure_links)
+            logger.info(
+                f"Found {len(disclosure_links)} disclosure links out of {len(links)} total"
+            )
+        return result
+
+    # ------------------------------------------------------------------
+    # NEW: search_kap_news() – web search for KAP financial news
+    # ------------------------------------------------------------------
+
+    async def search_kap_news(
+        self,
+        company_code: str,
+        days_back: int = 7,
+        limit: int = 20,
+    ) -> Dict[str, Any]:
+        """
+        Use Firecrawl search() to find recent KAP news for a company.
+
+        Args:
+            company_code: Turkish stock symbol (e.g. 'AKBNK', 'THYAO')
+            days_back: Restrict to news from the past N days
+            limit: Max search results
+
+        Returns:
+            Dict with 'results' list of news articles
+        """
+        tbs_map = {1: "qdr:d", 7: "qdr:w", 30: "qdr:m"}
+        tbs = tbs_map.get(days_back, "qdr:w")
+
+        query = f"{company_code} KAP bildirimi finansal"
+        return await self.search_web(
+            query=query,
+            limit=limit,
+            lang="tr",
+            country="TR",
+            tbs=tbs,
+            scrape_results=False,  # Just URLs; caller can batch-scrape if needed
+        )
+
+    # ------------------------------------------------------------------
+    # NEW: scrape_kap_page_with_actions() – handle KAP SPA with actions
+    # ------------------------------------------------------------------
+
+    async def scrape_kap_page_with_actions(
+        self,
+        url: str,
+        extra_actions: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Scrape a KAP page using browser actions to handle SPA rendering.
+
+        KAP is a Single Page Application so content loads after JS execution.
+        This method uses stealth proxy + wait actions to get the real content.
+
+        Args:
+            url: KAP URL to scrape
+            extra_actions: Additional actions to perform before extracting
+                          (e.g. clicking "load more" buttons)
+
+        Returns:
+            Scraped content after JS rendering
+        """
+        # Base actions: wait for SPA to hydrate then grab content
+        base_actions: List[Dict[str, Any]] = [
+            {"type": "wait", "milliseconds": 3000},
+            {"type": "scroll", "direction": "down"},
+            {"type": "wait", "milliseconds": 1000},
+        ]
+        if extra_actions:
+            base_actions.extend(extra_actions)
+        base_actions.append({"type": "scrape"})
+
+        return await self.scrape_with_actions(
+            url=url,
+            actions=base_actions,
+            formats=["markdown", "html"],
+            proxy="stealth",
+            location={"country": "TR", "languages": ["tr-TR", "tr"]},
+            only_main_content=True,
+        )
+
+    # ------------------------------------------------------------------
+    # NEW: batch_scrape_company_pages() – scrape multiple company pages
+    # ------------------------------------------------------------------
+
+    async def batch_scrape_company_pages(
+        self,
+        company_codes: List[str],
+        proxy: str = "stealth",
+    ) -> Dict[str, Any]:
+        """
+        Batch-scrape KAP company summary pages for a list of stock symbols.
+
+        Much more efficient than scraping one-by-one when processing many
+        companies simultaneously.
+
+        Args:
+            company_codes: List of Turkish stock symbols (e.g. ['AKBNK', 'THYAO'])
+            proxy: Proxy type – 'stealth' recommended for KAP
+
+        Returns:
+            Dict with results keyed by company code
+        """
+        urls = [
+            f"{self.BASE_URL}/tr/sirket-bilgileri/ozet/{code.lower()}"
+            for code in company_codes
+        ]
+        batch_result = await self.batch_scrape_urls(
+            urls=urls,
+            formats=["markdown"],
+            wait_for=3000,
+            proxy=proxy,
+            only_main_content=True,
+        )
+
+        # Map results back to company codes
+        per_company: Dict[str, Any] = {}
+        pages = batch_result.get("data", [])
+        for code, page in zip(company_codes, pages):
+            per_company[code] = page
+
+        return {
+            "success": batch_result.get("success", False),
+            "total": len(company_codes),
+            "scraped": len(pages),
+            "results": per_company,
+        }
+
     async def download_real_pdfs(
         self,
         days_back: int = 3,

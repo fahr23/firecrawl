@@ -17,7 +17,7 @@ class DatabaseConfig(BaseModel):
     database: str = Field(default_factory=lambda: os.getenv("APP_DB_NAME", "backtofuture"))
     user: str = Field(default_factory=lambda: os.getenv("APP_DB_USER", "backtofuture"))
     password: str = Field(default_factory=lambda: os.getenv("APP_DB_PASSWORD", "back2future"))
-    schema: str = Field(default_factory=lambda: os.getenv("DB_SCHEMA", "turkish_financial"))
+    db_schema: str = Field(default_factory=lambda: os.getenv("DB_SCHEMA", "turkish_financial"))
     pool_size: int = Field(default=20)
     
     def get_connection_string(self) -> str:
@@ -75,7 +75,7 @@ class Config:
             database=os.getenv("APP_DB_NAME", "backtofuture"),
             user=os.getenv("APP_DB_USER", "backtofuture"),
             password=os.getenv("APP_DB_PASSWORD", "back2future"),
-            schema=os.getenv("DB_SCHEMA", "turkish_financial"),
+            db_schema=os.getenv("DB_SCHEMA", "turkish_financial"),
         )
         
         self.firecrawl = FirecrawlConfig(

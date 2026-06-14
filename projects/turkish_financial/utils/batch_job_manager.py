@@ -234,6 +234,42 @@ class BatchJobManager:
         
         return jobs[:limit]
 
+    def cancel_job(self, job_id: str) -> bool:
+        """
+        Cancel a pending or running job
+
+        Args:
+            job_id: Job ID to cancel
+
+        Returns:
+            True if cancelled successfully, False if not found or already terminal
+        """
+        job = self.jobs.get(job_id)
+        if not job:
+            logger.warning(f"Job {job_id} not found")
+            return False
+
+        if job.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+            logger.warning(f"Job {job_id} is already in terminal state: {job.status}")
+            return False
+
+        job.status = JobStatus.CANCELLED
+        job.completed_at = datetime.now()
+        logger.info(f"Cancelled job {job_id}")
+        return True
+
+    def get_stats(self) -> Dict[str, int]:
+        """
+        Return job counts grouped by status
+
+        Returns:
+            Dict mapping status name to count
+        """
+        stats: Dict[str, int] = {s.value: 0 for s in JobStatus}
+        for job in self.jobs.values():
+            stats[job.status.value] += 1
+        return stats
+
 
 # Global job manager instance
 job_manager = BatchJobManager()

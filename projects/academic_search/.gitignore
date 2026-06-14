@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Test output
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Output files
+results/
+*.json
+*.md
+*.csv
+*.bib
+*.ris

@@ -1,0 +1,36 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: firecrawl
+
+resources:
+- 00-namespace.yaml
+- 01-configmap.yaml
+- 02-secrets.yaml
+- 10-redis.yaml
+- 11-rabbitmq.yaml
+- 12-postgres.yaml
+- 20-go-html-to-md.yaml
+- 21-playwright-service.yaml
+- 30-api.yaml
+- 40-ingress.yaml
+- 50-hpa.yaml
+
+images:
+- name: ghcr.io/firecrawl/firecrawl
+  newTag: latest
+- name: ghcr.io/firecrawl/playwright-service
+  newTag: latest
+- name: ghcr.io/firecrawl/go-html-to-md-service
+  newTag: latest
+- name: ghcr.io/firecrawl/nuq-postgres
+  newTag: latest
+
+commonLabels:
+  app.kubernetes.io/name: firecrawl
+  app.kubernetes.io/part-of: firecrawl
+
+configMapGenerator:
+- name: firecrawl-env-config
+  envs:
+  - .env

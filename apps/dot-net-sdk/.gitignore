@@ -1,0 +1,50 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.userprefs
+*.csproj.user
+*.sln.docstates
+*.nupkg
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# NuGet
+.nuget/
+*.nuget.props
+*.nuget.targets
+packages/
+
+# Visual Studio
+.vs/
+*.sln.ide
+*.VC.db
+*.VC.opendb
+
+# Rider
+.idea/
+
+# Tooling
+_ReSharper*/
+*.resharper
+
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/

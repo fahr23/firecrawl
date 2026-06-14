@@ -7,89 +7,60 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 def test_imports():
     """Test that all required modules can be imported"""
-    try:
-        import aiohttp
-        print("✓ aiohttp:", aiohttp.__version__)
-        
-        import fitz  # PyMuPDF
-        print("✓ PyMuPDF:", fitz.version)
-        
-        from fpdf import FPDF
-        print("✓ fpdf2: imported successfully")
-        
-        from openai import OpenAI
-        print("✓ openai: imported successfully")
-        
-        print("\n✓ All core dependencies installed!")
-        return True
-    except ImportError as e:
-        print(f"✗ Import error: {e}")
-        return False
+    import aiohttp
+    assert aiohttp.__version__
+
+    import fitz  # PyMuPDF
+    assert fitz.version
+
+    from fpdf import FPDF
+    assert FPDF is not None
+
+    from openai import OpenAI
+    assert OpenAI is not None
+
 
 def test_text_extractor():
     """Test text extractor utility"""
-    try:
-        from utils.text_extractor import TextExtractorFactory, PDFTextExtractor
-        
-        # Test factory
-        extractor = TextExtractorFactory.create('pdf')
-        assert isinstance(extractor, PDFTextExtractor)
-        print("✓ TextExtractorFactory working")
-        
-        # Test extractor has required methods
-        assert hasattr(extractor, 'extract_text')
-        assert hasattr(extractor, 'normalize_text')
-        print("✓ PDFTextExtractor has required methods")
-        
-        return True
-    except Exception as e:
-        print(f"✗ Text extractor error: {e}")
-        return False
+    from utils.text_extractor import TextExtractorFactory, PDFTextExtractor
+
+    # Test factory
+    extractor = TextExtractorFactory.create('pdf')
+    assert isinstance(extractor, PDFTextExtractor)
+
+    # Test extractor has required methods
+    assert hasattr(extractor, 'extract_text')
+    assert hasattr(extractor, 'normalize_text')
+
 
 def test_llm_analyzer():
     """Test LLM analyzer utility"""
-    try:
-        from utils.llm_analyzer import (
-            LLMAnalyzer, 
-            LocalLLMProvider, 
-            OpenAIProvider,
-            PDFReportGenerator
-        )
-        
-        # Test provider classes exist
-        assert LocalLLMProvider is not None
-        assert OpenAIProvider is not None
-        print("✓ LLM provider classes available")
-        
-        # Test analyzer initialization (without actual provider)
-        print("✓ LLMAnalyzer class available")
-        
-        # Test PDF generator
-        generator = PDFReportGenerator()
-        assert hasattr(generator, 'generate_report')
-        print("✓ PDFReportGenerator working")
-        
-        return True
-    except Exception as e:
-        print(f"✗ LLM analyzer error: {e}")
-        return False
+    from utils.llm_analyzer import (
+        LLMAnalyzer,
+        LocalLLMProvider,
+        OpenAIProvider,
+        PDFReportGenerator
+    )
+
+    # Test provider classes exist
+    assert LocalLLMProvider is not None
+    assert OpenAIProvider is not None
+    assert LLMAnalyzer is not None
+
+    # Test PDF generator
+    generator = PDFReportGenerator()
+    assert hasattr(generator, 'generate_report')
+
 
 def test_kap_scraper_enhancements():
     """Test KAP scraper has new methods"""
-    try:
-        from scrapers.kap_scraper import KAPScraper
-        
-        # Test new methods exist
-        assert hasattr(KAPScraper, 'configure_llm')
-        assert hasattr(KAPScraper, 'download_pdf_attachment')
-        assert hasattr(KAPScraper, 'analyze_reports_with_llm')
-        assert hasattr(KAPScraper, 'scrape_with_analysis')
-        print("✓ KAPScraper has all new methods")
-        
-        return True
-    except Exception as e:
-        print(f"✗ KAP scraper error: {e}")
-        return False
+    from scrapers.kap_scraper import KAPScraper
+
+    # Test new methods exist
+    assert hasattr(KAPScraper, 'configure_llm')
+    assert hasattr(KAPScraper, 'download_pdf_attachment')
+    assert hasattr(KAPScraper, 'analyze_reports_with_llm')
+    assert hasattr(KAPScraper, 'scrape_with_analysis')
 
 if __name__ == "__main__":
     print("=" * 60)

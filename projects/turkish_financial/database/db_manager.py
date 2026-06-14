@@ -21,7 +21,7 @@ class DatabaseManager:
     def __init__(self):
         """Initialize database connection pool"""
         try:
-            self.schema = config.database.schema
+            self.schema = config.database.db_schema
             self.pool = pool.SimpleConnectionPool(
                 minconn=1,
                 maxconn=config.database.pool_size,
