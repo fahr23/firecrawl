@@ -141,34 +141,63 @@ def main():
     if not os.path.exists(DOWNLOAD_DIR):
         os.makedirs(DOWNLOAD_DIR)
 
+    job_start = time.perf_counter()
+    job_start_ts = datetime.now().isoformat()
+    print(f"[*] Job started at {job_start_ts}")
+
     # Setup session with cookies (makes requests look more legitimate)
     session = setup_session()
-    
+
     # Use API date format (YYYY-MM-DD) which is confirmed working
     from_date = get_date_string(DAYS_TO_LOOK_BACK, format_type="api")
     to_date = get_date_string(0, format_type="api")  # Today
-    
+
     # 1. Get the list
     data = fetch_disclosure_list(session, from_date, to_date)
-    
+
     if not data:
         print("No reports found or API access denied.")
         return
 
     print(f"[*] Found {len(data)} reports. Starting download sequence...")
-    
+
+    downloaded = 0
+    skipped = 0
+    failed = 0
+
     # 2. Iterate and Download
     for idx, item in enumerate(data, 1):
-        # Extract key fields
         d_id = item.get('disclosureIndex')
         d_title = item.get('kapTitle', 'No_Title')
         stock_code = item.get('stockCodes', 'GENEL')
-        
+
         if d_id:
             print(f"[{idx}/{len(data)}] Processing: {stock_code} - {d_title[:50]}...")
-            download_pdf(session, d_id, d_title, stock_code)
-            # Polite delay to prevent IP ban (simulates human behavior)
+            safe_title = "".join([c for c in d_title if c.isalnum() or c in (' ', '-', '_')]).strip()[:60]
+            filepath = os.path.join(DOWNLOAD_DIR, f"{stock_code}_{safe_title}_{d_id}.pdf")
+            if os.path.exists(filepath):
+                skipped += 1
+            else:
+                before = os.path.exists(filepath)
+                download_pdf(session, d_id, d_title, stock_code)
+                if os.path.exists(filepath):
+                    downloaded += 1
+                else:
+                    failed += 1
             time.sleep(0.3)
+
+    job_end = time.perf_counter()
+    job_end_ts = datetime.now().isoformat()
+    duration_s = round(job_end - job_start, 2)
+
+    print()
+    print("=" * 60)
+    print(f"[✓] Job completed")
+    print(f"    Started:   {job_start_ts}")
+    print(f"    Completed: {job_end_ts}")
+    print(f"    Duration:  {duration_s}s")
+    print(f"    Reports:   {len(data)} total | {downloaded} downloaded | {skipped} skipped | {failed} failed")
+    print("=" * 60)
 
 if __name__ == "__main__":
     main()

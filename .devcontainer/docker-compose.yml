@@ -18,7 +18,7 @@ services:
     # Override dependencies to include all required services for development
     depends_on:
       - redis
-      - playwright-service
+      - playwright-m
       - go-html-to-md-service
 
     # Uncomment the next four lines if you will use a ptrace-based debugger like C++, Go, and Rust.

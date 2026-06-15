@@ -44,6 +44,11 @@ class FirecrawlConfig(BaseModel):
     formats: list[str] = Field(default=["markdown", "html"])
     max_retries: int = Field(default=3)
     retry_backoff: int = Field(default=2)
+    # Aligns with NuQ per-tenant concurrency cap (upstream #3758)
+    max_batch_concurrency: int = Field(
+        default=5,
+        description="Max concurrent scrapes per batch job (NuQ server-enforced)"
+    )
 
 
 class ScraperConfig(BaseModel):

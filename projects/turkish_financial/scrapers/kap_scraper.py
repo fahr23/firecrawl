@@ -19,7 +19,7 @@ This approach is much more efficient than HTML crawling because:
 import logging
 import asyncio
 import aiohttp
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
 from bs4 import BeautifulSoup
@@ -33,12 +33,74 @@ import os
 
 logger = logging.getLogger(__name__)
 
+# --- Module-level schema constants ---
+# Keeping these as module-level singletons ensures Firecrawl's deterministic JSON
+# billing kicks in: repeated calls with the same schema object are billed at
+# 3 credits (cached script) instead of 10 (codegen). See upstream #3750.
+
+KAP_REPORT_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "company": {"type": "string"},
+        "report_type": {"type": "string"},
+        "date": {"type": "string"},
+        "title": {"type": "string"},
+        "summary": {"type": "string"},
+        "attachments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "url": {"type": "string"},
+                    "type": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+KAP_REPORT_PROMPT = "Extract report details including attachments"
+
+BIST_INDICES_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "indices": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "companies": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "code": {"type": "string"},
+                                "name": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+            },
+        }
+    },
+}
+BIST_INDICES_PROMPT = "Extract all indices and their company codes and names"
+
 
 class KAPScraper(BaseScraper):
     """Scraper for KAP (Turkish Public Disclosure Platform) with PDF extraction and LLM analysis"""
     
     BASE_URL = "https://www.kap.org.tr"
-    
+
+    # Ordered Firecrawl proxy tiers to try when clearing KAP's anti-bot on /api/ JSON
+    # endpoints. Self-hosted Firecrawl clears it with `basic`; Cloud usually needs `stealth`.
+    # Override via env, e.g. KAP_FIRECRAWL_PROXY="stealth,basic".
+    KAP_FIRECRAWL_PROXIES = [
+        p.strip() for p in os.getenv("KAP_FIRECRAWL_PROXY", "basic,auto,stealth").split(",")
+        if p.strip()
+    ]
+
     def __init__(self, *args, **kwargs):
         """Initialize KAP scraper with extractors and analyzers"""
         super().__init__(*args, **kwargs)
@@ -534,34 +596,11 @@ class KAPScraper(BaseScraper):
             url = f"{self.BASE_URL}/tr/api/memberDisclosureQuery?member={company_code}"
         
         logger.info(f"Scraping report: {url}")
-        
-        # Extract structured report data
-        schema = {
-            "type": "object",
-            "properties": {
-                "company": {"type": "string"},
-                "report_type": {"type": "string"},
-                "date": {"type": "string"},
-                "title": {"type": "string"},
-                "summary": {"type": "string"},
-                "attachments": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "url": {"type": "string"},
-                            "type": {"type": "string"}
-                        }
-                    }
-                }
-            }
-        }
-        
+
         result = await self.extract_with_schema(
             url,
-            schema=schema,
-            prompt="Extract report details including attachments"
+            schema=KAP_REPORT_SCHEMA,
+            prompt=KAP_REPORT_PROMPT,
         )
         
         if result.get("success") and self.db_manager:
@@ -581,37 +620,11 @@ class KAPScraper(BaseScraper):
         """
         url = f"{self.BASE_URL}/tr/Endeksler"
         logger.info(f"Scraping BIST indices: {url}")
-        
-        # Extract indices and companies
-        schema = {
-            "type": "object",
-            "properties": {
-                "indices": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "companies": {
-                                "type": "array",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "code": {"type": "string"},
-                                        "name": {"type": "string"}
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
+
         result = await self.extract_with_schema(
             url,
-            schema=schema,
-            prompt="Extract all indices and their company codes and names"
+            schema=BIST_INDICES_SCHEMA,
+            prompt=BIST_INDICES_PROMPT,
         )
         
         if result.get("success") and self.db_manager:
@@ -948,6 +961,372 @@ class KAPScraper(BaseScraper):
             "results": per_company,
         }
 
+    # ------------------------------------------------------------------
+    # NEW: financial statements ("Finansal Tablolar") → fundamental analysis
+    #
+    # KAP serves financial tables through its financialTable API (verified routes):
+    #   GET /tr/api/financialTable/listCompanyExcelMembers/{mkkMemberOid}/{year}/{term}
+    #       → JSON list of {disclosureIndex, pdOid, year, period, stockCode, ...}
+    #         (term "T" returns every period; period 4 == annual, 1-3 == interim)
+    #   GET /tr/api/financialTable/download/{disclosureIndex}/{lang}  → .xlsx workbook
+    #
+    # The JSON list is fetched through Firecrawl (proxy=stealth, TR) to clear KAP's
+    # anti-bot SPA layer; the binary .xlsx is fetched directly (Firecrawl returns
+    # rendered text, not binary). Both degrade to a direct request as a fallback.
+    # ------------------------------------------------------------------
+
+    # KAP `period` codes on financial-table members.
+    _ANNUAL_PERIOD = 4
+
+    @staticmethod
+    def _extract_json(text: Optional[str]) -> Optional[Any]:
+        """Pull the first JSON array/object out of a (possibly HTML-wrapped) body."""
+        import json
+
+        if not text:
+            return None
+        text = text.strip()
+        try:
+            return json.loads(text)
+        except (ValueError, TypeError):
+            pass
+        for open_c, close_c in (("[", "]"), ("{", "}")):
+            i, j = text.find(open_c), text.rfind(close_c)
+            if i != -1 and j > i:
+                try:
+                    return json.loads(text[i:j + 1])
+                except ValueError:
+                    continue
+        return None
+
+    async def _fetch_kap_api_json(
+        self, url: str, prefer_firecrawl: bool = True
+    ) -> Optional[Any]:
+        """
+        Fetch a KAP JSON API endpoint, clearing the anti-bot SPA via Firecrawl.
+
+        KAP serves its regular pages fine through a browser engine but guards its
+        ``/api/...`` JSON endpoints with an anti-bot interstitial. Which proxy clears it
+        depends on the Firecrawl deployment: self-hosted Firecrawl has no working stealth
+        proxy and `proxy="stealth"` trips ``document_antibot`` there, whereas `basic`
+        succeeds; Firecrawl Cloud generally needs `stealth`. We therefore try a configurable
+        ordered list (``KAP_FIRECRAWL_PROXY``, default ``basic,auto,stealth``) and return
+        the first parseable JSON. Falls back to a direct GET last. Returns parsed JSON or None.
+        """
+        if prefer_firecrawl:
+            for proxy in self.KAP_FIRECRAWL_PROXIES:
+                try:
+                    result = await self.scrape_url(
+                        url,
+                        formats=["markdown", "rawHtml"],
+                        proxy=proxy,
+                        only_main_content=False,
+                        location={"country": "TR", "languages": ["tr-TR", "tr"]},
+                    )
+                    if result.get("success"):
+                        data = result.get("data") or {}
+                        for attr in ("rawHtml", "markdown", "html"):
+                            chunk = data.get(attr) if isinstance(data, dict) else getattr(data, attr, None)
+                            parsed = self._extract_json(chunk)
+                            if parsed is not None:
+                                return parsed
+                    logger.debug(f"KAP JSON via Firecrawl proxy={proxy} yielded no JSON for {url}")
+                except Exception as e:
+                    logger.debug(f"Firecrawl JSON fetch (proxy={proxy}) failed for {url}: {e}")
+
+        # Direct fallback.
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": f"{self.BASE_URL}/",
+        }
+        try:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        return self._extract_json(await resp.text())
+                    logger.warning(f"KAP API {url} returned HTTP {resp.status}")
+        except Exception as e:
+            logger.error(f"Direct KAP API fetch failed for {url}: {e}")
+        return None
+
+    async def list_company_excel_members(
+        self, member_oid: str, year: int, term: str = "T"
+    ) -> List[Dict[str, Any]]:
+        """
+        List a company's financial-table members for a year via the financialTable API.
+
+        Each item carries `disclosureIndex`, `pdOid`, `period` (1-4) and `year`. Term
+        "T" returns all periods of the year.
+        """
+        url = (
+            f"{self.BASE_URL}/tr/api/financialTable/listCompanyExcelMembers/"
+            f"{member_oid}/{year}/{term}"
+        )
+        data = await self._fetch_kap_api_json(url)
+        if isinstance(data, list):
+            return data
+        logger.warning(f"No excel members for oid={member_oid} year={year}")
+        return []
+
+    async def download_financial_table_xlsx(
+        self, disclosure_index: Any, pd_oid: Optional[str] = None, lang: str = "tr"
+    ) -> Optional[bytes]:
+        """
+        Download a financial-table workbook (.xlsx) for a member.
+
+        Mirrors KAP's own frontend call (reverse-engineered from the SPA):
+            GET /{lang}/api/financialTable/download/{idA}/{idB}   Accept-Language: {lang}
+        which streams the workbook as a binary blob (Content-Disposition filename).
+        The two trailing ids are the member's `disclosureIndex` and `pdOid`; the exact
+        order is not documented, so we try both and return the first binary workbook.
+        Fetched directly (binary → not Firecrawl-able), like the existing PDF flow.
+        Returns the workbook bytes, or None when KAP has no file for that member.
+        """
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "*/*",
+            "Accept-Language": lang,
+            "Referer": f"{self.BASE_URL}/tr/finansal-tablolar",
+        }
+        # Candidate id orderings (with and without pdOid, in case templates differ).
+        pairs = []
+        if pd_oid:
+            pairs = [(disclosure_index, pd_oid), (pd_oid, disclosure_index)]
+        else:
+            pairs = [(disclosure_index, lang)]
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=60)
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                for a, b in pairs:
+                    url = f"{self.BASE_URL}/{lang}/api/financialTable/download/{a}/{b}"
+                    try:
+                        async with session.get(url) as resp:
+                            if resp.status != 200:
+                                continue
+                            body = await resp.read()
+                            # xlsx is a zip: must start with the PK local-file signature.
+                            if body[:2] == b"PK":
+                                return body
+                    except Exception as e:  # pragma: no cover - per-candidate variability
+                        logger.debug(f"FT download attempt failed ({url}): {e}")
+            logger.warning(f"FT download produced no workbook for {disclosure_index}")
+        except Exception as e:
+            logger.error(f"FT download failed for {disclosure_index}: {e}")
+        return None
+
+    async def fetch_financial_statement_facts(
+        self, disclosure_index: Any, pd_oid: Optional[str] = None
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """
+        Fetch one financial-report's (current, prior) canonical facts.
+
+        KAP removed the public .xlsx download (it 404s even via a real browser), so the
+        primary source is now the financial-report **disclosure page**
+        (`/tr/Bildirim/{disclosureIndex}`), scraped to markdown via Firecrawl (the
+        anti-bot SPA clears with the same proxy tiers as the JSON API) and parsed by
+        `kap_financial_parser.parse_financial_table_markdown`. Falls back to the legacy
+        .xlsx path when the page yields nothing. Returns ({}, {}) when both fail.
+        """
+        from scrapers.kap_financial_parser import (
+            parse_financial_table_markdown,
+            parse_financial_table_xlsx,
+            normalize_facts,
+        )
+
+        url = f"{self.BASE_URL}/tr/Bildirim/{disclosure_index}"
+        for proxy in self.KAP_FIRECRAWL_PROXIES:
+            try:
+                result = await self.scrape_url(
+                    url, formats=["markdown"], proxy=proxy, only_main_content=False,
+                    wait_for=6000, timeout=90000,
+                    location={"country": "TR", "languages": ["tr-TR", "tr"]},
+                )
+                if not result.get("success"):
+                    continue
+                data = result.get("data") or {}
+                md = data.get("markdown") if isinstance(data, dict) else getattr(data, "markdown", None)
+                current, prior = parse_financial_table_markdown(md or "")
+                if current:
+                    return current, prior
+            except Exception as e:
+                logger.debug(f"FR markdown fetch (proxy={proxy}) failed for {disclosure_index}: {e}")
+
+        # Legacy .xlsx fallback (currently dead at KAP, kept for resilience).
+        xlsx = await self.download_financial_table_xlsx(disclosure_index, pd_oid=pd_oid)
+        if xlsx:
+            raw_current, raw_prior = parse_financial_table_xlsx(xlsx)
+            return normalize_facts(raw_current), normalize_facts(raw_prior)
+        return {}, {}
+
+    def process_financial_statement(
+        self,
+        *,
+        stock_code: str,
+        period: str,
+        raw_statement: Any,
+        company_name: Optional[str] = None,
+        fiscal_period: Optional[str] = None,
+        currency: Optional[str] = None,
+        reporting_standard: Optional[str] = None,
+        disclosure_index: Optional[str] = None,
+        prior_statement: Any = None,
+        market: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Parse → analyze → persist one instrument/period financial statement.
+
+        Pure orchestration over the parser, the FundamentalAnalyzer, and the
+        FundamentalRepository, so it is testable without any network access. Persists
+        both the canonical facts and the computed ratios when a db_manager is set.
+        Returns ``{stock_code, period, facts, payload, saved}``.
+        """
+        # Lazy imports: keep the scraper importable without pydantic (see tests/conftest).
+        from scrapers.kap_financial_parser import normalize_facts
+        from domain.services.fundamental_analyzer_service import FundamentalAnalyzer
+        from infrastructure.repositories.fundamental_repository import FundamentalRepository
+
+        facts = normalize_facts(raw_statement)
+        prior_facts = normalize_facts(prior_statement) if prior_statement is not None else None
+        payload = FundamentalAnalyzer().analyze(facts, prior_facts=prior_facts, market=market)
+
+        saved = False
+        if self.db_manager is not None:
+            try:
+                repo = FundamentalRepository(self.db_manager)
+                repo.upsert_statement(
+                    stock_code=stock_code,
+                    period=period,
+                    facts=facts,
+                    company_name=company_name,
+                    fiscal_period=fiscal_period,
+                    currency=currency,
+                    reporting_standard=reporting_standard,
+                    disclosure_index=disclosure_index,
+                )
+                repo.upsert_fundamentals(
+                    stock_code=stock_code,
+                    period=period,
+                    payload=payload,
+                    company_name=company_name,
+                    fiscal_period=fiscal_period,
+                    currency=currency,
+                    reporting_standard=reporting_standard,
+                    source_disclosure_index=disclosure_index,
+                )
+                saved = True
+            except Exception as e:
+                logger.error(f"Persisting fundamentals failed for {stock_code} {period}: {e}")
+
+        return {
+            "stock_code": stock_code.upper(),
+            "period": period,
+            "facts": facts,
+            "payload": payload,
+            "saved": saved,
+        }
+
+    def _select_member(
+        self, members: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """Pick the most relevant statement: latest annual if present, else latest period."""
+        if not members:
+            return None
+        annual = [m for m in members if m.get("period") == self._ANNUAL_PERIOD]
+        pool = annual or members
+        return max(pool, key=lambda m: (m.get("year") or 0, m.get("period") or 0))
+
+    async def scrape_financial_statements(
+        self,
+        instruments: Optional[List[str]] = None,
+        year: Optional[int] = None,
+        term: str = "T",
+        market_data: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch KAP "Finansal Tablolar" via the financialTable API and save fundamentals.
+
+        For each instrument we resolve its `mkkMemberOid`, list the year's financial-table
+        members, pick the latest annual statement, download its .xlsx, parse the current
+        and comparative period columns, derive the §3 fundamental metrics, and persist
+        them. The comparative column gives the prior period used for YoY growth.
+
+        Args:
+            instruments: BIST tickers; defaults to those resolvable to an mkkMemberOid.
+            year: reporting year to list; defaults to the current calendar year.
+            term: KAP term code ("T" = all periods of the year).
+            market_data: optional ``{ticker: {"price": .., "shares_outstanding": ..}}``
+                to enable price multiples (P/E, P/B, EV/EBITDA, dividend yield).
+
+        Returns a per-instrument summary; instruments we could not resolve / fetch /
+        parse are reported under ``failed`` (we never fabricate data).
+        """
+        from infrastructure.contracts.instrument_identity_map import (
+            STATIC_MEMBER_OID_MAP,
+            resolve_member_oid,
+        )
+
+        if not instruments:
+            instruments = sorted(STATIC_MEMBER_OID_MAP.keys())
+        year = year or datetime.now().year
+        market_data = market_data or {}
+
+        processed: List[Dict[str, Any]] = []
+        failed: List[Dict[str, Any]] = []
+
+        for ticker in instruments:
+            code = ticker.strip().upper()
+            oid = resolve_member_oid(code, db_manager=self.db_manager)
+            if not oid:
+                failed.append({"stock_code": code, "reason": "no_member_oid"})
+                continue
+
+            members = await self.list_company_excel_members(oid, year, term)
+            member = self._select_member(members)
+            if not member:
+                failed.append({"stock_code": code, "reason": "no_financial_table"})
+                continue
+
+            disclosure_index = member.get("disclosureIndex")
+            current_labels, prior_labels = await self.fetch_financial_statement_facts(
+                disclosure_index, pd_oid=member.get("pdOid")
+            )
+            if not current_labels:
+                failed.append({"stock_code": code, "reason": "no_parsable_facts"})
+                continue
+
+            period_code = member.get("period") or self._ANNUAL_PERIOD
+            is_annual = period_code == self._ANNUAL_PERIOD
+            member_year = member.get("year") or year
+            period = str(member_year) if is_annual else f"{member_year}-Q{period_code}"
+
+            result = self.process_financial_statement(
+                stock_code=code,
+                period=period,
+                raw_statement=current_labels,
+                prior_statement=prior_labels or None,
+                company_name=member.get("title"),
+                fiscal_period="annual" if is_annual else "interim",
+                currency="TRY",
+                reporting_standard="TFRS",
+                disclosure_index=str(disclosure_index) if disclosure_index is not None else None,
+                market=market_data.get(code),
+            )
+            (processed if result["facts"] else failed).append(
+                result if result["facts"]
+                else {"stock_code": code, "reason": "no_parsable_facts"}
+            )
+
+        return {
+            "success": True,
+            "requested": len(instruments),
+            "processed": len(processed),
+            "failed": failed,
+            "results": processed,
+        }
+
     async def download_real_pdfs(
         self,
         days_back: int = 3,
@@ -1243,3 +1622,654 @@ class KAPScraper(BaseScraper):
                 "kap_txt_ek_directory": kap_txt_ek_directory,
             },
         }
+
+    # ------------------------------------------------------------------
+    # POST helper — mirrors _fetch_kap_api_json but for POST bodies
+    # ------------------------------------------------------------------
+
+    async def _post_kap_api_json(
+        self, url: str, body: Dict[str, Any]
+    ) -> Optional[Any]:
+        """
+        POST JSON to a KAP API endpoint and return the parsed JSON response.
+
+        Unlike _fetch_kap_api_json (GET-only, Firecrawl-primary), this method goes
+        direct because Firecrawl does not support arbitrary POST bodies. It mimics
+        the browser request headers that KAP's SPA sends.
+        """
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8",
+            "Content-Type": "application/json",
+            "Origin": self.BASE_URL,
+            "Referer": f"{self.BASE_URL}/",
+        }
+        try:
+            timeout = aiohttp.ClientTimeout(total=30)
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                async with session.post(url, json=body) as resp:
+                    if resp.status == 200:
+                        return self._extract_json(await resp.text())
+                    logger.warning(f"KAP POST {url} → HTTP {resp.status}")
+        except Exception as e:
+            logger.error(f"KAP POST failed {url}: {e}")
+        return None
+
+    # ------------------------------------------------------------------
+    # GET-only member-OID resolution (avoids the blocked member/filter POST)
+    # ------------------------------------------------------------------
+    _OZET_LINK_RE = re.compile(
+        r"\[([A-ZÇĞİÖŞÜ0-9.,& ]{2,15})\]\("
+        r"(https://www\.kap\.org\.tr/tr/sirket-bilgileri/ozet/[0-9]+-[^)]+)\)"
+    )
+    _TICKER_RE = re.compile(r"^[A-Z0-9]{3,6}$")
+    # Seconds to pace between company-page fetches. KAP's anti-bot is rate-based, so a
+    # gentle crawl (resolve OIDs slowly, cache them in bist_companies) avoids tripping it
+    # on a self-hosted Firecrawl without rotating proxies. Crank up via KAP_PAGE_DELAY_S.
+    KAP_PAGE_DELAY_S = float(os.getenv("KAP_PAGE_DELAY_S", "4.0"))
+    # Tolerant of JSON-in-HTML escaping: the key appears as  mkkMemberOid\":\"<32hex>\"
+    _MEMBER_OID_RE = re.compile(r'mkkMemberOid[\\":\s]{1,10}([0-9a-f]{32})')
+
+    async def list_bist_companies_via_get(self) -> Dict[str, Dict[str, str]]:
+        """
+        Scrape KAP's public BIST companies page (GET) → {ticker: {url, name}}.
+
+        The page renders a table of every BIST company linking to its summary page
+        (`/tr/sirket-bilgileri/ozet/{kapId}-{slug}`). We map each ticker to that URL so
+        we can then read the company's `mkkMemberOid` off the summary page — all over
+        GET, sidestepping the blocked `member/filter` POST.
+        """
+        result = await self._scrape_kap_page("https://www.kap.org.tr/tr/bist-sirketler")
+        md = result or ""
+        companies: Dict[str, Dict[str, str]] = {}
+        for text, url in self._OZET_LINK_RE.findall(md):
+            code = text.strip().upper()
+            if not self._TICKER_RE.match(code):
+                continue
+            companies.setdefault(code, {"url": url, "name": ""})
+        logger.info(f"Discovered {len(companies)} BIST tickers via GET page")
+        return companies
+
+    async def resolve_member_oid_via_get(self, company_url: str) -> Optional[str]:
+        """Read a company's `mkkMemberOid` (32-hex) off its summary page (GET)."""
+        # The summary page hydrates its company data client-side, so wait for it and
+        # require the marker to be present before accepting the render.
+        result = await self._scrape_kap_page(
+            company_url, wait_for=8000, must_contain="mkkMemberOid"
+        )
+        if not result:
+            return None
+        m = self._MEMBER_OID_RE.search(result)
+        return m.group(1) if m else None
+
+    async def _scrape_kap_page(
+        self,
+        url: str,
+        wait_for: int = 6000,
+        must_contain: Optional[str] = None,
+        attempts: int = 2,
+    ) -> Optional[str]:
+        """
+        Scrape a KAP HTML page to rawHtml+markdown, clearing anti-bot via proxy tiers.
+
+        KAP pages hydrate their data client-side, so ``wait_for`` matters and
+        ``must_contain`` lets callers reject a not-yet-rendered shell (the page returns
+        a ~15 KB app shell before hydration and the full ~250 KB doc after). KAP's
+        anti-bot is rate-based and intermittently flags bursts with ``document_antibot``,
+        so we retry the proxy tiers a few times with exponential backoff.
+        """
+        for attempt in range(1, attempts + 1):
+            for proxy in self.KAP_FIRECRAWL_PROXIES:
+                try:
+                    res = await self.scrape_url(
+                        url, formats=["rawHtml", "markdown"], proxy=proxy,
+                        only_main_content=False, wait_for=wait_for,
+                        # KAP pages are heavy (~250 KB) and clear anti-bot in-engine;
+                        # the 30 s default is too tight and aborts as document_antibot.
+                        timeout=90000,
+                        location={"country": "TR", "languages": ["tr-TR", "tr"]},
+                    )
+                    if res.get("success"):
+                        data = res.get("data") or {}
+                        raw = data.get("rawHtml") if isinstance(data, dict) else getattr(data, "rawHtml", None)
+                        md = data.get("markdown") if isinstance(data, dict) else getattr(data, "markdown", None)
+                        body = (raw or "") + "\n" + (md or "")
+                        if body.strip() and (must_contain is None or must_contain in body):
+                            return body
+                except Exception as e:
+                    logger.debug(f"KAP page scrape (proxy={proxy}) failed for {url}: {e}")
+            if attempt < attempts:
+                await asyncio.sleep(2.0 * attempt)  # back off; KAP anti-bot is rate-based
+        return None
+
+    async def refresh_member_oids_via_get(
+        self, instruments: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Resolve mkkMemberOids over GET only and persist them to `bist_companies`.
+
+        Lists BIST companies from the public page, then for each requested ticker (or all
+        of STATIC_BIST_MAP when none given) reads its `mkkMemberOid` off the summary page.
+        Avoids the anti-bot-blocked `member/filter` POST entirely. Returns a summary.
+        """
+        from infrastructure.contracts.instrument_identity_map import (
+            STATIC_BIST_MAP,
+            STATIC_MEMBER_OID_MAP,
+        )
+
+        directory = await self.list_bist_companies_via_get()
+        if not directory:
+            return {"success": False, "error": "company_list_unavailable", "resolved": 0, "updated": 0}
+
+        wanted = [t.strip().upper() for t in (instruments or list(STATIC_BIST_MAP.keys()))]
+        resolved, updated, missing = {}, 0, []
+        for idx, code in enumerate(wanted):
+            entry = directory.get(code)
+            if not entry:
+                missing.append(code)
+                continue
+            if idx:
+                await asyncio.sleep(self.KAP_PAGE_DELAY_S)  # pace; KAP anti-bot is rate-based
+            oid = await self.resolve_member_oid_via_get(entry["url"])
+            if not oid:
+                missing.append(code)
+                continue
+            resolved[code] = oid
+            STATIC_MEMBER_OID_MAP[code] = oid  # benefit this session immediately
+            if self.db_manager is not None:
+                try:
+                    self.db_manager.upsert_bist_company(code, mkk_member_oid=oid)
+                    updated += 1
+                except Exception as e:
+                    logger.debug(f"upsert_bist_company({code}) failed: {e}")
+
+        return {
+            "success": True,
+            "method": "get",
+            "total_in_directory": len(directory),
+            "requested": len(wanted),
+            "resolved": len(resolved),
+            "updated": updated,
+            "missing": missing,
+            "oids": resolved,
+        }
+
+    # ------------------------------------------------------------------
+    # refresh_member_oids — populate bist_companies.mkk_member_oid
+    # ------------------------------------------------------------------
+
+    async def refresh_member_oids(self) -> Dict[str, Any]:
+        """
+        Query KAP's member/filter API to discover mkkMemberOid for every BIST company.
+
+        Fetches the full list of BIST (IGS) members from KAP, cross-references each
+        member's stockCodes with STATIC_BIST_MAP, and upserts the matched OIDs to
+        `bist_companies.mkk_member_oid` so that subsequent calls to
+        `resolve_member_oid()` use the DB-authoritative value instead of the static
+        seed (which currently only has ASELS).
+
+        Returns a summary dict with counts.
+        """
+        from infrastructure.contracts.instrument_identity_map import (
+            STATIC_BIST_MAP,
+            STATIC_MEMBER_OID_MAP,
+        )
+
+        url = f"{self.BASE_URL}/tr/api/member/filter"
+        body: Dict[str, Any] = {
+            "memberType": "IGS",
+            "keyword": "",
+            "isActive": "",
+            "pagingDto": {"currentPage": 1, "rowCount": 9999},
+        }
+        members = await self._post_kap_api_json(url, body)
+
+        if not isinstance(members, list):
+            # Some KAP endpoints wrap in {"data": [...]}
+            if isinstance(members, dict):
+                members = members.get("data") or members.get("members") or []
+        if not isinstance(members, list) or not members:
+            logger.warning("refresh_member_oids: no members returned from KAP")
+            return {"success": False, "error": "empty_response", "resolved": 0, "updated": 0}
+
+        # Build stockCode → mkkMemberOid
+        oid_by_code: Dict[str, str] = {}
+        for m in members:
+            oid = (
+                m.get("mkkMemberOid")
+                or m.get("memberOid")
+                or m.get("oid")
+                or ""
+            ).strip()
+            if not oid:
+                continue
+            raw_codes = m.get("stockCodes") or m.get("stockCode") or []
+            if isinstance(raw_codes, str):
+                raw_codes = [c.strip() for c in raw_codes.split(",") if c.strip()]
+            for code in raw_codes:
+                oid_by_code[code.upper()] = oid
+
+        # Update in-memory static map so this session benefits immediately.
+        STATIC_MEMBER_OID_MAP.update(oid_by_code)
+
+        # Persist to DB so future sessions benefit even without re-fetching.
+        updated = 0
+        errors: List[str] = []
+        if self.db_manager is not None:
+            # Upsert ALL discovered members (not just the ones in STATIC_BIST_MAP)
+            # because the DB may know about tickers we haven't hardcoded yet.
+            for code, oid in oid_by_code.items():
+                try:
+                    # Also carry the company name if the member record provides it.
+                    m_name = next(
+                        (
+                            (m.get("shortName") or m.get("companyName") or "").strip()
+                            for m in members
+                            if oid in (
+                                m.get("mkkMemberOid", ""),
+                                m.get("memberOid", ""),
+                                m.get("oid", ""),
+                            )
+                        ),
+                        None,
+                    )
+                    self.db_manager.upsert_bist_company(
+                        code, name=m_name or None, mkk_member_oid=oid
+                    )
+                    updated += 1
+                except Exception as e:
+                    errors.append(f"{code}: {e}")
+
+        return {
+            "success": True,
+            "total_kap_members": len(members),
+            "resolved": len(oid_by_code),
+            "updated": updated,
+            "errors": errors,
+        }
+
+    # ------------------------------------------------------------------
+    # scrape_and_save_disclosures — proper company disclosures → kap_disclosures
+    # ------------------------------------------------------------------
+
+    async def scrape_and_save_disclosures(
+        self,
+        days_back: int = 7,
+        instruments: Optional[List[str]] = None,
+        subject_list: Optional[List[str]] = None,
+        fetch_pdf_text: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Fetch KAP company disclosures via memberDisclosureQuery and save to kap_disclosures.
+
+        Unlike the legacy ``scrape()`` method (which targets ``kap_reports``), this
+        method uses the canonical ``kap_disclosures`` table with proper columns for
+        ``stock_code``, ``disclosure_id`` (=disclosureIndex), ``subject``, ``is_late``,
+        and ``has_attachment`` so downstream sentiment analysis can query them cleanly.
+
+        Args:
+            days_back: How many calendar days back to fetch.
+            instruments: Optional list of BIST tickers to filter (resolves to OIDs).
+            subject_list: Optional KAP subject codes to filter (e.g. ["FR", "ÖZKD"]).
+            fetch_pdf_text: Whether to download and extract main PDF text content.
+
+        Returns:
+            {"success": bool, "total": int, "saved": int, "disclosures": list}
+        """
+        from infrastructure.contracts.instrument_identity_map import resolve_member_oid
+
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days_back)
+
+        # Resolve tickers to OIDs for server-side filtering (faster than client filter).
+        oid_list: List[str] = []
+        if instruments:
+            for ticker in instruments:
+                oid = resolve_member_oid(ticker, db_manager=self.db_manager)
+                if oid:
+                    oid_list.append(oid)
+
+        body: Dict[str, Any] = {
+            "fromDate": start_date.strftime("%Y-%m-%d"),
+            "toDate": end_date.strftime("%Y-%m-%d"),
+            "year": "",
+            "prd": "",
+            "term": "",
+            "ruleType": "",
+            "bdkReview": "",
+            "disclosureClass": "",
+            "index": "",
+            "market": "",
+            "isLate": "",
+            "subjectList": subject_list or [],
+            "mkkMemberOidList": oid_list,
+            "inactiveMkkMemberOidList": [],
+            "bdkMemberOidList": [],
+            "mainSector": "",
+            "sector": "",
+            "subSector": "",
+            "memberType": "IGS",
+            "fromSrc": "N",
+            "srcCategory": "",
+            "discIndex": [],
+        }
+
+        url = f"{self.BASE_URL}/tr/api/memberDisclosureQuery"
+        data = await self._post_kap_api_json(url, body)
+
+        if not isinstance(data, list):
+            logger.error(f"memberDisclosureQuery returned unexpected type: {type(data)}")
+            return {
+                "success": False,
+                "error": "invalid_response",
+                "total": 0,
+                "saved": 0,
+                "disclosures": [],
+            }
+
+        saved = 0
+        disclosures: List[Dict[str, Any]] = []
+
+        for item in data:
+            disclosure_index = str(item.get("disclosureIndex") or "").strip()
+            if not disclosure_index:
+                continue
+
+            # Parse stock codes — KAP returns a comma-separated string.
+            raw_codes = (item.get("stockCodes") or "").strip()
+            stock_codes = [c.strip() for c in raw_codes.split(",") if c.strip()]
+            primary_code = stock_codes[0] if stock_codes else None
+
+            # Parse date.
+            publish_date = None
+            date_str = (item.get("publishDate") or "").split("T")[0]
+            if date_str:
+                try:
+                    publish_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                except ValueError:
+                    pass
+
+            title = (item.get("kapTitle") or item.get("subject") or "").strip()
+            subject = (item.get("subject") or "").strip()
+            disclosure_type = (
+                item.get("disclosureType")
+                or item.get("disclosureClass")
+                or ""
+            ).strip()
+            subject_code = str(item.get("disclosureClass") or "").strip()
+            has_attachment = bool(item.get("attachmentCount"))
+            is_late = bool(item.get("isLate"))
+
+            detail_url = f"{self.BASE_URL}/tr/Bildirim/{disclosure_index}"
+            pdf_url = f"{self.BASE_URL}/tr/BildirimPdf/{disclosure_index}"
+
+            pdf_text: Optional[str] = None
+            if fetch_pdf_text and self.pdf_downloader:
+                try:
+                    result = await self.pdf_downloader.download_and_extract(pdf_url)
+                    if result:
+                        pdf_text = result.get("extracted_text")
+                except Exception as e:
+                    logger.debug(f"PDF extraction failed for {disclosure_index}: {e}")
+
+            disc_row: Dict[str, Any] = {
+                "disclosure_id": disclosure_index,
+                "stock_code": primary_code,
+                "company_name": item.get("memberName") or raw_codes,
+                "disclosure_type": disclosure_type,
+                "disclosure_date": publish_date,
+                "timestamp": item.get("publishDate") or "",
+                "has_attachment": has_attachment,
+                "detail_url": detail_url,
+                "pdf_url": pdf_url,
+                "content": title,
+                "subject": subject,
+                "subject_code": subject_code,
+                "is_late": is_late,
+                "data": {
+                    "stock_codes": stock_codes,
+                    "disclosure_class": item.get("disclosureClass"),
+                    "rule_type_term": item.get("ruleTypeTerm"),
+                    "attachment_count": item.get("attachmentCount", 0),
+                    "has_multi_language": item.get("hasMultiLanguageSupport", False),
+                    "pdf_text": pdf_text,
+                },
+            }
+
+            if self.db_manager is not None:
+                try:
+                    self.db_manager.upsert_disclosure(disc_row)
+                    saved += 1
+                except Exception as e:
+                    logger.error(f"Failed to save disclosure {disclosure_index}: {e}")
+
+            disclosures.append(disc_row)
+
+        return {
+            "success": True,
+            "total": len(data),
+            "saved": saved,
+            "disclosures": disclosures,
+            "date_range": {
+                "from": start_date.strftime("%Y-%m-%d"),
+                "to": end_date.strftime("%Y-%m-%d"),
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # scrape_kap_news — KAP / SPK / MKK platform-level announcements
+    # ------------------------------------------------------------------
+
+    async def scrape_kap_news(
+        self,
+        days_back: int = 7,
+        categories: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetch KAP platform-level news (SPK decisions, MKK announcements, BIS notices).
+
+        These are NOT company disclosures — they are regulatory/system announcements
+        published by KAP itself. Tries several known API endpoints and falls back to
+        scraping the KAP duyurular page via Firecrawl with stealth proxy.
+
+        The scraped items are saved to ``kap_news`` and keyed by a content-derived
+        news_id so repeated runs are idempotent.
+
+        Args:
+            days_back: How many days back to look.
+            categories: Optional category filter (e.g. ["SPK", "MKK"]). None = all.
+
+        Returns:
+            {"success": bool, "total": int, "saved": int, "items": list}
+        """
+        import hashlib
+
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days_back)
+
+        raw_items: List[Dict[str, Any]] = []
+
+        # --- Attempt 1: known KAP duyuru API endpoints (GET) ---
+        for path in [
+            "/tr/api/duyuru/list",
+            "/tr/api/announcement/list",
+            f"/tr/api/duyuru/list/{end_date.year}",
+        ]:
+            url = f"{self.BASE_URL}{path}"
+            data = await self._fetch_kap_api_json(url, prefer_firecrawl=False)
+            if isinstance(data, list) and data:
+                raw_items = data
+                logger.info(f"Fetched {len(raw_items)} news items from {path}")
+                break
+            if isinstance(data, dict):
+                inner = data.get("data") or data.get("items") or data.get("announcements") or []
+                if inner:
+                    raw_items = inner
+                    break
+
+        # --- Attempt 2: Firecrawl scrape of duyurular page ---
+        if not raw_items:
+            try:
+                result = await self.scrape_kap_page_with_actions(
+                    f"{self.BASE_URL}/tr/duyurular"
+                )
+                if result.get("success"):
+                    # Extract structured items from the rendered page text.
+                    raw_items = self._parse_news_page(result, start_date)
+                    logger.info(f"Scraped {len(raw_items)} news items from duyurular page")
+            except Exception as e:
+                logger.error(f"Firecrawl duyurular scrape failed: {e}")
+
+        # --- Normalize + filter + save ---
+        saved = 0
+        processed: List[Dict[str, Any]] = []
+
+        for item in raw_items:
+            # Normalise across possible API response shapes.
+            title = (
+                item.get("title")
+                or item.get("baslik")
+                or item.get("subject")
+                or item.get("kapTitle")
+                or ""
+            ).strip()
+            if not title:
+                continue
+
+            content = (
+                item.get("content")
+                or item.get("icerik")
+                or item.get("summary")
+                or item.get("description")
+                or ""
+            ).strip()
+            category = (
+                item.get("category")
+                or item.get("news_category")
+                or item.get("type")
+                or item.get("duyuruTipi")
+                or "KAP"
+            ).strip()
+
+            if categories and category.upper() not in [c.upper() for c in categories]:
+                continue
+
+            raw_date = (
+                item.get("publish_date")
+                or item.get("publishDate")
+                or item.get("tarih")
+                or item.get("date")
+                or ""
+            )
+            publish_dt: Optional[datetime] = None
+            if isinstance(raw_date, datetime):
+                publish_dt = raw_date
+            elif raw_date:
+                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%d.%m.%Y"):
+                    try:
+                        publish_dt = datetime.strptime(str(raw_date).split(".")[0], fmt)
+                        break
+                    except ValueError:
+                        continue
+
+            # Apply date filter.
+            if publish_dt and publish_dt.date() < start_date.date():
+                continue
+
+            source_url = item.get("source_url") or item.get("url") or item.get("link") or ""
+            news_id = item.get("id") or item.get("news_id")
+            if not news_id:
+                news_id = hashlib.sha1(
+                    f"{category}|{title}|{(publish_dt or '').isoformat() if publish_dt else ''}".encode()
+                ).hexdigest()[:16]
+
+            news_row: Dict[str, Any] = {
+                "news_id": str(news_id),
+                "news_category": category,
+                "title": title,
+                "content": content or None,
+                "publish_date": publish_dt,
+                "source_url": source_url or None,
+                "data": {k: v for k, v in item.items()
+                         if k not in ("title", "content", "category", "publish_date", "source_url")},
+            }
+
+            if self.db_manager is not None:
+                try:
+                    row_id = self.db_manager.upsert_news(news_row)
+                    if row_id is not None:
+                        saved += 1
+                        news_row["db_id"] = row_id
+                except Exception as e:
+                    logger.error(f"Failed to save news '{title[:40]}': {e}")
+
+            processed.append(news_row)
+
+        return {
+            "success": True,
+            "total": len(raw_items),
+            "returned": len(processed),
+            "saved": saved,
+            "items": processed,
+            "date_range": {
+                "from": start_date.strftime("%Y-%m-%d"),
+                "to": end_date.strftime("%Y-%m-%d"),
+            },
+        }
+
+    def _parse_news_page(
+        self, scrape_result: Dict[str, Any], since: datetime
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract news items from a Firecrawl-scraped duyurular page.
+
+        KAP's duyurular page renders a list of announcement cards. We parse the
+        markdown or HTML to extract title / date / category / URL for each item.
+        Returns a list of raw dicts compatible with scrape_kap_news normalisation.
+        """
+        items: List[Dict[str, Any]] = []
+        data = scrape_result.get("data") or {}
+        text = ""
+        if isinstance(data, dict):
+            text = data.get("markdown") or data.get("html") or data.get("content") or ""
+        elif isinstance(data, str):
+            text = data
+
+        if not text:
+            return items
+
+        # Date pattern used in KAP's UI: "DD.MM.YYYY" or "YYYY-MM-DD"
+        date_re = re.compile(r"(\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2})")
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
+
+        current: Dict[str, Any] = {}
+        for line in lines:
+            dm = date_re.search(line)
+            if dm:
+                if current.get("title"):
+                    items.append(current)
+                date_str = dm.group(1)
+                try:
+                    if "." in date_str:
+                        publish_dt: Optional[datetime] = datetime.strptime(date_str, "%d.%m.%Y")
+                    else:
+                        publish_dt = datetime.strptime(date_str, "%Y-%m-%d")
+                except ValueError:
+                    publish_dt = None
+                current = {
+                    "title": line[:dm.start()].strip("- |#").strip(),
+                    "publish_date": publish_dt,
+                    "category": "KAP",
+                }
+            elif current and not current.get("content"):
+                if len(line) > 20 and not line.startswith("http"):
+                    current["content"] = line
+
+        if current.get("title"):
+            items.append(current)
+
+        return items

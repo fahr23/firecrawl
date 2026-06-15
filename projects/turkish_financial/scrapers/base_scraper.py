@@ -3,6 +3,7 @@ Base scraper class using Firecrawl
 """
 import asyncio
 import logging
+import time
 from typing import Dict, Any, Optional, List, Callable, Union
 from abc import ABC, abstractmethod
 from firecrawl import FirecrawlApp
@@ -39,7 +40,7 @@ class BaseScraper(ABC):
             return dict(result)
 
         data: Dict[str, Any] = {}
-        for attr in ("html", "markdown", "metadata", "links", "summary", "json"):
+        for attr in ("html", "markdown", "metadata", "links", "summary", "json", "videos"):
             value = getattr(result, attr, None)
             if value is not None:
                 data[attr] = value
@@ -124,6 +125,7 @@ class BaseScraper(ABC):
         only_main_content: bool = True,
         location: Optional[Dict[str, Any]] = None,
         mobile: bool = False,
+        include_video: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -144,7 +146,9 @@ class BaseScraper(ABC):
             Scraped data
         """
         wait_for = wait_for or config.firecrawl.wait_for
-        formats = formats or config.firecrawl.formats
+        formats = list(formats or config.firecrawl.formats)
+        if include_video and "video" not in formats:
+            formats.append("video")
         timeout = timeout or config.firecrawl.timeout
 
         params: Dict[str, Any] = {
@@ -204,14 +208,15 @@ class BaseScraper(ABC):
         """
         try:
             logger.info(f"Crawling website: {start_url} (limit: {limit})")
-            
+
             # Build scrape options
             from firecrawl.v2.types import ScrapeOptions
             scrape_options = ScrapeOptions(
                 formats=config.firecrawl.formats,
                 wait_for=config.firecrawl.wait_for,
             )
-            
+
+            t0 = time.perf_counter()
             result = self.firecrawl.crawl(
                 start_url,
                 limit=limit,
@@ -221,15 +226,30 @@ class BaseScraper(ABC):
                 poll_interval=5,
                 **kwargs
             )
-            
-            logger.info(f"Successfully crawled: {start_url}")
+            duration_s = round(time.perf_counter() - t0, 2)
+
+            # Extract API-level timing when the SDK exposes it (upstream #3771)
+            created_at = getattr(result, "created_at", None)
+            completed_at = getattr(result, "completed_at", None)
+            api_duration = getattr(result, "duration", None)
+
+            logger.info(
+                f"Successfully crawled: {start_url} | wall={duration_s}s"
+                + (f" api_duration={api_duration}s" if api_duration else "")
+            )
             return {
                 "success": True,
                 "url": start_url,
                 "data": result,
+                "timing": {
+                    "wall_duration_s": duration_s,
+                    "created_at": str(created_at) if created_at else None,
+                    "completed_at": str(completed_at) if completed_at else None,
+                    "api_duration_s": api_duration,
+                },
                 "scraper": self.__class__.__name__
             }
-            
+
         except Exception as e:
             logger.error(f"Error crawling {start_url}: {e}")
             return {
@@ -524,6 +544,7 @@ class BaseScraper(ABC):
         Use Firecrawl batch_scrape() to scrape multiple URLs in a single job.
 
         Significantly more efficient than scraping one-by-one for 5+ URLs.
+        max_concurrency defaults to config.firecrawl.max_batch_concurrency (NuQ #3758).
 
         Args:
             urls: List of URLs to scrape
@@ -532,13 +553,16 @@ class BaseScraper(ABC):
             proxy: Proxy type – 'basic', 'stealth', 'enhanced', or 'auto'
             only_main_content: Strip nav/footer/ads
             poll_interval: Seconds between status polls
-            max_concurrency: Max concurrent scrapes per job
+            max_concurrency: Max concurrent scrapes per job (NuQ server enforced)
 
         Returns:
-            Dict with 'data' list (one entry per URL)
+            Dict with 'data' list and 'timing' block (wall_duration_s, api timing fields)
         """
         formats = formats or config.firecrawl.formats
         wait_for = wait_for or config.firecrawl.wait_for
+        # Use config default so NuQ's server-side concurrency cap is respected
+        if max_concurrency is None:
+            max_concurrency = getattr(config.firecrawl, "max_batch_concurrency", None)
 
         scrape_options: Dict[str, Any] = {
             "formats": formats,
@@ -553,40 +577,68 @@ class BaseScraper(ABC):
         if max_concurrency is not None:
             kwargs["max_concurrency"] = max_concurrency
 
-        try:
-            logger.info(f"Batch scraping {len(urls)} URLs")
-            batch_scrape = getattr(self.firecrawl, "batch_scrape", None)
-            if callable(batch_scrape):
-                result = batch_scrape(urls, **self._build_v2_scrape_kwargs(scrape_options), **kwargs)
-                pages = result.data if hasattr(result, "data") else []
-            else:
-                kwargs["scrape_options"] = scrape_options
-                async_batch_scrape = getattr(self.firecrawl, "async_batch_scrape_urls", None)
-                if callable(async_batch_scrape):
-                    result = async_batch_scrape(urls, **kwargs)
-                    status = result.wait_for_completion(poll_interval=poll_interval)
-                    pages = status.data if hasattr(status, "data") else []
-                else:
-                    legacy_batch_scrape = getattr(self.firecrawl, "batch_scrape_urls", None)
-                    if not callable(legacy_batch_scrape):
-                        raise AttributeError("Firecrawl client does not expose batch_scrape() or batch_scrape_urls()")
-                    result = legacy_batch_scrape(urls, **kwargs)
+        max_retries = getattr(config.firecrawl, "max_retries", 3)
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Batch scraping {len(urls)} URLs (concurrency={max_concurrency})")
+                t0 = time.perf_counter()
+                batch_scrape = getattr(self.firecrawl, "batch_scrape", None)
+                if callable(batch_scrape):
+                    result = batch_scrape(urls, **self._build_v2_scrape_kwargs(scrape_options), **kwargs)
                     pages = result.data if hasattr(result, "data") else []
-            logger.info(f"Batch scrape completed: {len(pages)} pages")
-            return {
-                "success": True,
-                "total": len(pages),
-                "data": pages,
-                "scraper": self.__class__.__name__,
-            }
-        except Exception as e:
-            logger.error(f"Batch scrape failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "data": [],
-                "scraper": self.__class__.__name__,
-            }
+                else:
+                    kwargs["scrape_options"] = scrape_options
+                    async_batch_scrape = getattr(self.firecrawl, "async_batch_scrape_urls", None)
+                    if callable(async_batch_scrape):
+                        result = async_batch_scrape(urls, **kwargs)
+                        status = result.wait_for_completion(poll_interval=poll_interval)
+                        pages = status.data if hasattr(status, "data") else []
+                        result = status
+                    else:
+                        legacy_batch_scrape = getattr(self.firecrawl, "batch_scrape_urls", None)
+                        if not callable(legacy_batch_scrape):
+                            raise AttributeError("Firecrawl client does not expose batch_scrape() or batch_scrape_urls()")
+                        result = legacy_batch_scrape(urls, **kwargs)
+                        pages = result.data if hasattr(result, "data") else []
+
+                duration_s = round(time.perf_counter() - t0, 2)
+
+                # Extract API-level timing fields added in upstream #3771
+                created_at = getattr(result, "created_at", None)
+                completed_at = getattr(result, "completed_at", None)
+                api_duration = getattr(result, "duration", None)
+
+                logger.info(
+                    f"Batch scrape completed: {len(pages)} pages | wall={duration_s}s"
+                    + (f" api_duration={api_duration}s" if api_duration else "")
+                )
+                return {
+                    "success": True,
+                    "total": len(pages),
+                    "data": pages,
+                    "timing": {
+                        "wall_duration_s": duration_s,
+                        "created_at": str(created_at) if created_at else None,
+                        "completed_at": str(completed_at) if completed_at else None,
+                        "api_duration_s": api_duration,
+                    },
+                    "scraper": self.__class__.__name__,
+                }
+            except Exception as e:
+                # Retry on concurrency/rate-limit errors (HTTP 429) from NuQ queue
+                err_str = str(e).lower()
+                if attempt < max_retries - 1 and ("429" in err_str or "rate" in err_str or "concurren" in err_str):
+                    wait = config.firecrawl.retry_backoff ** attempt
+                    logger.warning(f"Batch scrape rate-limited (attempt {attempt+1}), retrying in {wait}s: {e}")
+                    await asyncio.sleep(wait)
+                    continue
+                logger.error(f"Batch scrape failed: {e}")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "data": [],
+                    "scraper": self.__class__.__name__,
+                }
 
     # ------------------------------------------------------------------
     # NEW: search() – web search + optional scrape of results

@@ -236,9 +236,37 @@ class DatabaseManager:
                 sql.Identifier(self.schema)
             ))
             
+            # --- Data Contract v1.0 alignment -------------------------------
+            # External Analysis Provider contract (§2) needs analyzer provenance
+            # and sample size on the sentiment row, plus an exact stock_code on the
+            # disclosure so instrument↔company resolution can be exact going forward.
+            # ALTER ... ADD COLUMN IF NOT EXISTS is idempotent and safe for existing DBs.
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {}.kap_disclosure_sentiment
+                    ADD COLUMN IF NOT EXISTS analyzer VARCHAR(100),
+                    ADD COLUMN IF NOT EXISTS sample_size INTEGER
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {}.kap_disclosures
+                    ADD COLUMN IF NOT EXISTS stock_code VARCHAR(20)
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_kap_disclosures_stock_code
+                ON {}.kap_disclosures(stock_code)
+            ''').format(sql.Identifier(self.schema)))
+
+            # KAP financialTable API addresses companies by mkkMemberOid; cache the
+            # ticker→oid mapping here so resolve_member_oid() can avoid re-querying KAP.
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {}.bist_companies
+                    ADD COLUMN IF NOT EXISTS mkk_member_oid VARCHAR(64)
+            ''').format(sql.Identifier(self.schema)))
+
             # Create indexes for faster queries
             cursor.execute(sql.SQL('''
-                CREATE INDEX IF NOT EXISTS idx_sentiment_report_id 
+                CREATE INDEX IF NOT EXISTS idx_sentiment_report_id
                 ON {}.kap_report_sentiment(report_id)
             ''').format(sql.Identifier(self.schema)))
             
@@ -248,10 +276,161 @@ class DatabaseManager:
             ''').format(sql.Identifier(self.schema)))
             
             cursor.execute(sql.SQL('''
-                CREATE INDEX IF NOT EXISTS idx_sentiment_analyzed_at 
+                CREATE INDEX IF NOT EXISTS idx_sentiment_analyzed_at
                 ON {}.kap_report_sentiment(analyzed_at)
             ''').format(sql.Identifier(self.schema)))
-            
+
+            # --- Fundamental analysis (KAP "Finansal Tablolar") -------------
+            # Raw structured financial-statement facts fetched from KAP's
+            # financial-report (FR) disclosures, one row per instrument/period.
+            # `facts` holds the canonical line items (see scrapers/kap_financial_parser.py)
+            # so we can recompute ratios later without re-fetching from KAP.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.kap_financial_statements (
+                    id SERIAL PRIMARY KEY,
+                    stock_code VARCHAR(20) NOT NULL,
+                    company_name VARCHAR(255),
+                    period VARCHAR(20) NOT NULL,
+                    fiscal_period VARCHAR(20),
+                    currency VARCHAR(10),
+                    reporting_standard VARCHAR(50),
+                    disclosure_index VARCHAR(100),
+                    facts JSONB NOT NULL,
+                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(stock_code, period)
+                )
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_fin_stmt_stock_code
+                ON {}.kap_financial_statements(stock_code)
+            ''').format(sql.Identifier(self.schema)))
+
+            # Computed fundamental ratios per instrument/period. Column set mirrors
+            # the External Analysis Provider FundamentalPayload (contract v1.0 §3) so
+            # the contract endpoints can map rows to envelopes 1:1.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.kap_fundamentals (
+                    id SERIAL PRIMARY KEY,
+                    stock_code VARCHAR(20) NOT NULL,
+                    company_name VARCHAR(255),
+                    period VARCHAR(20) NOT NULL,
+                    fiscal_period VARCHAR(20),
+                    currency VARCHAR(10),
+                    reporting_standard VARCHAR(50),
+
+                    pe_ratio REAL,
+                    pb_ratio REAL,
+                    ps_ratio REAL,
+                    ev_ebitda REAL,
+                    peg_ratio REAL,
+
+                    eps REAL,
+                    book_value_per_share REAL,
+                    dividend_per_share REAL,
+                    dividend_yield REAL,
+
+                    gross_margin REAL,
+                    operating_margin REAL,
+                    net_margin REAL,
+                    roe REAL,
+                    roa REAL,
+                    roic REAL,
+
+                    debt_to_equity REAL,
+                    net_debt_to_ebitda REAL,
+                    current_ratio REAL,
+                    quick_ratio REAL,
+                    interest_coverage REAL,
+
+                    revenue REAL,
+                    ebitda REAL,
+                    net_income REAL,
+                    free_cash_flow REAL,
+                    revenue_growth_yoy REAL,
+                    eps_growth_yoy REAL,
+
+                    is_estimated BOOLEAN DEFAULT FALSE,
+                    restated BOOLEAN DEFAULT FALSE,
+                    data_completeness REAL,
+
+                    source_disclosure_index VARCHAR(100),
+                    effective_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(stock_code, period)
+                )
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_fundamentals_stock_code
+                ON {}.kap_fundamentals(stock_code)
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_fundamentals_effective_at
+                ON {}.kap_fundamentals(effective_at)
+            ''').format(sql.Identifier(self.schema)))
+
+            # --- kap_disclosures extra columns (idempotent ALTERs) ----------
+            # subject / subject_code / is_late were missing from the original schema;
+            # add them now so scrape_and_save_disclosures() can populate them properly.
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {}.kap_disclosures
+                    ADD COLUMN IF NOT EXISTS subject TEXT,
+                    ADD COLUMN IF NOT EXISTS subject_code VARCHAR(50),
+                    ADD COLUMN IF NOT EXISTS is_late BOOLEAN DEFAULT FALSE
+            ''').format(sql.Identifier(self.schema)))
+
+            # Unique index on disclosure_index for fast upsert-by-id.
+            cursor.execute(sql.SQL('''
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_kap_disclosures_disclosure_id
+                ON {}.kap_disclosures(disclosure_id)
+                WHERE disclosure_id IS NOT NULL
+            ''').format(sql.Identifier(self.schema)))
+
+            # --- KAP platform-level news (SPK/MKK/BIS announcements) -------
+            # These are not company disclosures but regulatory/platform news that
+            # affects whole sectors or the market. Separate table to keep company
+            # disclosures and market-wide news queryable independently.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.kap_news (
+                    id SERIAL PRIMARY KEY,
+                    news_id VARCHAR(100) UNIQUE,
+                    news_category VARCHAR(50),
+                    title TEXT NOT NULL,
+                    content TEXT,
+                    publish_date TIMESTAMP,
+                    source_url TEXT,
+                    data JSONB,
+                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_kap_news_publish_date
+                ON {}.kap_news(publish_date DESC)
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_kap_news_category
+                ON {}.kap_news(news_category)
+            ''').format(sql.Identifier(self.schema)))
+
+            # Sentiment table for platform-level news (mirrors kap_disclosure_sentiment).
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.kap_news_sentiment (
+                    id SERIAL PRIMARY KEY,
+                    news_id INTEGER REFERENCES {}.kap_news(id) ON DELETE CASCADE,
+                    overall_sentiment VARCHAR(20),
+                    sentiment_score REAL DEFAULT 0.0,
+                    confidence REAL DEFAULT 0.0,
+                    analysis_text TEXT,
+                    analyzer VARCHAR(100),
+                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(news_id)
+                )
+            ''').format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
+
             conn.commit()
             logger.info("Database tables created/verified")
             
@@ -468,3 +647,147 @@ class DatabaseManager:
         if self.pool:
             self.pool.closeall()
             logger.info("All database connections closed")
+
+    # ------------------------------------------------------------------
+    # Domain-specific upsert helpers
+    # ------------------------------------------------------------------
+
+    def upsert_disclosure(self, data: Dict[str, Any]) -> bool:
+        """
+        Upsert one row into kap_disclosures keyed on disclosure_id.
+
+        ``data`` must contain ``disclosure_id``; all other columns are optional.
+        On conflict the row is updated so repeated scrapes reflect the latest state.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cols = [
+                "disclosure_id", "stock_code", "company_name", "disclosure_type",
+                "disclosure_date", "timestamp", "has_attachment", "detail_url",
+                "pdf_url", "content", "data", "subject", "subject_code", "is_late",
+            ]
+            row = {c: data.get(c) for c in cols}
+            row["data"] = Json(row["data"]) if isinstance(row["data"], (dict, list)) else row["data"]
+
+            non_null = {k: v for k, v in row.items() if v is not None}
+            if not non_null.get("disclosure_id"):
+                return False
+
+            set_clause = sql.SQL(", ").join(
+                sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
+                for k in non_null if k != "disclosure_id"
+            )
+            q = sql.SQL(
+                "INSERT INTO {schema}.kap_disclosures ({cols}) VALUES ({vals}) "
+                "ON CONFLICT (disclosure_id) DO UPDATE SET {set}"
+            ).format(
+                schema=sql.Identifier(self.schema),
+                cols=sql.SQL(", ").join(sql.Identifier(k) for k in non_null),
+                vals=sql.SQL(", ").join(sql.Placeholder() * len(non_null)),
+                set=set_clause,
+            )
+            cursor.execute(q, list(non_null.values()))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"upsert_disclosure failed for {data.get('disclosure_id')}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def upsert_bist_company(
+        self,
+        code: str,
+        name: Optional[str] = None,
+        mkk_member_oid: Optional[str] = None,
+    ) -> bool:
+        """
+        Insert or update a row in bist_companies.
+
+        On conflict (code already exists) only non-None provided fields are updated,
+        so callers can safely call this with partial data without wiping existing values.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            updates: Dict[str, Any] = {"code": code}
+            if name is not None:
+                updates["name"] = name
+            if mkk_member_oid is not None:
+                updates["mkk_member_oid"] = mkk_member_oid
+
+            set_parts = [
+                sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
+                for k in updates if k != "code"
+            ]
+            if not set_parts:
+                # Nothing to update except code (which is the conflict target).
+                q = sql.SQL(
+                    "INSERT INTO {}.bist_companies (code) VALUES (%s) ON CONFLICT DO NOTHING"
+                ).format(sql.Identifier(self.schema))
+                cursor.execute(q, (code,))
+            else:
+                q = sql.SQL(
+                    "INSERT INTO {schema}.bist_companies ({cols}) VALUES ({vals}) "
+                    "ON CONFLICT (code) DO UPDATE SET {set}"
+                ).format(
+                    schema=sql.Identifier(self.schema),
+                    cols=sql.SQL(", ").join(sql.Identifier(k) for k in updates),
+                    vals=sql.SQL(", ").join(sql.Placeholder() * len(updates)),
+                    set=sql.SQL(", ").join(set_parts),
+                )
+                cursor.execute(q, list(updates.values()))
+
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"upsert_bist_company failed for {code}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def upsert_news(self, data: Dict[str, Any]) -> Optional[int]:
+        """
+        Upsert one row into kap_news keyed on news_id. Returns the row id.
+
+        ``data`` must contain ``news_id`` and ``title``.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cols = ["news_id", "news_category", "title", "content",
+                    "publish_date", "source_url", "data"]
+            row = {c: data.get(c) for c in cols if data.get(c) is not None}
+            if not row.get("news_id") or not row.get("title"):
+                return None
+
+            row_data = row.get("data")
+            if isinstance(row_data, (dict, list)):
+                row["data"] = Json(row_data)
+
+            set_clause = sql.SQL(", ").join(
+                sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
+                for k in row if k != "news_id"
+            )
+            q = sql.SQL(
+                "INSERT INTO {schema}.kap_news ({cols}) VALUES ({vals}) "
+                "ON CONFLICT (news_id) DO UPDATE SET {set} RETURNING id"
+            ).format(
+                schema=sql.Identifier(self.schema),
+                cols=sql.SQL(", ").join(sql.Identifier(k) for k in row),
+                vals=sql.SQL(", ").join(sql.Placeholder() * len(row)),
+                set=set_clause,
+            )
+            cursor.execute(q, list(row.values()))
+            result = cursor.fetchone()
+            conn.commit()
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"upsert_news failed for {data.get('news_id')}: {e}")
+            conn.rollback()
+            return None
+        finally:
+            self.return_connection(conn)

@@ -3,6 +3,7 @@ Scheduler for automated scraping tasks
 """
 import asyncio
 import logging
+import time
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -34,50 +35,51 @@ class ScraperScheduler:
         self.bist_scraper = BISTScraper(db_manager=db_manager)
         self.tv_scraper = TradingViewScraper(db_manager=db_manager)
     
+    async def _timed_job(self, name: str, coro):
+        """Run a coroutine, logging wall-clock duration and any Firecrawl API timing."""
+        logger.info(f"[{name}] starting")
+        t0 = time.perf_counter()
+        try:
+            result = await coro
+            duration_s = round(time.perf_counter() - t0, 2)
+            # Surface Firecrawl batch timing if present (upstream #3771)
+            timing = result.get("timing") if isinstance(result, dict) else None
+            if timing:
+                logger.info(
+                    f"[{name}] done | wall={duration_s}s"
+                    f" api_duration={timing.get('api_duration_s')}s"
+                    f" created_at={timing.get('created_at')}"
+                    f" completed_at={timing.get('completed_at')}"
+                )
+            else:
+                logger.info(f"[{name}] done | wall={duration_s}s")
+            return result
+        except Exception as e:
+            duration_s = round(time.perf_counter() - t0, 2)
+            logger.error(f"[{name}] failed after {duration_s}s: {e}", exc_info=True)
+            raise
+
     async def job_scrape_kap_daily(self):
         """Daily KAP reports scraping job"""
-        logger.info("Starting scheduled KAP scraping")
-        try:
-            result = await self.kap_scraper.scrape(days_back=1)
-            logger.info(f"KAP daily scraping completed: {result}")
-        except Exception as e:
-            logger.error(f"KAP daily scraping failed: {e}", exc_info=True)
-    
+        await self._timed_job("kap_daily", self.kap_scraper.scrape(days_back=1))
+
     async def job_scrape_bist_companies_weekly(self):
         """Weekly BIST companies scraping job"""
-        logger.info("Starting scheduled BIST companies scraping")
-        try:
-            result = await self.bist_scraper.scrape()
-            logger.info(f"BIST companies scraping completed: {result}")
-        except Exception as e:
-            logger.error(f"BIST scraping failed: {e}", exc_info=True)
-    
+        await self._timed_job("bist_weekly", self.bist_scraper.scrape())
+
     async def job_scrape_tradingview_daily(self):
         """Daily TradingView sectors/industries scraping job"""
-        logger.info("Starting scheduled TradingView scraping")
-        try:
-            result = await self.tv_scraper.scrape(data_type="both")
-            logger.info(f"TradingView scraping completed: {result}")
-        except Exception as e:
-            logger.error(f"TradingView scraping failed: {e}", exc_info=True)
-    
+        await self._timed_job("tradingview_daily", self.tv_scraper.scrape(data_type="both"))
+
     async def job_scrape_commodities_4h(self):
         """Every 4 hours commodity prices scraping job"""
-        logger.info("Starting scheduled commodity prices scraping")
-        try:
-            from datetime import datetime, timedelta
-            end_date = datetime.now().strftime("%Y%m%d")
-            start_date = (
-                datetime.now() - timedelta(days=7)
-            ).strftime("%Y%m%d")
-            
-            result = await self.bist_scraper.scrape_commodity_prices(
-                start_date,
-                end_date
-            )
-            logger.info(f"Commodity prices scraping completed: {result}")
-        except Exception as e:
-            logger.error(f"Commodity scraping failed: {e}", exc_info=True)
+        from datetime import datetime, timedelta
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=7)).strftime("%Y%m%d")
+        await self._timed_job(
+            "commodities_4h",
+            self.bist_scraper.scrape_commodity_prices(start_date, end_date)
+        )
     
     def setup_jobs(self):
         """Setup all scheduled jobs"""
