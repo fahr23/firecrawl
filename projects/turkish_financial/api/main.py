@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from api.routers import scrapers, reports, health, sentiment, external_analysis
+from api.routers import scrapers, reports, health, sentiment, external_analysis, news_sentiment
 from utils.logger import setup_logging
 
 # Setup logging
@@ -108,6 +108,8 @@ app.include_router(sentiment.router, prefix="/api/v1/sentiment")
 app.include_router(sentiment.router, prefix="/api/sentiment", tags=["sentiment_legacy"])
 # External Analysis Provider — Data Contract v1.0 (consumed by strategy_management)
 app.include_router(external_analysis.router, prefix="/api/external/v1")
+# News-portal sentiment (Bloomberg HT, Foreks, Mynet, Bigpara, Investing.com TR)
+app.include_router(news_sentiment.router, prefix="/api/external/v1")
 
 
 @app.get("/")

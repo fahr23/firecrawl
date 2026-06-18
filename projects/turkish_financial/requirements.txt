@@ -31,6 +31,7 @@ requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=4.9.3
 aiohttp>=3.9.0  # Async HTTP client
+feedparser>=6.0.8  # RSS feeds for financial news portals (Bloomberg HT, Mynet)
 
 # Scheduling
 apscheduler>=3.10.4

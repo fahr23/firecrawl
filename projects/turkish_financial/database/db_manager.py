@@ -5,6 +5,7 @@ import logging
 import json
 import os
 import time
+from datetime import datetime
 import psycopg2
 import psycopg2.errors
 from psycopg2 import pool, sql
@@ -431,6 +432,110 @@ class DatabaseManager:
                 )
             ''').format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
 
+            # --- Financial news portals (institutional sentiment) ----------
+            # Articles scraped from Turkish financial portals (Bloomberg HT, Foreks,
+            # Mynet Finans, Bigpara, Investing.com TR). `ticker` is nullable: macro/sector
+            # headlines belong to no single instrument. Analysed individually, then rolled
+            # up per ticker/day into aggregated_ticker_sentiment.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.news_articles (
+                    id SERIAL PRIMARY KEY,
+                    article_id VARCHAR(200) UNIQUE,
+                    source VARCHAR(50),
+                    ticker VARCHAR(20),
+                    headline TEXT NOT NULL,
+                    body TEXT,
+                    url TEXT,
+                    published_at TIMESTAMP,
+                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_news_articles_ticker_pub
+                ON {}.news_articles(ticker, published_at DESC)
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_news_articles_source
+                ON {}.news_articles(source)
+            ''').format(sql.Identifier(self.schema)))
+
+            # Per-article sentiment (mirrors kap_news_sentiment shape).
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.news_article_sentiment (
+                    id SERIAL PRIMARY KEY,
+                    article_id INTEGER REFERENCES {}.news_articles(id) ON DELETE CASCADE,
+                    overall_sentiment VARCHAR(20),
+                    sentiment_score REAL DEFAULT 0.0,
+                    confidence REAL DEFAULT 0.0,
+                    key_drivers TEXT,
+                    tone_descriptors TEXT,
+                    analyzer VARCHAR(100),
+                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(article_id)
+                )
+            ''').format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
+
+            # Aggregated daily sentiment per ticker. `social_*` columns are reserved for
+            # Phase 2 (X/social) and stay NULL for now; combined_score == news_score today.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.aggregated_ticker_sentiment (
+                    id SERIAL PRIMARY KEY,
+                    ticker VARCHAR(20),
+                    period_date DATE,
+                    news_score REAL,
+                    news_count INTEGER DEFAULT 0,
+                    social_score REAL,
+                    social_count INTEGER DEFAULT 0,
+                    combined_score REAL,
+                    computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(ticker, period_date)
+                )
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_agg_ticker_sentiment_ticker
+                ON {}.aggregated_ticker_sentiment(ticker, period_date DESC)
+            ''').format(sql.Identifier(self.schema)))
+
+            # --- Social media (X / FinTwit) — Phase 2 -----------------------
+            # Tweets/posts scraped from X by searching ticker cashtags/hashtags. Always
+            # ticker-tagged (searched per ticker). Analysed individually, then rolled up
+            # into the social_* columns of aggregated_ticker_sentiment.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.social_media_posts (
+                    id SERIAL PRIMARY KEY,
+                    post_id VARCHAR(200) UNIQUE,
+                    platform VARCHAR(20),
+                    ticker VARCHAR(20),
+                    text TEXT NOT NULL,
+                    author VARCHAR(100),
+                    posted_at TIMESTAMP,
+                    likes INTEGER DEFAULT 0,
+                    retweets INTEGER DEFAULT 0,
+                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_social_posts_ticker_posted
+                ON {}.social_media_posts(ticker, posted_at DESC)
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.social_media_sentiment (
+                    id SERIAL PRIMARY KEY,
+                    post_id INTEGER REFERENCES {}.social_media_posts(id) ON DELETE CASCADE,
+                    overall_sentiment VARCHAR(20),
+                    sentiment_score REAL DEFAULT 0.0,
+                    confidence REAL DEFAULT 0.0,
+                    analyzer VARCHAR(100),
+                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(post_id)
+                )
+            ''').format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
+
             conn.commit()
             logger.info("Database tables created/verified")
             
@@ -791,3 +896,204 @@ class DatabaseManager:
             return None
         finally:
             self.return_connection(conn)
+
+    def upsert_news_article(self, data: Dict[str, Any]) -> Optional[int]:
+        """
+        Upsert one row into news_articles keyed on article_id. Returns the row id.
+
+        ``data`` must contain ``article_id`` and ``headline``. On conflict the row is
+        updated so repeated scrapes reflect the latest body/ticker tagging.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cols = ["article_id", "source", "ticker", "headline",
+                    "body", "url", "published_at"]
+            row = {c: data.get(c) for c in cols if data.get(c) is not None}
+            if not row.get("article_id") or not row.get("headline"):
+                return None
+
+            set_clause = sql.SQL(", ").join(
+                sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
+                for k in row if k != "article_id"
+            )
+            q = sql.SQL(
+                "INSERT INTO {schema}.news_articles ({cols}) VALUES ({vals}) "
+                "ON CONFLICT (article_id) DO UPDATE SET {set} RETURNING id"
+            ).format(
+                schema=sql.Identifier(self.schema),
+                cols=sql.SQL(", ").join(sql.Identifier(k) for k in row),
+                vals=sql.SQL(", ").join(sql.Placeholder() * len(row)),
+                set=set_clause,
+            )
+            cursor.execute(q, list(row.values()))
+            result = cursor.fetchone()
+            conn.commit()
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"upsert_news_article failed for {data.get('article_id')}: {e}")
+            conn.rollback()
+            return None
+        finally:
+            self.return_connection(conn)
+
+    def upsert_news_article_sentiment(self, article_id: int, data: Dict[str, Any]) -> bool:
+        """
+        Upsert the sentiment row for a news article (keyed on the integer article_id FK).
+
+        ``data`` carries overall_sentiment / sentiment_score / confidence and optionally
+        key_drivers, tone_descriptors (stored as TEXT) and analyzer.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            row: Dict[str, Any] = {"article_id": article_id}
+            for col in ("overall_sentiment", "sentiment_score", "confidence",
+                        "key_drivers", "tone_descriptors", "analyzer"):
+                if data.get(col) is not None:
+                    row[col] = data[col]
+
+            set_clause = sql.SQL(", ").join(
+                sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
+                for k in row if k != "article_id"
+            )
+            q = sql.SQL(
+                "INSERT INTO {schema}.news_article_sentiment ({cols}) VALUES ({vals}) "
+                "ON CONFLICT (article_id) DO UPDATE SET {set}"
+            ).format(
+                schema=sql.Identifier(self.schema),
+                cols=sql.SQL(", ").join(sql.Identifier(k) for k in row),
+                vals=sql.SQL(", ").join(sql.Placeholder() * len(row)),
+                set=set_clause,
+            )
+            cursor.execute(q, list(row.values()))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"upsert_news_article_sentiment failed for {article_id}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def upsert_aggregated_ticker_sentiment(self, data: Dict[str, Any]) -> bool:
+        """
+        Upsert one daily aggregate row keyed on (ticker, period_date).
+
+        ``data`` must contain ``ticker`` and ``period_date``; score/count columns are
+        optional. On conflict the row is overwritten with the freshly recomputed values.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cols = ["ticker", "period_date", "news_score", "news_count",
+                    "social_score", "social_count", "combined_score"]
+            row = {c: data.get(c) for c in cols if data.get(c) is not None}
+            if not row.get("ticker") or not row.get("period_date"):
+                return False
+            row["computed_at"] = datetime.now()
+
+            set_clause = sql.SQL(", ").join(
+                sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
+                for k in row if k not in ("ticker", "period_date")
+            )
+            q = sql.SQL(
+                "INSERT INTO {schema}.aggregated_ticker_sentiment ({cols}) VALUES ({vals}) "
+                "ON CONFLICT (ticker, period_date) DO UPDATE SET {set}"
+            ).format(
+                schema=sql.Identifier(self.schema),
+                cols=sql.SQL(", ").join(sql.Identifier(k) for k in row),
+                vals=sql.SQL(", ").join(sql.Placeholder() * len(row)),
+                set=set_clause,
+            )
+            cursor.execute(q, list(row.values()))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"upsert_aggregated_ticker_sentiment failed for {data.get('ticker')}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def upsert_social_post(self, data: Dict[str, Any]) -> Optional[int]:
+        """
+        Upsert one row into social_media_posts keyed on post_id. Returns the row id.
+
+        ``data`` must contain ``post_id`` and ``text``.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cols = ["post_id", "platform", "ticker", "text",
+                    "author", "posted_at", "likes", "retweets"]
+            row = {c: data.get(c) for c in cols if data.get(c) is not None}
+            if not row.get("post_id") or not row.get("text"):
+                return None
+
+            set_clause = sql.SQL(", ").join(
+                sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
+                for k in row if k != "post_id"
+            )
+            q = sql.SQL(
+                "INSERT INTO {schema}.social_media_posts ({cols}) VALUES ({vals}) "
+                "ON CONFLICT (post_id) DO UPDATE SET {set} RETURNING id"
+            ).format(
+                schema=sql.Identifier(self.schema),
+                cols=sql.SQL(", ").join(sql.Identifier(k) for k in row),
+                vals=sql.SQL(", ").join(sql.Placeholder() * len(row)),
+                set=set_clause,
+            )
+            cursor.execute(q, list(row.values()))
+            result = cursor.fetchone()
+            conn.commit()
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"upsert_social_post failed for {data.get('post_id')}: {e}")
+            conn.rollback()
+            return None
+        finally:
+            self.return_connection(conn)
+
+    def upsert_social_post_sentiment(self, post_id: int, data: Dict[str, Any]) -> bool:
+        """Upsert the sentiment row for a social post (keyed on the integer post_id FK)."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            row: Dict[str, Any] = {"post_id": post_id}
+            for col in ("overall_sentiment", "sentiment_score", "confidence", "analyzer"):
+                if data.get(col) is not None:
+                    row[col] = data[col]
+
+            set_clause = sql.SQL(", ").join(
+                sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
+                for k in row if k != "post_id"
+            )
+            q = sql.SQL(
+                "INSERT INTO {schema}.social_media_sentiment ({cols}) VALUES ({vals}) "
+                "ON CONFLICT (post_id) DO UPDATE SET {set}"
+            ).format(
+                schema=sql.Identifier(self.schema),
+                cols=sql.SQL(", ").join(sql.Identifier(k) for k in row),
+                vals=sql.SQL(", ").join(sql.Placeholder() * len(row)),
+                set=set_clause,
+            )
+            cursor.execute(q, list(row.values()))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"upsert_social_post_sentiment failed for {post_id}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def get_aggregated_ticker_sentiment(self, ticker: str, period_date) -> Optional[Dict[str, Any]]:
+        """Fetch the existing daily aggregate row for (ticker, period_date), or None."""
+        rows = self.query(
+            "SELECT ticker, period_date, news_score, news_count, social_score, "
+            "social_count, combined_score FROM aggregated_ticker_sentiment "
+            "WHERE ticker = %s AND period_date = %s",
+            (ticker.strip().upper(), period_date),
+        )
+        return rows[0] if rows else None
