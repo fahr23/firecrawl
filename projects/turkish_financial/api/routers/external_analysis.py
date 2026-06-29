@@ -79,6 +79,89 @@ def _db_error(detail: str) -> JSONResponse:
     )
 
 
+# ── instruments catalog — discovery endpoint for clients ─────────────────────
+@router.get("/instruments")
+async def instruments_catalog(
+    market: Market = Query(Market.BIST),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """
+    Return all instruments that have at least one data type available.
+
+    Each item includes: ticker, company_name, sector, available_data (list of
+    which kinds have data: sentiment, fundamental, news_sentiment, combined_sentiment).
+
+    Clients call this first to build a selection list, then call the per-instrument
+    endpoints using the returned tickers.
+    """
+    try:
+        rows = db_manager.query(
+            """
+            WITH
+            has_sentiment AS (
+                SELECT DISTINCT stock_code AS ticker FROM kap_disclosure_sentiment s
+                JOIN kap_disclosures d ON d.id = s.disclosure_id
+            ),
+            has_fundamental AS (
+                SELECT DISTINCT stock_code AS ticker FROM kap_fundamentals
+            ),
+            has_news_sentiment AS (
+                SELECT DISTINCT ticker FROM aggregated_ticker_sentiment
+                WHERE combined_score IS NOT NULL OR news_score IS NOT NULL
+            ),
+            all_tickers AS (
+                SELECT code AS ticker, name AS company_name, sector
+                FROM bist_companies
+            )
+            SELECT
+                t.ticker,
+                t.company_name,
+                t.sector,
+                (hs.ticker IS NOT NULL)   AS has_sentiment,
+                (hf.ticker IS NOT NULL)   AS has_fundamental,
+                (hn.ticker IS NOT NULL)   AS has_news_sentiment
+            FROM all_tickers t
+            LEFT JOIN has_sentiment   hs ON hs.ticker = t.ticker
+            LEFT JOIN has_fundamental hf ON hf.ticker = t.ticker
+            LEFT JOIN has_news_sentiment hn ON hn.ticker = t.ticker
+            ORDER BY t.ticker
+            """,
+            (),
+        )
+    except Exception as e:
+        logger.error(f"instruments_catalog failed: {e}", exc_info=True)
+        return JSONResponse(status_code=503, content={
+            "contract_version": CONTRACT_VERSION,
+            "status": "unavailable",
+            "error_code": "UPSTREAM_DB_ERROR",
+            "detail": str(e),
+        })
+
+    items = []
+    for r in rows:
+        available = []
+        if r.get("has_sentiment"):
+            available.append("sentiment")
+        if r.get("has_fundamental"):
+            available.append("fundamental")
+        if r.get("has_news_sentiment"):
+            available.extend(["news_sentiment", "combined_sentiment"])
+        items.append({
+            "ticker": r["ticker"],
+            "company_name": r.get("company_name"),
+            "sector": r.get("sector"),
+            "market": market.value,
+            "available_data": available,
+        })
+
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "market": market.value,
+        "total": len(items),
+        "items": items,
+    }
+
+
 # ── health (§6.8) — declared first, no path params ───────────────────────────
 @router.get("/health")
 async def health(db_manager: DatabaseManager = Depends(get_db_manager)):
@@ -197,6 +280,57 @@ async def sentiment_point(
 # ════════════════════════════════════════════════════════════════════════════
 # Fundamental kind (§3) — sourced from KAP "Finansal Tablolar"
 # ════════════════════════════════════════════════════════════════════════════
+
+async def _on_demand_fundamental_fetch(
+    instrument: str,
+    db_manager: DatabaseManager,
+    repo,
+    market: str,
+    as_of: Optional[str] = None,
+) -> dict:
+    """Trigger a live KAP scrape for *instrument* and re-query the repo.
+
+    Called when the DB has no row for the ticker.  Best-effort: if the scrape
+    fails we still return the unavailable envelope rather than raising.
+
+    If the instrument's mkkMemberOid is not yet known, calls refresh_member_oids
+    first to populate it from KAP's member API, then retries the scrape.
+    """
+    from scrapers.kap_scraper import KAPScraper
+    from infrastructure.contracts.instrument_identity_map import resolve_member_oid
+
+    logger.info(
+        "fundamental data for %s not in DB — triggering on-demand KAP fetch",
+        instrument,
+    )
+    try:
+        scraper = KAPScraper(db_manager=db_manager)
+
+        # If OID is unknown, try to discover all OIDs before scraping.
+        if resolve_member_oid(instrument, db_manager=db_manager) is None:
+            logger.info(
+                "mkkMemberOid for %s unknown — running refresh_member_oids first",
+                instrument,
+            )
+            try:
+                await scraper.refresh_member_oids()
+            except Exception as exc:
+                logger.warning("refresh_member_oids failed: %s", exc)
+            # If POST-based refresh failed, try the GET-based fallback.
+            if resolve_member_oid(instrument, db_manager=db_manager) is None:
+                try:
+                    await scraper.refresh_member_oids_via_get(instruments=[instrument])
+                except Exception as exc:
+                    logger.warning("refresh_member_oids_via_get failed: %s", exc)
+
+        await scraper.scrape_financial_statements(instruments=[instrument])
+    except Exception as exc:
+        logger.warning(
+            "on-demand KAP fetch for %s failed: %s", instrument, exc
+        )
+    return repo.get_point(instrument, market, as_of)
+
+
 # ── batch (§6.2) ──────────────────────────────────────────────────────────────
 @router.post("/fundamental/batch")
 async def fundamental_batch(
@@ -207,9 +341,12 @@ async def fundamental_batch(
     items = []
     try:
         for instrument in request.instruments:
-            items.append(
-                repo.get_point(instrument, request.market.value, request.as_of)
-            )
+            point = repo.get_point(instrument, request.market.value, request.as_of)
+            if point.get("status") == "unavailable" and request.as_of is None:
+                point = await _on_demand_fundamental_fetch(
+                    instrument, db_manager, repo, request.market.value
+                )
+            items.append(point)
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")
     except Exception as e:  # noqa: BLE001
@@ -261,7 +398,10 @@ async def fundamental_point(
 ):
     repo = _fund_repo(db_manager)
     try:
-        return repo.get_point(instrument, market.value, as_of)
+        result = repo.get_point(instrument, market.value, as_of)
+        if result.get("status") == "unavailable" and as_of is None:
+            result = await _on_demand_fundamental_fetch(instrument, db_manager, repo, market.value)
+        return result
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")
     except Exception as e:  # noqa: BLE001

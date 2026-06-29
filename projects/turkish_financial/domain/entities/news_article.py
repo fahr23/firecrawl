@@ -24,6 +24,8 @@ SOURCE_FOREKS = "foreks"
 SOURCE_MYNET_FINANS = "mynetfinans"
 SOURCE_BIGPARA = "bigpara"
 SOURCE_INVESTING_TR = "investing_tr"
+SOURCE_HABERTURK = "haberturk"
+SOURCE_NTV = "ntv"
 
 VALID_SOURCES = frozenset(
     {
@@ -32,6 +34,8 @@ VALID_SOURCES = frozenset(
         SOURCE_MYNET_FINANS,
         SOURCE_BIGPARA,
         SOURCE_INVESTING_TR,
+        SOURCE_HABERTURK,
+        SOURCE_NTV,
     }
 )
 

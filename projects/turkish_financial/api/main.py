@@ -4,6 +4,7 @@ FastAPI application for Turkish Financial Data Scraper REST API
 import logging
 import json
 import time
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -79,13 +80,24 @@ class RequestResponseLoggerMiddleware(BaseHTTPMiddleware):
         
         return response
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("API starting up")
+    yield
+    # Shutdown: stop background scheduler task
+    from api.news_scheduler import scheduler
+    scheduler.shutdown()
+    logger.info("API shut down — scheduler stopped")
+
+
 # Create FastAPI app
 app = FastAPI(
     title="Turkish Financial Data Scraper API",
     description="REST API for scraping and analyzing Turkish financial data from KAP, BIST, and TradingView with AI-powered sentiment analysis",
-    version="1.1.0",
+    version="1.2.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # Add request/response logging middleware

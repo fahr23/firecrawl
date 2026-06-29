@@ -465,3 +465,195 @@ class TestScrapeKapNews:
         titles = [i["title"] for i in result["items"]]
         assert "Very Old News" not in titles
         assert recent_item["title"] in titles
+
+
+# ---------------------------------------------------------------------------
+# _kap_api_via_js tests
+# ---------------------------------------------------------------------------
+
+class TestKapApiViaJs:
+    """Unit tests for the JS-injection proxy helper."""
+
+    def _make_action_scraper(self, rawHtml_response: str, success: bool = True):
+        """Return a scraper whose scrape_with_actions() returns a fixed rawHtml."""
+        scraper = _make_scraper()
+
+        async def fake_scrape_with_actions(url, actions, **kwargs):
+            if not success:
+                return {"success": False}
+            return {
+                "success": True,
+                "data": {"rawHtml": rawHtml_response},
+            }
+
+        scraper.scrape_with_actions = fake_scrape_with_actions
+        return scraper
+
+    def test_get_returns_json_from_pre_element(self):
+        """JS-API GET: JSON in <pre id="__kap_api_result"> is parsed and returned."""
+        payload = '[{"disclosureIndex": "123"}]'
+        html = f'<html><body><pre id="__kap_api_result" data-status="200">{payload}</pre></body></html>'
+        scraper = self._make_action_scraper(html)
+        result = run(scraper._kap_api_via_js("/tr/api/memberDisclosureQuery"))
+        assert result == [{"disclosureIndex": "123"}]
+
+    def test_post_returns_json_from_pre_element(self):
+        """JS-API POST: JSON in <pre id="__kap_api_result"> is parsed and returned."""
+        payload = '{"success": true, "data": []}'
+        html = f'<pre id="__kap_api_result" data-status="200">{payload}</pre>'
+        scraper = self._make_action_scraper(html)
+        body = {"fromDate": "2026-01-01", "toDate": "2026-01-07", "memberType": "IGS"}
+        result = run(scraper._kap_api_via_js("/tr/api/memberDisclosureQuery", method="POST", body=body))
+        assert result == {"success": True, "data": []}
+
+    def test_returns_none_when_scrape_fails(self):
+        """_kap_api_via_js returns None when scrape_with_actions fails for all proxies."""
+        scraper = self._make_action_scraper("", success=False)
+        result = run(scraper._kap_api_via_js("/tr/api/memberDisclosureQuery"))
+        assert result is None
+
+    def test_returns_none_when_no_pre_element(self):
+        """_kap_api_via_js returns None when the DOM injection anchor is absent."""
+        scraper = self._make_action_scraper("<html><body>No result here</body></html>")
+        result = run(scraper._kap_api_via_js("/tr/api/memberDisclosureQuery"))
+        assert result is None
+
+    def test_pre_element_with_double_quoted_id(self):
+        """Regex handles double-quoted id attribute correctly."""
+        payload = '[{"x": 1}]'
+        html = f'<pre id="__kap_api_result">{payload}</pre>'
+        scraper = self._make_action_scraper(html)
+        result = run(scraper._kap_api_via_js("/tr/api/test"))
+        assert result == [{"x": 1}]
+
+    def test_pre_element_with_single_quoted_id(self):
+        """Regex handles single-quoted id attribute correctly."""
+        payload = '{"ok": true}'
+        html = f"<pre id='__kap_api_result'>{payload}</pre>"
+        scraper = self._make_action_scraper(html)
+        result = run(scraper._kap_api_via_js("/tr/api/test"))
+        assert result == {"ok": True}
+
+    def test_actions_include_execute_javascript(self):
+        """The injected actions list must contain an executeJavascript step."""
+        captured_actions = []
+
+        async def capture_actions(url, actions, **kwargs):
+            captured_actions.extend(actions)
+            return {"success": False}  # don't need a result
+
+        scraper = _make_scraper()
+        scraper.scrape_with_actions = capture_actions
+        run(scraper._kap_api_via_js("/tr/api/test", method="POST", body={"k": "v"}))
+
+        types_seen = {a["type"] for a in captured_actions}
+        assert "executeJavascript" in types_seen
+        js_action = next(a for a in captured_actions if a["type"] == "executeJavascript")
+        assert "fetch" in js_action["script"]
+        assert "POST" in js_action["script"]
+
+    def test_post_body_embedded_in_script(self):
+        """POST body dict is serialised into the JS script for the fetch() call."""
+        captured_actions = []
+
+        async def capture_actions(url, actions, **kwargs):
+            captured_actions.extend(actions)
+            return {"success": False}
+
+        scraper = _make_scraper()
+        scraper.scrape_with_actions = capture_actions
+        body = {"fromDate": "2026-01-01", "memberType": "IGS"}
+        run(scraper._kap_api_via_js("/tr/api/memberDisclosureQuery", method="POST", body=body))
+
+        js_action = next(a for a in captured_actions if a["type"] == "executeJavascript")
+        # The body JSON must be embedded somewhere in the script (double-encoded)
+        assert "fromDate" in js_action["script"]
+
+
+# ---------------------------------------------------------------------------
+# _post_kap_api_json fallback chain tests
+# ---------------------------------------------------------------------------
+
+class TestPostKapApiJsonFallback:
+    """_post_kap_api_json must try JS injection first, then cookie-warm, then bare POST."""
+
+    def test_js_injection_success_returns_result(self):
+        """When _kap_api_via_js succeeds the result is returned without trying aiohttp."""
+        scraper = _make_scraper()
+
+        async def good_js(*a, **kw):
+            return [{"disclosureIndex": "777"}]
+
+        scraper._kap_api_via_js = good_js
+
+        result = run(scraper._post_kap_api_json(
+            "https://www.kap.org.tr/tr/api/memberDisclosureQuery", {}
+        ))
+        assert result == [{"disclosureIndex": "777"}]
+
+    def test_js_injection_failure_falls_through_to_aiohttp(self):
+        """When JS injection returns None, _post_kap_api_json does not raise and returns None."""
+        scraper = _make_scraper()
+
+        # JS injection always returns nothing.
+        async def no_result(*a, **kw):
+            return None
+
+        scraper._kap_api_via_js = no_result
+
+        # The aiohttp stubs registered by _inject_stubs use a MagicMock for ClientSession.
+        # With MagicMock, context-manager protocol returns MagicMocks (not coroutines), which
+        # causes AttributeError inside _post_kap_api_json — but the method must NOT propagate
+        # that as an unhandled exception; it must catch it and return None.
+        result = run(scraper._post_kap_api_json(
+            "https://www.kap.org.tr/tr/api/memberDisclosureQuery", {}
+        ))
+        # Either None (fallbacks failed) or a real value — never an exception.
+        assert result is None or isinstance(result, (list, dict))
+
+
+# ---------------------------------------------------------------------------
+# _fetch_kap_api_json fallback chain tests
+# ---------------------------------------------------------------------------
+
+class TestFetchKapApiJsonFallback:
+    """_fetch_kap_api_json must try JS injection first, then Firecrawl scrape, then aiohttp."""
+
+    def test_js_injection_success_skips_firecrawl(self):
+        """When JS injection returns JSON, Firecrawl scrape is never attempted."""
+        scraper = _make_scraper()
+        firecrawl_called = []
+
+        async def good_js(*a, **kw):
+            return [{"ok": True}]
+
+        async def forbidden_scrape(*a, **kw):
+            firecrawl_called.append(True)
+            return {"success": False}
+
+        scraper._kap_api_via_js = good_js
+        scraper.scrape_url = forbidden_scrape
+
+        result = run(scraper._fetch_kap_api_json(
+            "https://www.kap.org.tr/tr/api/financialTable/listCompanyExcelMembers/abc/2025/T"
+        ))
+        assert result == [{"ok": True}]
+        assert firecrawl_called == [], "Firecrawl scrape should not be called when JS succeeds"
+
+    def test_firecrawl_scrape_used_when_js_fails(self):
+        """When JS injection returns None, Firecrawl scrape is attempted."""
+        scraper = _make_scraper()
+
+        async def no_result(*a, **kw):
+            return None
+
+        async def fake_scrape(url, **kw):
+            return {"success": True, "data": {"rawHtml": '[{"member": "x"}]'}}
+
+        scraper._kap_api_via_js = no_result
+        scraper.scrape_url = fake_scrape
+
+        result = run(scraper._fetch_kap_api_json(
+            "https://www.kap.org.tr/tr/api/financialTable/listCompanyExcelMembers/abc/2025/T"
+        ))
+        assert result == [{"member": "x"}]

@@ -37,12 +37,26 @@ router = APIRouter(tags=["news-sentiment"])
 
 
 class NewsCollectRequest(BaseModel):
-    """Body for the news collect trigger."""
+    """Body for the manual news collect trigger."""
 
     tickers: Optional[List[str]] = None
     days_back: int = Field(default=7, ge=1, le=90)
     sources: Optional[List[str]] = None
-    include_investing_comments: bool = True
+    include_investing_comments: bool = False
+
+
+class ScheduleConfigRequest(BaseModel):
+    """Body for GET/POST /news-sentiment/schedule."""
+
+    mode: str = Field(..., pattern="^(manual|interval)$",
+                      description="'manual' — collect only on explicit POST /collect. "
+                                  "'interval' — auto-collect every interval_minutes.")
+    interval_minutes: int = Field(default=30, ge=5, le=1440,
+                                  description="Minutes between auto-runs (ignored in manual mode).")
+    sources: Optional[List[str]] = Field(default=None,
+                                         description="Portal sources to scrape. Default: ['bloomberght','mynetfinans'].")
+    days_back: int = Field(default=1, ge=1, le=30,
+                           description="How many days back each run fetches.")
 
 
 class SocialCollectRequest(BaseModel):
@@ -73,16 +87,32 @@ def _build_sentiment_analyzer():
     """
     Build a SentimentAnalyzerService from whatever LLM provider is configured.
 
-    Order: Gemini (GEMINI_API_KEY/GOOGLE_API_KEY) → OpenAI (OPENAI_API_KEY) → local
-    LM Studio/Ollama. Heavy imports are deferred to here so reading endpoints stay light.
+    Respects SENTIMENT_PROVIDER env var first. Falls back through:
+      keyword → fast built-in, no external calls
+      huggingface → local BERT model
+      gemini / openai / local_llm → external/network providers
     """
     from infrastructure.services.sentiment_analyzer_impl import SentimentAnalyzerService
-    from utils.llm_analyzer import GeminiProvider, OpenAIProvider, LocalLLMProvider
 
+    provider_name = (os.getenv("SENTIMENT_PROVIDER") or "keyword").lower()
+
+    if provider_name in ("keyword", ""):
+        from infrastructure.services.keyword_sentiment_provider import KeywordSentimentProvider
+        return SentimentAnalyzerService(KeywordSentimentProvider())
+
+    if provider_name == "huggingface":
+        try:
+            from utils.llm_analyzer import HuggingFaceLocalProvider
+            return SentimentAnalyzerService(HuggingFaceLocalProvider())
+        except Exception:
+            from infrastructure.services.keyword_sentiment_provider import KeywordSentimentProvider
+            return SentimentAnalyzerService(KeywordSentimentProvider())
+
+    from utils.llm_analyzer import GeminiProvider, OpenAIProvider, LocalLLMProvider
     gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if gemini_key:
+    if provider_name == "gemini" and gemini_key:
         provider = GeminiProvider(api_key=gemini_key)
-    elif os.getenv("OPENAI_API_KEY"):
+    elif provider_name == "openai" and os.getenv("OPENAI_API_KEY"):
         provider = OpenAIProvider(api_key=os.getenv("OPENAI_API_KEY"))
     else:
         provider = LocalLLMProvider(
@@ -91,28 +121,84 @@ def _build_sentiment_analyzer():
     return SentimentAnalyzerService(provider)
 
 
-# ── collect trigger — declared before {instrument} ───────────────────────────
+# ── schedule status + config ──────────────────────────────────────────────────
+@router.get("/news-sentiment/schedule")
+async def get_schedule():
+    """Return the current collection schedule (mode, interval, last/next run, last result)."""
+    from api.news_scheduler import scheduler
+    return {"contract_version": CONTRACT_VERSION, **scheduler.status()}
+
+
+@router.post("/news-sentiment/schedule")
+async def set_schedule(request: ScheduleConfigRequest):
+    """
+    Switch between manual and interval collection modes.
+
+    **manual** — news is only collected when you call POST /collect.
+    **interval** — a background task auto-collects every `interval_minutes`.
+
+    Both modes update the same last_run / last_result state.
+    Switching from interval → manual stops the background task immediately.
+    Switching from manual → interval starts it immediately (first run after one interval).
+    """
+    from api.news_scheduler import scheduler
+    scheduler.configure(
+        mode=request.mode,
+        interval_minutes=request.interval_minutes,
+        sources=request.sources,
+        days_back=request.days_back,
+    )
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "ok": True,
+        "message": (
+            f"Scheduler set to interval mode — runs every {request.interval_minutes} min"
+            if request.mode == "interval"
+            else "Scheduler set to manual mode"
+        ),
+        **scheduler.status(),
+    }
+
+
+# ── manual collect trigger ────────────────────────────────────────────────────
 @router.post("/news-sentiment/collect")
 async def news_sentiment_collect(
     request: NewsCollectRequest,
     db_manager: DatabaseManager = Depends(get_db_manager),
 ):
-    """Run the news-portal sentiment pipeline (scrape → analyse → persist → aggregate)."""
-    from scrapers.news_portal_scraper import NewsPortalScraper
-    from application.use_cases.collect_news_sentiment_use_case import (
-        CollectNewsSentimentUseCase,
-    )
+    """
+    Manually trigger one news collection run (works in both manual and interval modes).
+
+    The result is recorded in the scheduler so GET /schedule always shows the
+    latest run regardless of whether it was triggered manually or by the interval.
+    """
+    from api.news_scheduler import scheduler
 
     try:
-        scraper = NewsPortalScraper(db_manager=db_manager)
-        analyzer = _build_sentiment_analyzer()
-        use_case = CollectNewsSentimentUseCase(scraper, analyzer, db_manager)
-        result = await use_case.execute(
-            tickers=request.tickers,
-            days_back=request.days_back,
-            sources=request.sources,
-            include_investing_comments=request.include_investing_comments,
-        )
+        # Override scheduler's run_collect with per-request params when provided,
+        # otherwise delegate entirely to the scheduler (uses its own defaults).
+        if request.sources or request.tickers or request.days_back != 7:
+            from scrapers.news_portal_scraper import NewsPortalScraper
+            from application.use_cases.collect_news_sentiment_use_case import CollectNewsSentimentUseCase
+            scraper = NewsPortalScraper(db_manager=db_manager)
+            analyzer = _build_sentiment_analyzer()
+            use_case = CollectNewsSentimentUseCase(scraper, analyzer, db_manager)
+            from datetime import datetime
+            scheduler.last_run = datetime.utcnow()
+            scheduler.is_running = True
+            try:
+                result = await use_case.execute(
+                    tickers=request.tickers,
+                    days_back=request.days_back,
+                    sources=request.sources or scheduler.sources,
+                    include_investing_comments=request.include_investing_comments,
+                )
+            finally:
+                scheduler.is_running = False
+            scheduler.last_result = {**result, "triggered_at": scheduler.last_run.isoformat() + "Z"}
+        else:
+            result = await scheduler.run_collect()
+
         return {"contract_version": CONTRACT_VERSION, **result}
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")

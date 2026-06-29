@@ -109,14 +109,17 @@ The API now includes advanced features:
 
 ## 📖 Documentation
 
-- **[Complete User Guide](docs/USER_GUIDE.md)** - Comprehensive guide with examples for all features
+- **[Documentation Index](docs/DOCUMENTATION_INDEX.md)** - Full index of all docs
 - **[Quick Start Guide](docs/QUICK_START_GUIDE.md)** - Get started in 5 minutes
-- **[API Quick Reference](docs/API_QUICK_REFERENCE.md)** - Quick reference for all endpoints
-- **[Features Overview](docs/FEATURES_OVERVIEW.md)** - Overview of all features and use cases
-- **[Enhanced Features Guide](docs/API_ENHANCED_FEATURES.md)** - Detailed documentation for advanced features
-- **[API Documentation](docs/API_DOCUMENTATION.md)** - Complete API reference
-- **[Architecture Guide](docs/DDD_ARCHITECTURE.md)** - System architecture and design
-- **[Testing Guide](docs/TESTING_GUIDE.md)** - Testing instructions
+- **[User Guide](docs/USER_GUIDE.md)** - Comprehensive guide with examples
+- **[API Reference](docs/API_REFERENCE.md)** - All endpoints
+- **[Sentiment Analysis](docs/SENTIMENT.md)** - Analyzers, cost optimization, HuggingFace
+- **[Architecture](docs/ARCHITECTURE.md)** - DDD layers, data flow, DB schema
+- **[KAP Technical](docs/KAP_TECHNICAL.md)** - KAP API internals, OID resolution
+- **[Anti-Bot & Proxy](docs/ANTI_BOT.md)** - Self-hosted proxy/stealth configuration
+- **[Setup Guide](docs/SETUP.md)** - Full setup: Docker, Python env, DB schema
+- **[Testing Guide](docs/TESTING_GUIDE.md)** - Running tests
+- **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and fixes
 
 ### 2. CLI Usage
 

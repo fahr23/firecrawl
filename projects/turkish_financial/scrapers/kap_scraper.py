@@ -999,20 +999,169 @@ class KAPScraper(BaseScraper):
                     continue
         return None
 
+    async def _kap_api_via_js(
+        self,
+        api_path: str,
+        method: str = "GET",
+        body: Optional[Dict[str, Any]] = None,
+        landing_url: Optional[str] = None,
+    ) -> Optional[Any]:
+        """
+        Call a KAP JSON API endpoint from *within* a Firecrawl browser session.
+
+        KAP's ``/api/...`` endpoints are guarded by anti-bot checks and CSRF
+        validation that block direct aiohttp requests (404 on POST, 429 on GET).
+        This method loads a real KAP SPA page via Firecrawl's stealth proxy so the
+        browser acquires a valid KAP session, then injects a ``fetch()`` call that
+        hits the API endpoint with ``credentials: "same-origin"`` — giving us the
+        session cookies, SPA tokens, and proper Origin/Referer headers that KAP's
+        anti-bot requires.
+
+        The response text is stored in a ``<pre id="__kap_api_result">`` DOM node
+        so we can reliably read it from the captured rawHtml without depending on the
+        exact shape of Firecrawl's ``actions.results`` envelope.
+
+        Args:
+            api_path: URL path relative to BASE_URL, e.g. ``/tr/api/memberDisclosureQuery``
+            method: HTTP method (``"GET"`` or ``"POST"``)
+            body: Request body dict (for POST); ignored for GET
+            landing_url: KAP page to load first; defaults to /tr/Bildirimler
+
+        Returns:
+            Parsed JSON (list or dict), or None when every strategy fails.
+        """
+        import json as _json
+
+        landing = landing_url or f"{self.BASE_URL}/tr/Bildirimler"
+        full_api_url = f"{self.BASE_URL}{api_path}"
+
+        # Build the fetch() options string for the injected JS.
+        if method.upper() == "POST" and body is not None:
+            # Double-encode so the body JSON is a JS string literal we can JSON.parse.
+            body_js_literal = _json.dumps(_json.dumps(body))
+            fetch_options = (
+                f'method:"POST",'
+                f'headers:{{"Content-Type":"application/json","Accept":"application/json"}},'
+                f'credentials:"same-origin",'
+                f'body:JSON.parse({body_js_literal})'
+            )
+        else:
+            fetch_options = 'method:"GET",credentials:"same-origin"'
+
+        # Async IIFE that calls the API and injects the result into a <pre> node.
+        # Uses document.documentElement (not body) so it works before body is ready.
+        js_script = (
+            "(async()=>{"
+            "try{"
+            f'const r=await fetch({_json.dumps(full_api_url)},{{{fetch_options}}});'
+            "const t=await r.text();"
+            'let el=document.getElementById("__kap_api_result");'
+            'if(!el){el=document.createElement("pre");el.id="__kap_api_result";'
+            "document.documentElement.appendChild(el);}"
+            'el.setAttribute("data-status",String(r.status));'
+            "el.textContent=t;"
+            "}catch(e){"
+            'let el=document.getElementById("__kap_api_result");'
+            'if(!el){el=document.createElement("pre");el.id="__kap_api_result";'
+            "document.documentElement.appendChild(el);}"
+            'el.setAttribute("data-error",e.message);'
+            "}"
+            "})()"
+        )
+
+        actions: List[Dict[str, Any]] = [
+            {"type": "wait", "milliseconds": 5000},    # SPA hydration + cookie init
+            {"type": "executeJavascript", "script": js_script},
+            {"type": "wait", "milliseconds": 5000},    # async fetch completes
+            {"type": "scrape"},
+        ]
+
+        for proxy in self.KAP_FIRECRAWL_PROXIES:
+            try:
+                result = await self.scrape_with_actions(
+                    url=landing,
+                    actions=actions,
+                    formats=["rawHtml"],
+                    proxy=proxy,
+                    location={"country": "TR", "languages": ["tr-TR", "tr"]},
+                    only_main_content=False,
+                )
+                if not result.get("success"):
+                    logger.debug(f"KAP JS-API (proxy={proxy}): scrape_with_actions failed")
+                    continue
+
+                data = result.get("data") or {}
+                raw = (
+                    data.get("rawHtml") if isinstance(data, dict)
+                    else getattr(data, "rawHtml", None)
+                )
+                if not raw:
+                    logger.debug(f"KAP JS-API (proxy={proxy}): no rawHtml in response")
+                    continue
+
+                # Extract JSON from <pre id="__kap_api_result">
+                m = re.search(
+                    r'<pre[^>]*id=["\']__kap_api_result["\'][^>]*>(.*?)</pre>',
+                    raw, re.DOTALL | re.IGNORECASE,
+                )
+                if m:
+                    content = m.group(1).strip()
+                    parsed = self._extract_json(content)
+                    if parsed is not None:
+                        logger.info(
+                            f"KAP JS-API (proxy={proxy}): got JSON via fetch() for {api_path}"
+                        )
+                        return parsed
+                    # data-error attribute means fetch succeeded but API returned no JSON
+                    if "data-error" in raw[m.start():m.end()]:
+                        logger.warning(
+                            f"KAP JS-API fetch error in browser: {content[:200]}"
+                        )
+
+                # Also check Firecrawl actions.results envelope as a secondary source.
+                actions_data = (
+                    data.get("actions") if isinstance(data, dict)
+                    else getattr(data, "actions", None)
+                )
+                if isinstance(actions_data, dict):
+                    for k in ("results", "result", "output"):
+                        inner = actions_data.get(k)
+                        if inner:
+                            parsed = self._extract_json(
+                                str(inner[0].get("result", ""))
+                                if isinstance(inner, list) else str(inner)
+                            )
+                            if parsed is not None:
+                                return parsed
+
+                logger.debug(f"KAP JS-API (proxy={proxy}): no JSON found for {api_path}")
+            except Exception as e:
+                logger.debug(f"KAP JS-API (proxy={proxy}) exception for {api_path}: {e}")
+
+        return None
+
     async def _fetch_kap_api_json(
         self, url: str, prefer_firecrawl: bool = True
     ) -> Optional[Any]:
         """
         Fetch a KAP JSON API endpoint, clearing the anti-bot SPA via Firecrawl.
 
-        KAP serves its regular pages fine through a browser engine but guards its
-        ``/api/...`` JSON endpoints with an anti-bot interstitial. Which proxy clears it
-        depends on the Firecrawl deployment: self-hosted Firecrawl has no working stealth
-        proxy and `proxy="stealth"` trips ``document_antibot`` there, whereas `basic`
-        succeeds; Firecrawl Cloud generally needs `stealth`. We therefore try a configurable
-        ordered list (``KAP_FIRECRAWL_PROXY``, default ``basic,auto,stealth``) and return
-        the first parseable JSON. Falls back to a direct GET last. Returns parsed JSON or None.
+        Strategy order:
+        1. JS injection via _kap_api_via_js() — makes the GET from within a real KAP
+           browser session, so session cookies + SPA context are in place. This is the
+           primary path for endpoints that return 429/anti-bot to standalone requests.
+        2. Direct Firecrawl scrape of the URL (proxy tiers basic→auto→stealth) — works
+           for endpoints that accept bare browser GETs.
+        3. Direct aiohttp GET with 429 backoff as last resort.
         """
+        api_path = url.replace(self.BASE_URL, "") if url.startswith(self.BASE_URL) else url
+
+        # 1. JS injection (browser-context GET — bypasses CSRF/session requirements)
+        parsed = await self._kap_api_via_js(api_path=api_path, method="GET")
+        if parsed is not None:
+            return parsed
+
+        # 2. Firecrawl proxy scrape (direct URL load in headless browser)
         if prefer_firecrawl:
             for proxy in self.KAP_FIRECRAWL_PROXIES:
                 try:
@@ -1027,14 +1176,14 @@ class KAPScraper(BaseScraper):
                         data = result.get("data") or {}
                         for attr in ("rawHtml", "markdown", "html"):
                             chunk = data.get(attr) if isinstance(data, dict) else getattr(data, attr, None)
-                            parsed = self._extract_json(chunk)
-                            if parsed is not None:
-                                return parsed
+                            chunk_parsed = self._extract_json(chunk)
+                            if chunk_parsed is not None:
+                                return chunk_parsed
                     logger.debug(f"KAP JSON via Firecrawl proxy={proxy} yielded no JSON for {url}")
                 except Exception as e:
                     logger.debug(f"Firecrawl JSON fetch (proxy={proxy}) failed for {url}: {e}")
 
-        # Direct fallback.
+        # 3. Direct aiohttp GET with 429-aware backoff.
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept": "application/json, text/plain, */*",
@@ -1043,10 +1192,19 @@ class KAPScraper(BaseScraper):
         try:
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        return self._extract_json(await resp.text())
-                    logger.warning(f"KAP API {url} returned HTTP {resp.status}")
+                for attempt in range(3):
+                    async with session.get(url) as resp:
+                        if resp.status == 200:
+                            return self._extract_json(await resp.text())
+                        if resp.status == 429:
+                            wait = 10 * (2 ** attempt)
+                            logger.warning(
+                                f"KAP API 429 on {url} (attempt {attempt+1}), waiting {wait}s"
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        logger.warning(f"KAP API {url} returned HTTP {resp.status}")
+                        break
         except Exception as e:
             logger.error(f"Direct KAP API fetch failed for {url}: {e}")
         return None
@@ -1633,10 +1791,25 @@ class KAPScraper(BaseScraper):
         """
         POST JSON to a KAP API endpoint and return the parsed JSON response.
 
-        Unlike _fetch_kap_api_json (GET-only, Firecrawl-primary), this method goes
-        direct because Firecrawl does not support arbitrary POST bodies. It mimics
-        the browser request headers that KAP's SPA sends.
+        Strategy order:
+        1. JS injection via _kap_api_via_js() — makes the POST from within a real KAP
+           SPA browser session. This is the primary fix for the "POST APIs → 404" failure
+           mode: direct aiohttp POSTs return 404/403 because KAP requires a properly
+           initialised SPA session with CSRF context, but a fetch() issued from within
+           the page itself has all of that automatically.
+        2. Cookie-warmed direct POST via aiohttp — first GETs the KAP landing page so
+           the CookieJar acquires the session cookie that KAP sets via HTTP Set-Cookie,
+           then POSTs with those cookies. Handles cases where KAP's CSRF is cookie-only.
+        3. Bare direct POST (original behaviour) as last resort.
         """
+        api_path = url.replace(self.BASE_URL, "") if url.startswith(self.BASE_URL) else url
+
+        # 1. JS injection — POST from within a live KAP browser session.
+        parsed = await self._kap_api_via_js(api_path=api_path, method="POST", body=body)
+        if parsed is not None:
+            return parsed
+
+        # 2. Cookie-warmed direct POST: acquire session cookies via a landing GET first.
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -1646,8 +1819,35 @@ class KAPScraper(BaseScraper):
             "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8",
             "Content-Type": "application/json",
             "Origin": self.BASE_URL,
-            "Referer": f"{self.BASE_URL}/",
+            "Referer": f"{self.BASE_URL}/tr/Bildirimler",
         }
+        try:
+            timeout = aiohttp.ClientTimeout(total=45)
+            jar = aiohttp.CookieJar()
+            async with aiohttp.ClientSession(timeout=timeout, headers=headers, cookie_jar=jar) as session:
+                # Warm up cookies via the HTML landing page (Set-Cookie via HTTP).
+                try:
+                    async with session.get(
+                        f"{self.BASE_URL}/tr/Bildirimler",
+                        headers={**headers, "Accept": "text/html,*/*"},
+                        allow_redirects=True,
+                    ) as warm:
+                        logger.debug(
+                            f"KAP POST cookie warm-up: HTTP {warm.status}, "
+                            f"cookies: {[c.key for c in jar]}"
+                        )
+                except Exception as e:
+                    logger.debug(f"KAP POST cookie warm-up failed (non-fatal): {e}")
+
+                # Now POST with the warmed session.
+                async with session.post(url, json=body) as resp:
+                    if resp.status == 200:
+                        return self._extract_json(await resp.text())
+                    logger.warning(f"KAP cookie-warmed POST {url} → HTTP {resp.status}")
+        except Exception as e:
+            logger.debug(f"KAP cookie-warmed POST failed for {url}: {e}")
+
+        # 3. Bare direct POST (original behaviour, no cookie warm-up).
         try:
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:

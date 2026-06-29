@@ -30,6 +30,8 @@ from domain.entities.news_article import (
     SOURCE_FOREKS,
     SOURCE_MYNET_FINANS,
     SOURCE_BIGPARA,
+    SOURCE_HABERTURK,
+    SOURCE_NTV,
     SOURCE_INVESTING_TR,
 )
 from infrastructure.contracts.instrument_identity_map import STATIC_BIST_MAP
@@ -85,6 +87,14 @@ class NewsPortalScraper(BaseScraper):
         SOURCE_FOREKS: {
             "method": "html",
             "listing_url": "https://www.foreks.com/haberler",
+        },
+        SOURCE_HABERTURK: {
+            "method": "rss",
+            "feed_url": "https://www.haberturk.com/rss/ekonomi.xml",
+        },
+        SOURCE_NTV: {
+            "method": "rss",
+            "feed_url": "https://www.ntv.com.tr/ekonomi.rss",
         },
     }
 

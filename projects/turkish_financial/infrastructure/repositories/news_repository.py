@@ -37,6 +37,22 @@ _FROM = (
     "LEFT JOIN kap_news_sentiment s ON s.news_id = n.id"
 )
 
+# UNION source: portal news from news_articles (Bloomberg HT, Mynet, etc.)
+# Maps news_articles columns → same shape as _SELECT so shaping code is shared.
+_PORTAL_SELECT = (
+    "a.article_id AS news_id, "
+    "a.source AS news_category, "
+    "a.headline AS title, "
+    "a.body AS content, "
+    "a.url AS source_url, "
+    "COALESCE(a.published_at, a.scraped_at) AS publish_date, "
+    "s.overall_sentiment, s.sentiment_score, s.confidence, s.analyzer"
+)
+_PORTAL_FROM = (
+    "FROM news_articles a "
+    "LEFT JOIN news_article_sentiment s ON s.article_id = a.id"
+)
+
 
 class NewsRepository:
     """Fetches/normalises KAP platform news into Data Contract v1.0 envelopes."""
@@ -53,32 +69,53 @@ class NewsRepository:
         limit: int = 50,
         cursor: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Recent platform-news items, optionally filtered by category/date window."""
-        where: List[str] = ["1=1"]
-        params: List[Any] = []
-        if category:
-            where.append("UPPER(n.news_category) = %s")
-            params.append(category.strip().upper())
-        if date_from:
-            where.append("n.publish_date >= %s")
-            params.append(date_from)
-        if date_to:
-            where.append("n.publish_date <= %s")
-            params.append(date_to)
-        if cursor:
-            where.append("n.publish_date < %s")
-            params.append(cursor)
-
+        """Recent news items from both KAP platform and portal sources (Bloomberg HT etc)."""
         fetch = max(1, min(limit, 1000))
+
+        # Build filter fragments for each branch of the UNION.
+        # kap_news branch
+        kap_where: List[str] = ["1=1"]
+        kap_params: List[Any] = []
+        if category:
+            kap_where.append("UPPER(n.news_category) = %s")
+            kap_params.append(category.strip().upper())
+        if date_from:
+            kap_where.append("n.publish_date >= %s")
+            kap_params.append(date_from)
+        if date_to:
+            kap_where.append("n.publish_date <= %s")
+            kap_params.append(date_to)
+        if cursor:
+            kap_where.append("n.publish_date < %s")
+            kap_params.append(cursor)
+
+        # portal (news_articles) branch — category maps to source
+        portal_where: List[str] = ["1=1"]
+        portal_params: List[Any] = []
+        if category:
+            portal_where.append("UPPER(a.source) = %s")
+            portal_params.append(category.strip().upper())
+        if date_from:
+            portal_where.append("COALESCE(a.published_at, a.scraped_at) >= %s")
+            portal_params.append(date_from)
+        if date_to:
+            portal_where.append("COALESCE(a.published_at, a.scraped_at) <= %s")
+            portal_params.append(date_to)
+        if cursor:
+            portal_where.append("COALESCE(a.published_at, a.scraped_at) < %s")
+            portal_params.append(cursor)
+
+        union_params = tuple(kap_params + portal_params + [fetch + 1])
         query = f"""
-            SELECT {_SELECT}
-            {_FROM}
-            WHERE {' AND '.join(where)}
-            ORDER BY n.publish_date DESC NULLS LAST
+            SELECT {_SELECT} {_FROM}
+            WHERE {' AND '.join(kap_where)}
+            UNION ALL
+            SELECT {_PORTAL_SELECT} {_PORTAL_FROM}
+            WHERE {' AND '.join(portal_where)}
+            ORDER BY publish_date DESC NULLS LAST
             LIMIT %s
         """
-        params.append(fetch + 1)  # one extra to compute next_cursor
-        rows = self._db.query(query, tuple(params))
+        rows = self._db.query(query, union_params)
 
         next_cursor = None
         if len(rows) > fetch:
