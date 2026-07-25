@@ -12,8 +12,9 @@ import type {
 import { SdkError } from "../types";
 import { HttpClient } from "../utils/httpClient";
 import { throwForBadResponse } from "../utils/errorHandler";
+import { getVersion } from "../utils/getVersion";
 
-const BASE = "/v2/research";
+const BASE = "/v2/search/research";
 
 /** Append a value (or repeated array values) to a URLSearchParams instance. */
 function appendParam(
@@ -32,6 +33,9 @@ function appendParam(
 }
 
 function withQuery(path: string, params: URLSearchParams): string {
+  // Research endpoints are GETs, so the POST-body origin injection in
+  // HttpClient never applies — attach it as a query param instead.
+  params.append("origin", `js-sdk@${getVersion()}`);
   const qs = params.toString();
   return qs ? `${path}?${qs}` : path;
 }

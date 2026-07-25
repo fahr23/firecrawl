@@ -7,6 +7,12 @@ import {
   searchRequestSchema,
 } from "./types";
 import { billTeam } from "../../services/billing/credit_billing";
+import {
+  KEYLESS_FREE_TIER_LIMIT_MESSAGE,
+  adjustKeylessCredits,
+  logKeylessCreditUsage,
+  reserveKeylessCredits,
+} from "../../lib/keyless";
 import { v7 as uuidv7 } from "uuid";
 import { logSearch, logRequest } from "../../services/logging/log_job";
 import { logger as _logger } from "../../lib/logger";
@@ -20,6 +26,14 @@ import {
 import { executeSearch } from "../../search/execute";
 import type { BillingMetadata } from "../../services/billing/types";
 import { getSearchForcedKind, getSearchZDR } from "../../lib/zdr-helpers";
+import { projectSearchTotalCredits } from "../../lib/keyless-credit-projection";
+import { applyAgentAuthDiscoveryHeader } from "../../lib/agent-auth-discovery";
+import { resolveThreatProtection } from "../../lib/threat-protection/request";
+import {
+  actionTypesOf,
+  checkKeyFormatRestriction,
+  formatTypesOf,
+} from "../../lib/key-restriction";
 
 export async function searchController(
   req: RequestWithAuth<{}, SearchResponse, SearchRequest>,
@@ -47,9 +61,29 @@ export async function searchController(
     config.SEARCH_PREVIEW_TOKEN === req.body.__searchPreviewToken;
 
   let zeroDataRetention = teamForcedKind !== null;
+  let reservedKeylessCredits = 0;
+  let reconciledKeylessCredits = false;
 
   try {
     req.body = searchRequestSchema.parse(req.body);
+
+    const requestedFormats = formatTypesOf(req.body.scrapeOptions?.formats);
+    const keyRestriction = await checkKeyFormatRestriction(
+      requestedFormats,
+      // Search only scrapes (and only runs actions) when formats are
+      // requested; without them scrapeOptions is ignored entirely.
+      requestedFormats.length > 0
+        ? actionTypesOf(req.body.scrapeOptions?.actions)
+        : [],
+      req.acuc?.api_key_id,
+      req.acuc?.flags ?? null,
+    );
+    if (!keyRestriction.allowed) {
+      return res.status(keyRestriction.status).json({
+        success: false,
+        error: keyRestriction.error,
+      });
+    }
 
     if (
       req.body.__agentInterop &&
@@ -64,6 +98,23 @@ export async function searchController(
       return res.status(403).json({
         success: false,
         error: "Agent interop is not enabled.",
+      });
+    }
+
+    // Threat protection: resolve the effective policy. Blocked domains are
+    // removed from search results entirely, and scraped results inherit the
+    // policy through the scrape pipeline.
+    const threatProtection = await resolveThreatProtection({
+      teamId: req.auth.team_id,
+      orgId: req.acuc?.org_id ?? null,
+      flags: req.acuc?.flags ?? null,
+      override:
+        req.body.threatProtection ?? req.body.scrapeOptions?.threatProtection,
+    });
+    if (threatProtection.error) {
+      return res.status(403).json({
+        success: false,
+        error: threatProtection.error,
       });
     }
 
@@ -120,6 +171,33 @@ export async function searchController(
       });
     }
 
+    const projectedKeylessCredits =
+      !isSearchPreview && shouldBill
+        ? projectSearchTotalCredits(
+            {
+              limit: req.body.limit,
+              enterprise: req.body.enterprise,
+              scrapeOptions: req.body.scrapeOptions,
+            },
+            req.acuc?.flags ?? null,
+            zeroDataRetention,
+          )
+        : 0;
+    if (projectedKeylessCredits > 0) {
+      const reservation = await reserveKeylessCredits(
+        req.auth.team_id,
+        projectedKeylessCredits,
+      );
+      if (!reservation.ok) {
+        applyAgentAuthDiscoveryHeader(res);
+        return res.status(429).json({
+          success: false,
+          error: KEYLESS_FREE_TIER_LIMIT_MESSAGE,
+        });
+      }
+      reservedKeylessCredits = projectedKeylessCredits;
+    }
+
     const result = await executeSearch(
       {
         query: req.body.query,
@@ -140,7 +218,9 @@ export async function searchController(
       },
       {
         teamId: req.auth.team_id,
+        orgId: req.acuc?.org_id ?? null,
         origin: req.body.origin,
+        integration: req.body.integration,
         apiKeyId: req.acuc?.api_key_id ?? null,
         flags: req.acuc?.flags ?? null,
         requestId: agentRequestId ?? jobId,
@@ -150,6 +230,8 @@ export async function searchController(
         zeroDataRetention,
         billing,
         agentIndexOnly: (req as any).agentIndexOnly ?? false,
+        keylessReserved: reservedKeylessCredits > 0,
+        threatProtectionPolicy: threatProtection.policy,
       },
       logger,
     );
@@ -158,14 +240,26 @@ export async function searchController(
     if (!isSearchPreview && shouldBill) {
       billTeam(
         req.auth.team_id,
-        req.acuc?.sub_id ?? undefined,
         result.searchCredits,
         req.acuc?.api_key_id ?? null,
         billing,
       ).catch(error =>
-        logger.error(
-          `Failed to bill team ${req.acuc?.sub_id} for ${result.searchCredits} credits: ${error}`,
-        ),
+        logger.error("Failed to bill team for search credits", {
+          teamId: req.auth.team_id,
+          searchCredits: result.searchCredits,
+          error,
+        }),
+      );
+    }
+
+    if (reservedKeylessCredits > 0) {
+      reconciledKeylessCredits = true;
+      adjustKeylessCredits(
+        req.auth.team_id,
+        result.totalCredits - reservedKeylessCredits,
+      ).catch(() => {});
+      logKeylessCreditUsage(req.auth.team_id, result.totalCredits).catch(
+        () => {},
       );
     }
 
@@ -215,6 +309,13 @@ export async function searchController(
       id: jobId,
     });
   } catch (error) {
+    if (reservedKeylessCredits > 0 && !reconciledKeylessCredits) {
+      reconciledKeylessCredits = true;
+      adjustKeylessCredits(req.auth.team_id, -reservedKeylessCredits).catch(
+        () => {},
+      );
+    }
+
     if (error instanceof z.ZodError) {
       logger.warn("Invalid request body", { error: error.issues });
       return res.status(400).json({

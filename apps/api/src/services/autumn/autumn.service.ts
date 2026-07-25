@@ -1,5 +1,4 @@
 import { randomUUID } from "crypto";
-import { config } from "../../config";
 import { logger } from "../../lib/logger";
 import { eq } from "drizzle-orm";
 import { dbRr } from "../../db/connection";
@@ -19,9 +18,24 @@ import type {
   TrackParams,
 } from "./types";
 
-const TEAM_FEATURE_ID = "TEAM";
+export const TEAM_FEATURE_ID = "TEAM";
 export const CREDITS_FEATURE_ID = "CREDITS";
 export const SEARCH_CREDITS_FEATURE_ID = "SEARCH_CREDITS";
+const CONCURRENCY_FEATURE_ID = "CONCURRENCY";
+const RATE_LIMIT_FEATURE_ID = "rate_limits";
+
+/**
+ * Coerces a raw Autumn balance figure into a usable non-negative number, or
+ * null when it's absent or not a sane finite value. These balances feed
+ * directly into rate-limit and concurrency controls, so NaN, Infinity, and
+ * negatives are rejected rather than passed through a bare `typeof` check.
+ */
+function sanitizeBalanceValue(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return value;
+}
 
 /**
  * Maps a billing endpoint to the Autumn feature ID it should bill against.
@@ -33,26 +47,6 @@ export const SEARCH_CREDITS_FEATURE_ID = "SEARCH_CREDITS";
  */
 export function featureIdForBillingEndpoint(endpoint?: string): string {
   return endpoint === "search" ? SEARCH_CREDITS_FEATURE_ID : CREDITS_FEATURE_ID;
-}
-
-/**
- * Deterministic bucket for an org UUID.
- *
- * Takes the first 8 hex digits of the id (after stripping dashes) and maps
- * them to an integer in [0, 100).  The same orgId always lands in the same
- * bucket so the experiment decision is stable across requests.
- */
-export function orgBucket(orgId: string): number {
-  const hex = orgId.replace(/-/g, "").slice(0, 8);
-  return parseInt(hex, 16) % 100;
-}
-
-export function isAutumnRequestTrackEnabled(orgId?: string): boolean {
-  if (config.AUTUMN_REQUEST_TRACK_EXPERIMENT !== "true") return false;
-  if (!orgId || config.AUTUMN_REQUEST_TRACK_EXPERIMENT_PERCENT >= 100) {
-    return true;
-  }
-  return orgBucket(orgId) < config.AUTUMN_REQUEST_TRACK_EXPERIMENT_PERCENT;
 }
 
 const AUTUMN_DEFAULT_PLAN_ID = "free";
@@ -230,6 +224,7 @@ export class AutumnService {
         featureId,
         value,
         properties,
+        overageBehavior: "overflow",
       });
       logger.info("Autumn track succeeded", {
         customerId,
@@ -498,28 +493,17 @@ export class AutumnService {
 
   /**
    * Records a credit usage event directly in Autumn. Returns true on success.
-   *
-   * For request-scoped tracking the AUTUMN_REQUEST_TRACK_EXPERIMENT gate is
-   * evaluated using a stable bucket derived from the org UUID so the same
-   * org always gets the same answer for a given percent value.
    */
   async trackCredits({
     teamId,
     value,
     properties,
-    requestScoped = false,
     featureId = CREDITS_FEATURE_ID,
   }: TrackCreditsParams): Promise<boolean> {
-    if (requestScoped && !isAutumnRequestTrackEnabled()) return false;
     if (!autumnClient) return false;
     if (this.isPreviewTeam(teamId)) return false;
 
     try {
-      if (requestScoped) {
-        const orgId = await this.resolveOrgId(teamId);
-        if (!isAutumnRequestTrackEnabled(orgId)) return false;
-      }
-
       const customerId = await this.ensureTrackingContext(teamId);
       return await this.track({
         customerId,
@@ -534,12 +518,127 @@ export class AutumnService {
         {
           teamId,
           value,
-          requestScoped,
           error,
         },
       );
       return false;
     }
+  }
+
+  // Cache the team's entity-derived limits briefly so concurrency enforcement
+  // and rate-limit gating on every scrape/crawl/browser request don't fan out
+  // to Autumn each time. Both the CONCURRENCY limit and the rate-limit
+  // multiplier come from a single entity.get, so one cache entry (and one
+  // Autumn round-trip per team per TTL window) serves both callers.
+  private entityLimitsCache = new BoundedMap<
+    string,
+    {
+      concurrency: number | null;
+      rateLimitMultiplier: number | null;
+      expiresAt: number;
+    }
+  >(50_000);
+  private static readonly ENTITY_LIMITS_TTL_MS = 60_000;
+
+  /**
+   * Fetches the team's Autumn entity once and derives both the CONCURRENCY
+   * limit and the rate-limit multiplier from it. Each team has its own Autumn
+   * entity, so the entity balances are per-team regardless of whether the org
+   * has one or many teams. Returns nulls when Autumn is unavailable, the entity
+   * is missing, or a balance isn't present — callers fall back accordingly.
+   */
+  private async getEntityLimits(
+    teamId: string,
+    orgId?: string | null,
+  ): Promise<{
+    concurrency: number | null;
+    rateLimitMultiplier: number | null;
+  }> {
+    if (!autumnClient || this.isPreviewTeam(teamId)) {
+      return { concurrency: null, rateLimitMultiplier: null };
+    }
+
+    const now = Date.now();
+    const cached = this.entityLimitsCache.get(teamId);
+    if (cached && cached.expiresAt > now) {
+      return {
+        concurrency: cached.concurrency,
+        rateLimitMultiplier: cached.rateLimitMultiplier,
+      };
+    }
+
+    const store = (
+      concurrency: number | null,
+      rateLimitMultiplier: number | null,
+    ) => {
+      this.entityLimitsCache.set(teamId, {
+        concurrency,
+        rateLimitMultiplier,
+        expiresAt: now + AutumnService.ENTITY_LIMITS_TTL_MS,
+      });
+      return { concurrency, rateLimitMultiplier };
+    };
+
+    try {
+      const resolvedOrgId = orgId ?? (await this.resolveOrgId(teamId));
+      if (!resolvedOrgId)
+        return { concurrency: null, rateLimitMultiplier: null };
+
+      const entity: any = await autumnClient.entities.get({
+        customerId: resolvedOrgId,
+        entityId: teamId,
+      });
+      const balances = entity?.balances ?? {};
+
+      // CONCURRENCY: use `remaining` (the post-drain effective per-team cap;
+      // `granted` would surface the pre-drain inherited customer total).
+      const concurrency = sanitizeBalanceValue(
+        balances[CONCURRENCY_FEATURE_ID]?.remaining,
+      );
+
+      // rate_limits: a static per-plan multiplier that is never consumed, so
+      // read `granted` (the entitled amount) rather than `remaining`.
+      const rateLimitMultiplier = sanitizeBalanceValue(
+        balances[RATE_LIMIT_FEATURE_ID]?.granted,
+      );
+
+      return store(concurrency, rateLimitMultiplier);
+    } catch (error) {
+      const status = this.getErrorStatus(error);
+      if (status === 404) return store(null, null);
+      logger.error(
+        "Autumn getEntityLimits failed — billing API may be unavailable",
+        { teamId, error },
+      );
+      return { concurrency: null, rateLimitMultiplier: null };
+    }
+  }
+
+  /**
+   * Reads the team's allowed concurrent-browser count from Autumn's
+   * entity-scoped CONCURRENCY balance. Returns null when Autumn is unavailable,
+   * the entity is missing, or there's no balance — callers fall back to the
+   * default via getEffectiveConcurrencyLimit.
+   */
+  async getConcurrencyLimit(
+    teamId: string,
+    orgId?: string | null,
+  ): Promise<number | null> {
+    return (await this.getEntityLimits(teamId, orgId)).concurrency;
+  }
+
+  /**
+   * Reads the team's rate-limit multiplier from Autumn's `rate_limits` feature.
+   * Effective rate limits are `base × multiplier`. Falls back to a multiplier of
+   * 1 when Autumn is unavailable or the feature is missing, so callers don't
+   * have to. Shares a single cached entity fetch with getConcurrencyLimit, so it
+   * adds no Autumn call.
+   */
+  async getRateLimitMultiplier(
+    teamId: string,
+    orgId?: string | null,
+  ): Promise<number> {
+    return (await this.getEntityLimits(teamId, orgId)).rateLimitMultiplier ?? 1;
   }
 
   /**

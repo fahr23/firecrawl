@@ -27,6 +27,18 @@ import { isUrlBlocked } from "../../scraper/WebScraper/utils/blocklist";
 import { fromV1ScrapeOptions } from "../v2/types";
 import { checkPermissions } from "../../lib/permissions";
 import {
+  checkUrlsAgainstThreatPolicy,
+  resolveThreatProtection,
+} from "../../lib/threat-protection/request";
+import { UnsafeDomainBlockedError } from "../../lib/threat-protection/error";
+import { calculateThreatScanCredits } from "../../lib/scrape-billing";
+import { billTeam } from "../../services/billing/credit_billing";
+import {
+  actionTypesOf,
+  checkKeyFormatRestriction,
+  formatTypesOf,
+} from "../../lib/key-restriction";
+import {
   crawlGroup,
   resolveNewGroupBackend,
 } from "../../services/worker/nuq-router";
@@ -44,11 +56,39 @@ export async function batchScrapeController(
     req.body = batchScrapeRequestSchema.parse(req.body);
   }
 
-  const permissions = checkPermissions(req.body, req.acuc?.flags);
+  const threatProtection = await resolveThreatProtection({
+    teamId: req.auth.team_id,
+    orgId: req.acuc?.org_id ?? null,
+    flags: req.acuc?.flags ?? null,
+    override: req.body.threatProtection,
+  });
+  if (threatProtection.error) {
+    return res.status(403).json({
+      success: false,
+      error: threatProtection.error,
+    });
+  }
+
+  const permissions = checkPermissions(req.body, req.acuc?.flags, {
+    threatProtectionOrgConfig: threatProtection.orgConfig,
+  });
   if (permissions.error) {
     return res.status(403).json({
       success: false,
       error: permissions.error,
+    });
+  }
+
+  const keyRestriction = await checkKeyFormatRestriction(
+    formatTypesOf(req.body.formats),
+    actionTypesOf(req.body.actions),
+    req.acuc?.api_key_id,
+    req.acuc?.flags ?? null,
+  );
+  if (!keyRestriction.allowed) {
+    return res.status(keyRestriction.status).json({
+      success: false,
+      error: keyRestriction.error,
     });
   }
 
@@ -81,6 +121,7 @@ export async function batchScrapeController(
         if (
           !isUrlBlocked(nu, req.acuc?.flags ?? null, {
             team_id: req.auth.team_id,
+            org_id: req.acuc?.org_id ?? null,
             origin: req.body.origin ?? null,
           })
         ) {
@@ -98,6 +139,7 @@ export async function batchScrapeController(
       req.body.urls?.some((url: string) =>
         isUrlBlocked(url, req.acuc?.flags ?? null, {
           team_id: req.auth.team_id,
+          org_id: req.acuc?.org_id ?? null,
           origin: req.body.origin ?? null,
         }),
       )
@@ -106,6 +148,63 @@ export async function batchScrapeController(
         return res.status(403).json({
           success: false,
           error: UNSUPPORTED_SITE_MESSAGE,
+        });
+      }
+    }
+  }
+
+  // Threat protection: reject/report blocked URLs at enqueue time so they
+  // never consume scrape slots (mirrors the isUrlBlocked handling above).
+  if (threatProtection.policy) {
+    const { blocked, decisionsByUrl } = await checkUrlsAgainstThreatPolicy(
+      urls,
+      threatProtection.policy,
+      { teamId: req.auth.team_id },
+    );
+    if (blocked.length > 0) {
+      // Consulted decisions bill the scan fee (+2 per unique scanned URL) —
+      // the scans already happened. With ignoreInvalidURLs the allowed URLs
+      // proceed to scrape jobs that bill their own scans, so only blocked
+      // ones bill here; when the whole request is rejected below, no scrape
+      // jobs will ever run, so every scanned URL bills here.
+      const threatScanCredits = calculateThreatScanCredits(
+        req.body.ignoreInvalidURLs
+          ? blocked.map(x => x.decision)
+          : decisionsByUrl.values(),
+      );
+      if (threatScanCredits > 0) {
+        billTeam(
+          req.auth.team_id,
+          threatScanCredits,
+          req.acuc?.api_key_id ?? null,
+          { endpoint: "batch_scrape", jobId: id },
+        ).catch(error => {
+          logger.error(
+            `Failed to bill team ${req.auth.team_id} for ${threatScanCredits} threat scan credit(s): ${error}`,
+          );
+        });
+      }
+      if (req.body.ignoreInvalidURLs) {
+        const blockedSet = new Set(blocked.map(x => x.url));
+        const keptUnnormalized: string[] = [];
+        const keptUrls: string[] = [];
+        urls.forEach((u, i) => {
+          if (blockedSet.has(u)) {
+            invalidURLs!.push(unnormalizedURLs[i] ?? u);
+          } else {
+            keptUrls.push(u);
+            keptUnnormalized.push(unnormalizedURLs[i]);
+          }
+        });
+        urls = keptUrls;
+        unnormalizedURLs = keptUnnormalized;
+      } else {
+        const first = blocked[0];
+        const error = new UnsafeDomainBlockedError(first.url, first.decision);
+        return res.status(403).json({
+          success: false,
+          code: error.code,
+          error: error.message,
         });
       }
     }
@@ -153,11 +252,13 @@ export async function batchScrapeController(
           ...internalOptions,
           disableSmartWaitCache: true,
           teamId: req.auth.team_id,
+          orgId: req.acuc?.org_id ?? null,
           saveScrapeResultToGCS: config.GCS_FIRE_ENGINE_BUCKET_NAME
             ? true
             : false,
           zeroDataRetention,
           agentIndexOnly: (req as any).agentIndexOnly ?? false,
+          threatProtection: threatProtection.policy ?? undefined,
         }, // NOTE: smart wait disabled for batch scrapes to ensure contentful scrape, speed does not matter
         team_id: req.auth.team_id,
         createdAt: Date.now(),
@@ -166,6 +267,13 @@ export async function batchScrapeController(
         v1: true,
         webhook: req.body.webhook,
       };
+
+  if (req.body.appendToId && (!sc || sc.team_id !== req.auth.team_id)) {
+    return res.status(404).json({
+      success: false,
+      error: "Job not found",
+    });
+  }
 
   if (!req.body.appendToId) {
     sc.queueBackend = await resolveNewGroupBackend(sc.team_id);
@@ -255,7 +363,7 @@ export async function batchScrapeController(
   return res.status(200).json({
     success: true,
     id,
-    url: `${protocol}://${req.get("host")}/v1/batch/scrape/${id}`,
+    url: `${protocol}://${req.host}/v1/batch/scrape/${id}`,
     invalidURLs,
   });
 }

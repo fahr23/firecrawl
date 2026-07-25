@@ -3,9 +3,9 @@ import { eq, inArray } from "drizzle-orm";
 import { dbRr } from "../../db/connection";
 import * as schema from "../../db/schema";
 import { autumnClient } from "./client";
+import { CREDITS_FEATURE_ID } from "./autumn.service";
 
-const CREDITS_FEATURE_ID = "CREDITS";
-const TOKENS_PER_CREDIT = 15;
+export const TOKENS_PER_CREDIT = 15;
 const HISTORICAL_RANGE = "90d";
 const HISTORICAL_BIN_SIZE = "day";
 
@@ -15,7 +15,6 @@ const HISTORICAL_BIN_SIZE = "day";
 
 interface TeamBalance {
   remaining: number;
-  granted: number;
   planCredits: number;
   usage: number;
   unlimited: boolean;
@@ -319,7 +318,6 @@ export async function getTeamBalance(
 
   return {
     remaining: signedRemaining(creditBalance),
-    granted: creditBalance?.granted ?? 0,
     planCredits,
     usage: creditBalance?.usage ?? 0,
     unlimited: creditBalance?.unlimited ?? false,
@@ -367,8 +365,11 @@ interface HistoricalPeriodByApiKey {
 /**
  * Fetches a team's historical credit usage across billing periods from Autumn.
  *
- * Uses `events.aggregate` with the last 90 days of daily usage and rolls those
- * daily totals into calendar-month buckets in API code.
+ * Scopes the aggregate to the team's Autumn entity so the response reflects
+ * only that team's usage, not the whole org. Uses `events.aggregate` with the
+ * last 90 days of daily usage and rolls those daily totals into calendar-month
+ * buckets in API code. A team with no entity (never provisioned) has no
+ * team-scoped usage, so we return an empty history rather than the org total.
  */
 export async function getTeamHistoricalUsage(
   teamId: string,
@@ -381,7 +382,6 @@ export async function getTeamHistoricalUsage(
 
   const orgId = await lookupOrgId(teamId);
 
-  // Try entity-scoped aggregate first, fall back to customer-level
   let response: any;
   try {
     response = await autumnClient.events.aggregate({
@@ -394,13 +394,8 @@ export async function getTeamHistoricalUsage(
   } catch (err: any) {
     const status = err?.statusCode ?? err?.status ?? err?.response?.status;
     if (status !== 404) throw err;
-    // Entity not found — retry at customer level
-    response = await autumnClient.events.aggregate({
-      customerId: orgId,
-      featureId: CREDITS_FEATURE_ID,
-      range: HISTORICAL_RANGE,
-      binSize: HISTORICAL_BIN_SIZE,
-    });
+    // Entity not found — the team has no usage of its own to report.
+    return [];
   }
 
   return aggregateHistoricalPeriodsByMonth(response.list ?? []);
@@ -436,13 +431,8 @@ export async function getTeamHistoricalUsageByApiKey(
   } catch (err: any) {
     const status = err?.statusCode ?? err?.status ?? err?.response?.status;
     if (status !== 404) throw err;
-    response = await autumnClient.events.aggregate({
-      customerId: orgId,
-      featureId: CREDITS_FEATURE_ID,
-      range: HISTORICAL_RANGE,
-      binSize: HISTORICAL_BIN_SIZE,
-      groupBy: "properties.apiKeyId",
-    });
+    // Entity not found — the team has no usage of its own to report.
+    return [];
   }
 
   return aggregateHistoricalPeriodsByApiKeyMonth(response.list ?? []);

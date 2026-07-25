@@ -26,6 +26,15 @@ import { getErrorContactMessage } from "../../lib/deployment";
 import { captureExceptionWithZdrCheck } from "../../services/sentry";
 import type { BillingMetadata } from "../../services/billing/types";
 import { getScrapeZDR } from "../../lib/zdr-helpers";
+import {
+  KEYLESS_FREE_TIER_LIMIT_MESSAGE,
+  adjustKeylessCredits,
+  logKeylessCreditUsage,
+  reserveKeylessCredits,
+} from "../../lib/keyless";
+import { projectScrapeCredits } from "../../lib/keyless-credit-projection";
+import { applyAgentAuthDiscoveryHeader } from "../../lib/agent-auth-discovery";
+import { getEffectiveConcurrencyLimit } from "../../lib/concurrency-limit";
 import path from "node:path";
 
 const AGENT_INTEROP_CONCURRENCY_BOOST = 3;
@@ -41,7 +50,7 @@ const DOCUMENT_EXTENSIONS = new Set([
   ".xls",
 ]);
 
-function detectUploadedFileKind(
+export function detectUploadedFileKind(
   filename: string,
   contentType?: string | null,
 ): UploadedParseFileKind | null {
@@ -348,6 +357,34 @@ export async function parseController(
       const agentRequestId = req.body.__agentInterop?.requestId ?? null;
       const boostConcurrency =
         req.body.__agentInterop?.boostConcurrency ?? false;
+      const isDirectToBullMQ =
+        config.SEARCH_PREVIEW_TOKEN !== undefined &&
+        config.SEARCH_PREVIEW_TOKEN === req.body.__searchPreviewToken;
+      const projectedKeylessCredits =
+        shouldBill && !isDirectToBullMQ
+          ? projectScrapeCredits(
+              req.body,
+              req.acuc?.flags ?? null,
+              zeroDataRetention,
+            )
+          : 0;
+      let reservedKeylessCredits = 0;
+      let reconciledKeylessCredits = false;
+
+      if (projectedKeylessCredits > 0) {
+        const reservation = await reserveKeylessCredits(
+          req.auth.team_id,
+          projectedKeylessCredits,
+        );
+        if (!reservation.ok) {
+          applyAgentAuthDiscoveryHeader(res);
+          return res.status(429).json({
+            success: false,
+            error: KEYLESS_FREE_TIER_LIMIT_MESSAGE,
+          });
+        }
+        reservedKeylessCredits = projectedKeylessCredits;
+      }
 
       const logger = _logger.child({
         method: "parseController",
@@ -394,10 +431,6 @@ export async function parseController(
       const origin = req.body.origin;
       const timeout = req.body.timeout;
 
-      const isDirectToBullMQ =
-        config.SEARCH_PREVIEW_TOKEN !== undefined &&
-        config.SEARCH_PREVIEW_TOKEN === req.body.__searchPreviewToken;
-
       const totalWait = 0;
 
       let lockTime: number | null = null;
@@ -416,7 +449,10 @@ export async function parseController(
         }
         req.on("close", () => aborter.abort());
 
-        const baseConcurrency = req.acuc?.concurrency || 1;
+        const baseConcurrency = await getEffectiveConcurrencyLimit(
+          req.auth.team_id,
+          req.acuc?.org_id,
+        );
         const concurrency = boostConcurrency
           ? baseConcurrency * AGENT_INTEROP_CONCURRENCY_BOOST
           : baseConcurrency;
@@ -480,6 +516,8 @@ export async function parseController(
                       bypassBilling: isDirectToBullMQ || !shouldBill,
                       zeroDataRetention,
                       teamFlags: req.acuc?.flags ?? null,
+                      orgId: req.acuc?.org_id ?? null,
+                      teamConcurrency: baseConcurrency,
                       uploadedFile: file,
                       forceEngine,
                       isParse: true,
@@ -493,6 +531,7 @@ export async function parseController(
                     zeroDataRetention,
                     apiKeyId: req.acuc?.api_key_id ?? null,
                     concurrencyLimited: limited,
+                    keylessReserved: reservedKeylessCredits > 0,
                     requestId: agentRequestId ?? undefined,
                   },
                 };
@@ -511,6 +550,13 @@ export async function parseController(
           },
         );
       } catch (e) {
+        if (reservedKeylessCredits > 0 && !reconciledKeylessCredits) {
+          reconciledKeylessCredits = true;
+          adjustKeylessCredits(req.auth.team_id, -reservedKeylessCredits).catch(
+            () => {},
+          );
+        }
+
         const timeoutErr =
           e instanceof TransportableError && e.code === "SCRAPE_TIMEOUT";
 
@@ -613,6 +659,18 @@ export async function parseController(
         if (doc && doc.rawHtml) {
           delete doc.rawHtml;
         }
+      }
+
+      if (reservedKeylessCredits > 0 && !reconciledKeylessCredits) {
+        reconciledKeylessCredits = true;
+        const actualKeylessCredits = doc?.metadata?.creditsUsed ?? 0;
+        adjustKeylessCredits(
+          req.auth.team_id,
+          actualKeylessCredits - reservedKeylessCredits,
+        ).catch(() => {});
+        logKeylessCreditUsage(req.auth.team_id, actualKeylessCredits).catch(
+          () => {},
+        );
       }
 
       const totalRequestTime = new Date().getTime() - middlewareStartTime;

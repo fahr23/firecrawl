@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
+import { getMcpActionLogConfigErrors } from "./lib/mcp-action-log-config";
 
 /* Codecs */
 const delimitedList = (separator = ",") => {
@@ -14,21 +15,6 @@ const emptyStringAsUndefined = <T extends z.ZodTypeAny>(schema: T) =>
 
 const emptyStringAsDefault = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess(value => (value === "" ? undefined : value), schema);
-
-// Ethereum address schema: validates 0x followed by 40 hex characters
-const ethereumAddress = z
-  .string()
-  .transform(s => s.trim())
-  .pipe(
-    z.union([
-      z.literal(""), // Allow empty string (treated as undefined below)
-      z
-        .string()
-        .regex(/^0x[a-fA-F0-9]{40}$/, "Invalid Ethereum address format"),
-    ]),
-  )
-  .transform(s => (s === "" ? undefined : (s as `0x${string}`)))
-  .optional();
 
 /* Schema */
 const configSchema = z.object({
@@ -50,6 +36,51 @@ const configSchema = z.object({
   // Express
   EXPRESS_TRUST_PROXY: z.coerce.number().optional(),
 
+  // Keyless free tier (scrape/search/interact without an API key, per-IP/day).
+  // Non-negative integers; 0 means "enabled but no budget", unset means "off".
+  KEYLESS_CREDITS_PER_DAY: z.coerce.number().int().nonnegative().optional(),
+  KEYLESS_REQUESTS_PER_DAY: z.coerce.number().int().nonnegative().optional(),
+  // Shared secret that lets a trusted proxy (e.g. the hosted MCP server)
+  // forward the real client IP for keyless rate-limiting via the
+  // `x-firecrawl-keyless-ip` header. Untrusted callers can't override their IP.
+  KEYLESS_PROXY_SECRET: z.string().optional(),
+  // Dedicated signer/verifier secret for short-lived MCP delegated credentials.
+  // Keep separate from KEYLESS_PROXY_SECRET because delegated credentials can
+  // authorize billed requests for a managed OAuth connection.
+  MCP_DELEGATED_CREDENTIAL_SECRET: emptyStringAsUndefined(z.string().min(32)),
+  // Optional Spur Context API token (https://docs.spur.us/context-api). When
+  // set, keyless requests have their client IP checked against Spur and are
+  // refused if the IP fronts anonymizing/rotating infrastructure (VPN/proxy/
+  // TOR). Unset disables the check entirely (keyless behaves as before).
+  SPUR_API_KEY: z.string().optional(),
+
+  // Threat protection (enterprise domain risk blocking). "normal" mode uses
+  // Google Web Risk. An unset key disables the provider (lookups then fail
+  // per the org's failurePolicy).
+  GOOGLE_WEB_RISK_API_KEY: z.string().optional(),
+  GOOGLE_WEB_RISK_API_URL: z
+    .string()
+    .url()
+    .default("https://webrisk.googleapis.com"),
+  // Google Web Risk Update API sync tuning. ZDR: "normal" mode checks run
+  // against a locally synced hash-prefix database (threatLists:computeDiff)
+  // instead of sending URLs to Google, and verdicts are never persisted.
+  //
+  // Floor for how often threatLists:computeDiff may run per list. Google's
+  // recommendedNextDiff is respected when it is later than this floor.
+  THREAT_LIST_SYNC_MIN_INTERVAL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60),
+  // A synced threat list older than this is treated as unavailable
+  // (provider-failure semantics → the org's failurePolicy decides).
+  THREAT_LIST_STALENESS_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(6 * 60 * 60),
+
   // API Keys & Authentication
   BULL_AUTH_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
@@ -59,8 +90,6 @@ const configSchema = z.object({
   LLAMAPARSE_API_KEY: z.string().optional(),
   STRIPE_SECRET_KEY: z.string().optional(),
   AUTUMN_SECRET_KEY: z.string().optional(),
-  AUTUMN_REQUEST_TRACK_EXPERIMENT: z.string().optional(),
-  AUTUMN_REQUEST_TRACK_EXPERIMENT_PERCENT: z.coerce.number().default(100),
   RESEND_API_KEY: z.string().optional(),
   PREVIEW_TOKEN: z.string().optional(),
   SEARCH_PREVIEW_TOKEN: z.string().optional(),
@@ -71,10 +100,16 @@ const configSchema = z.object({
     .int()
     .nonnegative()
     .default(100),
+  FEEDBACK_MAX_AGE_SEC: z.coerce.number().int().positive().default(120),
+  FEEDBACK_DAILY_CAP_CREDITS: z.coerce.number().int().nonnegative().default(50),
+  FEEDBACK_REFUND_ENABLED: z.stringbool().default(true),
 
   // OAuth token introspection
   OAUTH_INTROSPECT_URL: z.string().optional(),
   OAUTH_INTROSPECT_SECRET: z.string().optional(),
+  MCP_ACTION_LOG_SECRET: z.string().optional(),
+  MCP_ACTION_LOG_STORAGE_ENABLED: z.stringbool().default(false),
+  MCP_ACTION_LOG_WRITES_ENABLED: z.stringbool().default(false),
 
   // Agent auth discovery (RFC 9728 WWW-Authenticate on 401)
   AGENT_AUTH_RESOURCE_METADATA_URL: z
@@ -122,13 +157,26 @@ const configSchema = z.object({
   GCS_FIRE_ENGINE_BUCKET_NAME: z.string().optional(),
   GCS_INDEX_BUCKET_NAME: z.string().optional(),
   GCS_MEDIA_BUCKET_NAME: z.string().optional(),
+  GCS_SCREENSHOT_RESIGN_BEFORE: emptyStringAsUndefined(z.string().datetime()),
+  GCS_PARSE_UPLOAD_BUCKET_NAME: z.string().optional(),
+  PARSE_UPLOAD_STORAGE_DRIVER: z.enum(["local", "gcs"]).optional(),
+  PARSE_UPLOAD_REF_SECRET: emptyStringAsUndefined(z.string().trim().min(1)),
+  PARSE_UPLOAD_PUBLIC_BASE_URL: z.string().url().optional(),
 
   // ClickHouse (Search Analytics)
   CLICKHOUSE_ANALYTICS_URL: z.string().optional(),
   CLICKHOUSE_ANALYTICS_DATABASE: z.string().optional(),
 
-  // Search highlights (beta): semantic highlight model endpoint
+  // Search highlights: highlighter service base URL. TOKEN is optional
+  // bearer auth for legacy/external services; the in-cluster service omits it.
   HIGHLIGHT_MODEL_URL: z.string().optional(),
+  HIGHLIGHT_MODEL_TOKEN: z.string().optional(),
+  // Stable percentage of non-MCP/CLI cohorts whose generated highlights are
+  // returned. The remaining eligible traffic still runs in shadow mode.
+  HIGHLIGHT_ROLLOUT_PERCENT: z.coerce.number().min(0).max(100).default(0),
+
+  // Exchange (routed data sources service)
+  FIRE_EXCHANGE_URL: z.url().optional(),
 
   // Fire Engine
   FIRE_ENGINE_BETA_URL: z.string().optional(),
@@ -169,6 +217,7 @@ const configSchema = z.object({
   NUQ_WORKER_COUNT: z.coerce.number().default(5),
   NUQ_PREFETCH_WORKER_PORT: z.coerce.number().default(3011).catch(3011), // todo: investigate why .catch is needed
   NUQ_RECONCILER_WORKER_PORT: z.coerce.number().default(3012).catch(3012),
+  CCLOG_WORKER_PORT: z.coerce.number().default(3013).catch(3013),
   EXTRACT_WORKER_PORT: z.coerce.number().default(3004),
   NUQ_WAIT_MODE: z.string().optional(),
 
@@ -207,6 +256,12 @@ const configSchema = z.object({
   FIRE_PDF_PERCENT: z.coerce.number().min(0).max(100).default(10),
   FIRE_PDF_BASE_URL: z.string().optional(),
   FIRE_PDF_API_KEY: z.string().optional(),
+  // Async /jobs rollout is a separate, server-controlled cohort inside
+  // traffic already selected for FirePDF. It is disabled by default.
+  FIRE_PDF_ASYNC_PERCENT: z.coerce.number().min(0).max(100).default(0),
+  FIRE_PDF_ASYNC_FORCE_TEAM_IDS: z.string().optional(),
+  FIRE_PDF_ASYNC_DISABLE_TEAM_IDS: z.string().optional(),
+  FIRE_PDF_ASYNC_ALLOW_REQUEST_OVERRIDE: z.stringbool().default(false),
 
   // RunPod
   RUNPOD_MU_API_KEY: z.string().optional(),
@@ -222,6 +277,26 @@ const configSchema = z.object({
   SLACK_WEBHOOK_URL: z.string().optional(),
   SLACK_ADMIN_WEBHOOK_URL: z.string().optional(),
   DISABLE_WEBHOOK_DELIVERY: z.stringbool().optional(),
+
+  // Slack integration ("Add to Slack" for monitor notifications + /monitor
+  // slash command). Credentials come from the Firecrawl Slack app.
+  SLACK_CLIENT_ID: z.string().optional(),
+  SLACK_CLIENT_SECRET: z.string().optional(),
+  SLACK_SIGNING_SECRET: z.string().optional(),
+  // Bot scopes requested during install. Override only if the Slack app manifest
+  // changes; keep in sync with slack-app-manifest.json.
+  SLACK_OAUTH_SCOPES: z
+    .string()
+    .default(
+      "chat:write,chat:write.public,commands,channels:read,groups:read,team:read,incoming-webhook",
+    ),
+  // Absolute URL Slack redirects back to after authorize. Must exactly match a
+  // Redirect URL configured on the Slack app (e.g.
+  // https://api.firecrawl.dev/v2/slack/oauth/callback).
+  SLACK_OAUTH_REDIRECT_URL: z.string().optional(),
+  // 32-byte key (hex or base64) used to AES-256-GCM encrypt stored bot tokens.
+  // If unset, tokens are stored with a `plain:` prefix (self-hosted only).
+  SLACK_TOKEN_ENCRYPTION_KEY: z.string().optional(),
   ALLOW_LOCAL_WEBHOOKS: z.stringbool().optional(),
   WEBHOOK_USE_RABBITMQ: z.stringbool().optional(),
 
@@ -262,12 +337,6 @@ const configSchema = z.object({
   BACKGROUND_INDEX_TEAM_ID: z.string().optional(),
   PRECRAWL_TEAM_ID: z.string().optional(),
 
-  // Payment (x402)
-  X402_ENDPOINT_PRICE_USD: z.string().optional(),
-  X402_NETWORK: z.string().optional(),
-  X402_PAY_TO_ADDRESS: ethereumAddress,
-  X402_FACILITATOR_URL: z.string().url().optional(),
-
   // System
   MAX_CPU: z.coerce.number().default(0.8),
   MAX_RAM: z.coerce.number().default(0.8),
@@ -307,6 +376,12 @@ const configSchema = z.object({
   // Audio (avgrab)
   AVGRAB_SERVICE_URL: z.string().optional(),
 
+  // Product extraction (product-search Rust service)
+  PRODUCT_EXTRACTION_SERVICE_URL: z.string().optional(),
+
+  // Menu extraction (menu-search Rust service)
+  MENU_EXTRACTION_SERVICE_URL: z.string().optional(),
+
   // PII Redaction (fire-privacy)
   FIRE_PRIVACY_URL: z.string().optional(),
   FIRE_PRIVACY_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
@@ -322,4 +397,14 @@ const configSchema = z.object({
   CODE_SANDBOX_URL: z.string().default("ws://code-sandbox:3001"),
 });
 
-export const config = configSchema.parse(process.env);
+const validatedConfigSchema = configSchema.superRefine((value, context) => {
+  for (const error of getMcpActionLogConfigErrors(value)) {
+    context.addIssue({
+      code: "custom",
+      path: [error.path],
+      message: error.message,
+    });
+  }
+});
+
+export const config = validatedConfigSchema.parse(process.env);

@@ -23,8 +23,8 @@ x-common-service: &common-service
 
 x-common-env: &common-env
   REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-  REDIS_RATE_LIMIT_URL: ${REDIS_URL:-redis://redis:6379}
-  PLAYWRIGHT_MICROSERVICE_URL: ${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-m:3000/scrape}
+  REDIS_RATE_LIMIT_URL: ${REDIS_RATE_LIMIT_URL:-${REDIS_URL:-redis://redis:6379}}
+  PLAYWRIGHT_MICROSERVICE_URL: ${PLAYWRIGHT_MICROSERVICE_URL:-http://playwright-service:3000/scrape}
   HTML_TO_MARKDOWN_SERVICE_URL: ${HTML_TO_MARKDOWN_SERVICE_URL:-http://go-html-to-md-service:8080}
   POSTGRES_USER: ${POSTGRES_USER:-postgres}
   POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
@@ -61,7 +61,7 @@ x-common-env: &common-env
   FDB_CLUSTER_FILE: ${NUQ_BACKEND:+/var/fdb/fdb.cluster}
 
 services:
-  playwright-m:
+  playwright-service:
     # NOTE: If you don't want to build the service locally,
     # comment out the build: statement and uncomment the image: statement
     # image: ghcr.io/firecrawl/playwright-service:latest
@@ -137,7 +137,7 @@ services:
     depends_on:
       redis:
         condition: service_started
-      playwright-m:
+      playwright-service:
         condition: service_started
       go-html-to-md-service:
         condition: service_started
@@ -178,7 +178,7 @@ services:
     depends_on:
       api:
         condition: service_started
-      playwright-m:
+      playwright-service:
         condition: service_started
       nuq-postgres:
         condition: service_started

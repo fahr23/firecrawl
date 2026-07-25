@@ -715,6 +715,28 @@ describe("Scrape tests", () => {
         scrapeTimeout * 2 + 1 * indexCooldown,
       );
 
+      // Gated to the playwright engine (where cookies are seeded into the jar);
+      // a Cookie passed as an extra request header is dropped on redirect hops.
+      concurrentIf(HAS_PLAYWRIGHT && !HAS_FIRE_ENGINE)(
+        "forwards cookies across redirects",
+        async () => {
+          // httpbin's /cookies echoes the cookies it received. The cookie only
+          // survives the 302 hop if it was seeded into the browser cookie jar.
+          const response = await scrape(
+            {
+              url: "https://httpbin.org/redirect-to?url=https%3A%2F%2Fhttpbin.org%2Fcookies&status_code=302",
+              headers: { Cookie: "fc_cookie_redirect_test=1" },
+              formats: ["rawHtml"],
+              waitFor: 1000,
+            },
+            identity,
+          );
+
+          expect(response.rawHtml).toContain("fc_cookie_redirect_test");
+        },
+        scrapeTimeout,
+      );
+
       it.concurrent(
         "respects mobile",
         async () => {
@@ -1318,6 +1340,55 @@ describe("Scrape tests", () => {
           );
 
           expect(res.metadata.proxyUsed).toBe("basic");
+        },
+        scrapeTimeout * 2,
+      );
+
+      // Regression: an explicit stealth/enhanced proxy must still use stealth
+      // even when another feature flag (e.g. actions) is requested. The engine
+      // picker used to drop the negative-quality stealth engines via the quality
+      // filter, so a request with a non-stealth flag would silently fall back to
+      // a basic proxy.
+      it.concurrent(
+        "enhanced uses stealth alongside other feature flags",
+        async () => {
+          const res = await scrape(
+            {
+              url: base,
+              proxy: "enhanced",
+              actions: [
+                {
+                  type: "wait",
+                  milliseconds: 500,
+                },
+              ],
+            },
+            identity,
+          );
+
+          expect(res.metadata.proxyUsed).toBe("stealth");
+        },
+        scrapeTimeout * 2,
+      );
+
+      it.concurrent(
+        "stealth uses stealth alongside other feature flags",
+        async () => {
+          const res = await scrape(
+            {
+              url: base,
+              proxy: "stealth",
+              actions: [
+                {
+                  type: "wait",
+                  milliseconds: 500,
+                },
+              ],
+            },
+            identity,
+          );
+
+          expect(res.metadata.proxyUsed).toBe("stealth");
         },
         scrapeTimeout * 2,
       );

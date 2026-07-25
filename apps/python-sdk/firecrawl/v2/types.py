@@ -39,6 +39,14 @@ warnings.filterwarnings(
     "ignore",
     message='Field name "json" in "Document" shadows an attribute in parent "BaseModel"',
 )
+warnings.filterwarnings(
+    "ignore",
+    message='Field name "json" in "MonitorPageDiff" shadows an attribute in parent "BaseModel"',
+)
+warnings.filterwarnings(
+    "ignore",
+    message='Field name "json" in "MonitorPageSnapshot" shadows an attribute in parent "BaseModel"',
+)
 
 T = TypeVar("T")
 
@@ -115,6 +123,7 @@ class DocumentMetadata(BaseModel):
     status_code: Optional[int] = None
     scrape_id: Optional[str] = None
     num_pages: Optional[int] = None
+    total_pages: Optional[int] = None
     content_type: Optional[str] = None
     proxy_used: Optional[Literal["basic", "stealth"]] = None
     timezone: Optional[str] = None
@@ -203,6 +212,7 @@ class DocumentMetadata(BaseModel):
             if isinstance(v, list) and k in {
                 "status_code",
                 "num_pages",
+                "total_pages",
                 "credits_used",
             }:
                 first = v[0] if v else None
@@ -262,6 +272,159 @@ class BrandingProfile(BaseModel):
     personality: Optional[Dict[str, Any]] = None
 
 
+class ProductPrice(BaseModel):
+    """A monetary price for a product or variant."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    amount: float
+    currency: Optional[str] = None
+    formatted: Optional[str] = None
+
+
+class ProductAvailability(BaseModel):
+    """Availability information for a product or variant."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    in_stock: bool = Field(alias="inStock")
+    text: Optional[str] = None
+
+
+class ProductImage(BaseModel):
+    """An image associated with a product or variant."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    url: str
+    alt: Optional[str] = None
+
+
+class ProductSale(BaseModel):
+    """Sale information for a variant, holding the pre-sale price."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    original_price: ProductPrice = Field(alias="originalPrice")
+
+
+class ProductVariant(BaseModel):
+    """A purchasable variant of a product (e.g. a size/color combination)."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    id: Optional[str] = None
+    sku: Optional[str] = None
+    title: Optional[str] = None
+    values: Optional[Dict[str, Any]] = None
+    price: Optional[ProductPrice] = None
+    sale: Optional[ProductSale] = None
+    availability: ProductAvailability
+    images: Optional[List[ProductImage]] = None
+
+
+class ProductProfile(BaseModel):
+    """Structured product information extracted from a website."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    title: str
+    brand: Optional[str] = None
+    category: Optional[str] = None
+    url: str
+    description: Optional[str] = None
+    variants: List[ProductVariant] = Field(default_factory=list)
+
+
+class MenuPrice(BaseModel):
+    """A monetary price for a menu item."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    amount: float
+    currency: Optional[str] = None
+    formatted: Optional[str] = None
+
+
+class MenuAvailability(BaseModel):
+    """Availability information for a menu item."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    in_stock: bool = Field(alias="inStock")
+    text: Optional[str] = None
+
+
+class MenuImage(BaseModel):
+    """An image associated with a menu item."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    url: str
+    alt: Optional[str] = None
+
+
+class MenuItemIdentifiers(BaseModel):
+    """External identifiers for a menu item."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    merchant_item_id: Optional[str] = Field(default=None, alias="merchantItemId")
+
+
+class MenuItem(BaseModel):
+    """A single item on a menu."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    images: List[MenuImage] = Field(default_factory=list)
+    price: Optional[MenuPrice] = None
+    availability: MenuAvailability
+    dietary: List[str] = Field(default_factory=list)
+    calories: Optional[float] = None
+    option_groups: List[Any] = Field(default_factory=list, alias="optionGroups")
+    identifiers: MenuItemIdentifiers = Field(default_factory=MenuItemIdentifiers)
+    url: Optional[str] = None
+    source_url: str = Field(alias="sourceUrl")
+
+
+class MenuSection(BaseModel):
+    """An ordered group of menu items."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    id: str
+    name: str
+    description: Optional[str] = None
+    items: List[MenuItem] = Field(default_factory=list)
+
+
+class MenuMerchant(BaseModel):
+    """The merchant a menu belongs to."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    name: str
+    type: Optional[str] = None
+    location: Optional[Any] = None
+
+
+class MenuProfile(BaseModel):
+    """Structured menu information extracted from a website."""
+
+    model_config = {"extra": "allow", "populate_by_name": True}
+
+    is_menu: bool = Field(alias="isMenu")
+    confidence: float
+    merchant: MenuMerchant
+    currency: Optional[str] = None
+    sections: List[MenuSection] = Field(default_factory=list)
+    source_url: str = Field(alias="sourceUrl")
+
+
 RedactPIIEntity = Literal[
     "PERSON",
     "EMAIL",
@@ -292,6 +455,8 @@ class Document(BaseModel):
     warning: Optional[str] = None
     change_tracking: Optional[Dict[str, Any]] = None
     branding: Optional[BrandingProfile] = None
+    product: Optional[ProductProfile] = None
+    menu: Optional[MenuProfile] = None
 
     @property
     def metadata_typed(self) -> DocumentMetadata:
@@ -415,6 +580,8 @@ FormatString = Literal[
     "json",
     "attributes",
     "branding",
+    "product",
+    "menu",
     "query",
     "audio",
     "video",
@@ -582,6 +749,35 @@ class RedactPIIOptions(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class ThreatProtectionOptions(BaseModel):
+    """Enterprise: per-request field-level override of your team's threat
+    protection policy.
+
+    Requires threat protection to be enabled for your team and request
+    overrides to be allowed in the team configuration. Only the fields you
+    explicitly provide replace the team policy's values.
+    """
+
+    # "off" disables scanning for this request; "normal" applies the policy.
+    mode: Optional[Literal["off", "normal"]] = None
+    # Block verdicts at or above this risk score (integer 0-100).
+    risk_score_threshold: Optional[int] = Field(
+        default=None, alias="riskScoreThreshold"
+    )
+    # Exact domains or globs like "*.example.com" to always block (max 1000).
+    blacklist: Optional[List[str]] = None
+    # Exact domains or globs to always allow; wins over everything (max 1000).
+    whitelist: Optional[List[str]] = None
+    # Lowercase TLDs without the leading dot, e.g. "zip" (max 1000).
+    blocked_tlds: Optional[List[str]] = Field(default=None, alias="blockedTlds")
+    # Behavior when scanning is unavailable: "closed" blocks, "open" allows.
+    failure_policy: Optional[Literal["open", "closed"]] = Field(
+        default=None, alias="failurePolicy"
+    )
+
+    model_config = {"populate_by_name": True}
+
+
 class ScrapeOptions(BaseModel):
     """Options for scraping operations."""
 
@@ -622,6 +818,9 @@ class ScrapeOptions(BaseModel):
     lockdown: Optional[bool] = None
     redact_pii: Optional[Union[bool, RedactPIIOptions]] = Field(
         default=None, alias="redactPII"
+    )
+    threat_protection: Optional[ThreatProtectionOptions] = Field(
+        default=None, alias="threatProtection"
     )
     profile: Optional[Dict[str, Any]] = None
     integration: Optional[str] = None
@@ -854,6 +1053,7 @@ class MapOptions(BaseModel):
     timeout: Optional[int] = None
     integration: Optional[str] = None
     location: Optional["Location"] = None
+    threat_protection: Optional[ThreatProtectionOptions] = None
 
 
 class MapRequest(BaseModel):
@@ -933,16 +1133,22 @@ class MonitorEmailRecipientSubscription(BaseModel):
 
 
 class MonitorTarget(BaseModel):
-    """A scrape or crawl target stored on a monitor."""
+    """A scrape, crawl, or search target stored on a monitor."""
 
     model_config = {"extra": "allow", "populate_by_name": True}
 
     id: Optional[str] = None
-    type: Literal["scrape", "crawl"]
+    type: Literal["scrape", "crawl", "search"]
     urls: Optional[List[str]] = None
     url: Optional[str] = None
     scrape_options: Optional[Union[ScrapeOptions, Dict[str, Any]]] = Field(default=None, alias="scrapeOptions")
     crawl_options: Optional[Dict[str, Any]] = Field(default=None, alias="crawlOptions")
+    # search target fields
+    queries: Optional[List[str]] = None
+    search_window: Optional[Literal["5m", "15m", "1h", "6h", "24h", "7d"]] = Field(default=None, alias="searchWindow")
+    include_domains: Optional[List[str]] = Field(default=None, alias="includeDomains")
+    exclude_domains: Optional[List[str]] = Field(default=None, alias="excludeDomains")
+    max_results: Optional[int] = Field(default=None, alias="maxResults")
 
 
 class MonitorCreateRequest(BaseModel):
@@ -1027,12 +1233,30 @@ class MonitorPageJudgment(BaseModel):
     meaningful_changes: List[MonitorMeaningfulChange] = Field(default_factory=list, alias="meaningfulChanges")
 
 
+class MonitorTargetResult(BaseModel):
+    model_config = {"populate_by_name": True, "extra": "allow"}
+
+    target_id: str = Field(alias="targetId")
+    type: Literal["scrape", "crawl", "search"]
+    expected_jobs: Optional[List[str]] = Field(default=None, alias="expectedJobs")
+    crawl_id: Optional[str] = Field(default=None, alias="crawlId")
+    search_completed: Optional[bool] = Field(default=None, alias="searchCompleted")
+    result_count: Optional[int] = Field(default=None, alias="resultCount")
+    matches: Optional[int] = None
+    summary: Optional[str] = None
+    judge_degraded: Optional[bool] = Field(default=None, alias="judgeDegraded")
+    degraded_reason: Optional[str] = Field(default=None, alias="degradedReason")
+    search_credits: Optional[int] = Field(default=None, alias="searchCredits")
+    judge_credits: Optional[int] = Field(default=None, alias="judgeCredits")
+    results_judged: Optional[int] = Field(default=None, alias="resultsJudged")
+
+
 class MonitorCheck(BaseModel):
     model_config = {"populate_by_name": True, "extra": "allow"}
 
     id: str
     monitor_id: str = Field(alias="monitorId")
-    status: Literal["queued", "running", "completed", "failed", "partial", "skipped_overlap"]
+    status: Literal["queued", "running", "completed", "failed", "partial", "skipped_overlap", "skipped_no_credits"]
     trigger: Literal["scheduled", "manual"]
     scheduled_for: Optional[str] = Field(default=None, alias="scheduledFor")
     started_at: Optional[str] = Field(default=None, alias="startedAt")
@@ -1042,7 +1266,7 @@ class MonitorCheck(BaseModel):
     actual_credits: Optional[int] = Field(default=None, alias="actualCredits")
     billing_status: Literal["not_applicable", "reserved", "confirmed", "released", "failed"] = Field(alias="billingStatus")
     summary: MonitorSummary
-    target_results: Optional[Any] = Field(default=None, alias="targetResults")
+    target_results: Optional[List[MonitorTargetResult]] = Field(default=None, alias="targetResults")
     notification_status: Optional[Any] = Field(default=None, alias="notificationStatus")
     error: Optional[str] = None
     created_at: str = Field(alias="createdAt")
@@ -1158,6 +1382,7 @@ class BrowserExecuteResponse(BaseModel):
     """Response from executing code in a browser session."""
 
     success: bool
+    cdp_url: Optional[str] = None
     live_view_url: Optional[str] = None
     interactive_live_view_url: Optional[str] = None
     output: Optional[str] = None
@@ -1377,7 +1602,12 @@ class SearchRequest(BaseModel):
     location: Optional[str] = None
     ignore_invalid_urls: Optional[bool] = None
     timeout: Optional[int] = 300000
+    highlights: Optional[bool] = None
     scrape_options: Optional[ScrapeOptions] = None
+    # Enterprise search options. Use ["zdr"] for end-to-end Zero Data
+    # Retention or ["anon"] for anonymized search. Must be enabled for your team.
+    enterprise: Optional[List[str]] = None
+    threat_protection: Optional[ThreatProtectionOptions] = None
     integration: Optional[str] = None
 
     @field_validator("sources")

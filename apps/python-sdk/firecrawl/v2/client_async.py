@@ -37,6 +37,7 @@ from .types import (
     PDFAction,
     Location,
     PaginationConfig,
+    ThreatProtectionOptions,
     Monitor,
     MonitorCheck,
     MonitorCheckDetail,
@@ -60,6 +61,7 @@ from .methods.aio import extract as async_extract  # type: ignore[attr-defined]
 from .methods.aio import agent as async_agent  # type: ignore[attr-defined]
 from .methods.aio import browser as async_browser  # type: ignore[attr-defined]
 from .methods.aio import monitor as async_monitor  # type: ignore[attr-defined]
+from .methods.aio import research as async_research  # type: ignore[attr-defined]
 
 from .client import _SCRAPE_OPTION_KEYS
 from .watcher_async import AsyncWatcher
@@ -104,6 +106,21 @@ class AsyncFirecrawlClient:
     ):
         options = ScrapeOptions(**{k: v for k, v in kwargs.items() if v is not None}) if kwargs else None
         return await async_scrape.scrape(self.async_http_client, url, options)
+
+    async def search_papers(self, query: str, **kwargs):
+        return await async_research.search_papers(self.async_http_client, query, **kwargs)
+
+    async def inspect_paper(self, paper_id: str):
+        return await async_research.inspect_paper(self.async_http_client, paper_id)
+
+    async def read_paper(self, paper_id: str, query: str, **kwargs):
+        return await async_research.read_paper(self.async_http_client, paper_id, query, **kwargs)
+
+    async def related_papers(self, paper_id: str, intent: str, **kwargs):
+        return await async_research.related_papers(self.async_http_client, paper_id, intent, **kwargs)
+
+    async def search_github(self, query: str, **kwargs):
+        return await async_research.search_github(self.async_http_client, query, **kwargs)
 
     async def interact(
         self,
@@ -381,6 +398,7 @@ class AsyncFirecrawlClient:
         sitemap: Optional[Literal["only", "include", "skip"]] = None,
         timeout: Optional[int] = None,
         integration: Optional[str] = None,
+        threat_protection: Optional[ThreatProtectionOptions] = None,
     ) -> MapData:
         options = MapOptions(
             search=search,
@@ -389,7 +407,8 @@ class AsyncFirecrawlClient:
             sitemap=sitemap if sitemap is not None else "include",
             timeout=timeout,
             integration=integration,
-        ) if any(v is not None for v in [search, include_subdomains, limit, sitemap, integration, timeout]) else None
+            threat_protection=threat_protection,
+        ) if any(v is not None for v in [search, include_subdomains, limit, sitemap, integration, timeout, threat_protection]) else None
         return await async_map.map(self.async_http_client, url, options)
 
     async def create_monitor(
@@ -573,6 +592,7 @@ class AsyncFirecrawlClient:
         poll_interval: int = 2,
         timeout: Optional[int] = None,
         integration: Optional[str] = None,
+        threat_protection: Optional[ThreatProtectionOptions] = None,
     ):
         """Extract structured data and wait until completion (async).
 
@@ -595,6 +615,7 @@ class AsyncFirecrawlClient:
             poll_interval=poll_interval,
             timeout=timeout,
             integration=integration,
+            threat_protection=threat_protection,
         )
 
     async def get_extract_status(self, job_id: str):
@@ -620,6 +641,7 @@ class AsyncFirecrawlClient:
         scrape_options: Optional['ScrapeOptions'] = None,
         ignore_invalid_urls: Optional[bool] = None,
         integration: Optional[str] = None,
+        threat_protection: Optional[ThreatProtectionOptions] = None,
     ):
         """Start an extract job (non-blocking, async).
 
@@ -640,6 +662,7 @@ class AsyncFirecrawlClient:
             scrape_options=scrape_options,
             ignore_invalid_urls=ignore_invalid_urls,
             integration=integration,
+            threat_protection=threat_protection,
         )
 
     # Agent
@@ -656,6 +679,7 @@ class AsyncFirecrawlClient:
         strict_constrain_to_urls: Optional[bool] = None,
         model: Optional[Literal["spark-1-pro", "spark-1-mini"]] = None,
         webhook: Optional[Union[str, AgentWebhookConfig]] = None,
+        threat_protection: Optional[ThreatProtectionOptions] = None,
     ):
         return await async_agent.agent(
             self.async_http_client,
@@ -669,6 +693,7 @@ class AsyncFirecrawlClient:
             strict_constrain_to_urls=strict_constrain_to_urls,
             model=model,
             webhook=webhook,
+            threat_protection=threat_protection,
         )
 
     async def get_agent_status(self, job_id: str):
@@ -685,6 +710,7 @@ class AsyncFirecrawlClient:
         strict_constrain_to_urls: Optional[bool] = None,
         model: Optional[Literal["spark-1-pro", "spark-1-mini"]] = None,
         webhook: Optional[Union[str, AgentWebhookConfig]] = None,
+        threat_protection: Optional[ThreatProtectionOptions] = None,
     ):
         return await async_agent.start_agent(
             self.async_http_client,
@@ -696,6 +722,7 @@ class AsyncFirecrawlClient:
             strict_constrain_to_urls=strict_constrain_to_urls,
             model=model,
             webhook=webhook,
+            threat_protection=threat_protection,
         )
 
     async def cancel_agent(self, job_id: str) -> bool:

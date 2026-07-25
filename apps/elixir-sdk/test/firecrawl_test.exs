@@ -78,6 +78,38 @@ defmodule FirecrawlTest do
     end
   end
 
+  test "create_monitor accepts a search target" do
+    Application.put_env(:firecrawl, :api_key, "test-key")
+    on_exit(fn -> Application.delete_env(:firecrawl, :api_key) end)
+
+    result =
+      Firecrawl.create_monitor(
+        [
+          name: "search monitor",
+          schedule: [interval: "24h"],
+          goal: "Track new mentions",
+          judge_enabled: true,
+          targets: [
+            [
+              type: "search",
+              queries: ["firecrawl"],
+              search_window: "24h",
+              include_domains: ["example.com"],
+              exclude_domains: [],
+              max_results: 10
+            ]
+          ]
+        ],
+        base_url: "http://localhost:1",
+        retry: false
+      )
+
+    # Validation passes (it is not a ValidationError); the request itself fails
+    # because the base_url is unreachable.
+    assert {:error, error} = result
+    refute match?(%NimbleOptions.ValidationError{}, error)
+  end
+
   test "accepts atom values for enum params" do
     Application.put_env(:firecrawl, :api_key, "test-key")
     on_exit(fn -> Application.delete_env(:firecrawl, :api_key) end)
@@ -283,6 +315,40 @@ defmodule FirecrawlTest do
 
     assert body["redactPII"] == true
     assert body["urls"] == ["https://example.com"]
+  end
+
+  test "search maps highlights to highlights" do
+    parent = self()
+
+    adapter = fn request ->
+      send(parent, {:request, request})
+
+      resp = Req.Response.new(
+        status: 200,
+        headers: %{"content-type" => ["application/json"]},
+        body: Jason.encode!(%{"success" => true, "data" => %{}})
+      )
+
+      {request, resp}
+    end
+
+    assert {:ok, %Req.Response{status: 200}} =
+             Firecrawl.search_and_scrape(
+               [query: "firecrawl", highlights: false],
+               api_key: "test-key",
+               adapter: adapter
+             )
+
+    assert_receive {:request, request}
+
+    body =
+      cond do
+        is_binary(request.body) -> Jason.decode!(request.body)
+        is_map(request.body) -> request.body
+        true -> request.options[:json]
+      end
+
+    assert body["highlights"] == false
   end
 
   test "all expected API functions are defined with bang variants" do

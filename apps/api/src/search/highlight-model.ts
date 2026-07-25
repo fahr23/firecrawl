@@ -1,203 +1,343 @@
 import type { Logger } from "winston";
 import { config } from "../config";
 
-// Semantic highlight model: it scores each sentence of a context against a
-// question (semantic similarity), no LLM. Inference is fast (~10ms), but the
-// model caps context at ~4k tokens, so we chunk the page, score every chunk,
-// pool the per-sentence scores globally, and keep the best sentences. Endpoint
-// is config-gated (HIGHLIGHT_MODEL_URL); callers must confirm it's set via
-// highlightsEnvReady() before invoking.
+// Query Highlights model service: given full markdown pages and a query, the
+// service returns query-relevant highlights plus each page's highlights
+// reassembled into a single markdown document (in document order). All indexed
+// search results go through one `/batch_highlight` call. The endpoint is
+// URL-config-gated; callers must confirm it is set via highlightsEnvReady()
+// before invoking. Bearer auth remains optional for legacy/external services;
+// the in-cluster GCP Stage 1 service relies on cluster network isolation.
 
-// ~4 chars/token; 10k chars (~2.5k tokens) leaves headroom under the 4k cap for
-// the question + tokenizer variance (markdown/code tokenizes denser than prose).
-const CHUNK_CHARS = 10000;
-// Bound load for very long pages (chunks run concurrently per result).
-const MAX_CHUNKS = 10;
-// Keep sentences scoring at/above this (matches the model's default threshold).
-const SELECT_THRESHOLD = 0.5;
-// Cap the assembled snippet length.
-const MAX_SELECTED = 12;
 const REQUEST_TIMEOUT_MS = 30000;
+const MAX_BATCH_ATTEMPTS = 2;
+const RETRY_DELAY_MS = 50;
 
-interface ScoredSentence {
-  text: string;
-  score: number;
-  order: number; // global document order
+export type HighlightFailureReason =
+  | "timeout"
+  | "network"
+  | "http_4xx"
+  | "http_5xx"
+  | "invalid_response"
+  | "unknown";
+
+class HighlightHttpError extends Error {
+  constructor(
+    readonly status: number,
+    body: string,
+  ) {
+    super(`highlight model HTTP ${status}: ${body.slice(0, 200)}`);
+  }
 }
 
-// Strip markdown syntax so a highlight reads as plain prose: links/images keep
-// their text, bare URLs and emphasis/heading/code marks go, line-number gutters
-// from rendered code blocks are dropped, whitespace collapses.
-function cleanSentence(text: string): string {
-  return text
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ") // images
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1") // links -> link text
-    .replace(/https?:\/\/\S+/g, " ") // bare URLs
-    .replace(/^\s*\d+\s*/, "") // leading code-block line number
-    .replace(/[#*`>_~|\\]+/g, " ") // markdown marks
-    .replace(/\s+/g, " ")
-    .trim();
+class HighlightInvalidResponseError extends Error {}
+
+// One highlight entry as returned by the service. Field semantics are
+// intentionally left undocumented here.
+interface Highlight {
+  block_index?: number;
+  kind?: string;
+  via?: string;
+  score?: number;
+  span_md?: string;
 }
 
-// Drop markdown/code artifacts (line numbers, "=====", "//", "[ 01 / 06 ]")
-// that the semantic model sometimes scores highly. Real sentences have prose.
-function isContentful(text: string): boolean {
-  const letters = (text.match(/[a-zA-Z]/g) ?? []).length;
-  return letters >= 15;
+interface HighlightResponse {
+  highlights?: Highlight[];
+  markdown?: string;
 }
 
-interface HighlightModelResponse {
-  kept_sentences?: string[];
-  sentence_probabilities?: number[];
+interface HighlightBatchPageResponse {
+  id?: string;
+  output?: HighlightResponse;
+}
+
+interface HighlightBatchResponse {
+  pages?: HighlightBatchPageResponse[];
+}
+
+interface HighlightPage {
+  id: string;
+  markdown: string;
+}
+
+export interface HighlightIndexedPage {
+  id: string;
+  url: string;
+  indexObject: string;
+}
+
+// Result for one page in the batch: the service's highlight entries plus the
+// reassembled markdown document.
+interface HighlightResult {
+  highlights: Highlight[];
+  markdown: string;
+}
+
+function failureReason(error: unknown): HighlightFailureReason {
+  if (error instanceof HighlightHttpError) {
+    return error.status >= 500 ? "http_5xx" : "http_4xx";
+  }
+  if (error instanceof SyntaxError) {
+    return "invalid_response";
+  }
+  if (error instanceof HighlightInvalidResponseError) {
+    return "invalid_response";
+  }
+  if (error instanceof Error && error.name === "AbortError") {
+    return "timeout";
+  }
+  if (error instanceof TypeError) {
+    return "network";
+  }
+  return "unknown";
+}
+
+function waitForRetry(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason);
+  }
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, RETRY_DELAY_MS);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function fetchBatchWithRetry(
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal,
+): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_BATCH_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(url, init);
+      if (response.status < 500 || attempt === MAX_BATCH_ATTEMPTS) {
+        return response;
+      }
+      await response.body?.cancel().catch(() => undefined);
+      lastError = new HighlightHttpError(response.status, "");
+    } catch (error) {
+      lastError = error;
+      if (signal.aborted || attempt === MAX_BATCH_ATTEMPTS) {
+        throw error;
+      }
+    }
+    await waitForRetry(signal);
+  }
+  throw lastError;
+}
+
+function requestHeaders(requestId?: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (requestId) {
+    headers["X-Request-ID"] = requestId;
+  }
+  if (config.HIGHLIGHT_MODEL_TOKEN) {
+    headers.Authorization = `Bearer ${config.HIGHLIGHT_MODEL_TOKEN}`;
+  }
+  return headers;
 }
 
 /**
- * Split markdown into chunks under the model's token budget. Splits on blank
- * lines (paragraph boundaries) to avoid cutting mid-sentence; oversized
- * paragraphs are hard-split as a last resort. Capped at MAX_CHUNKS.
+ * Generate query highlights for every indexed result in one request. Results
+ * are keyed by the caller-provided page ID so a missing page can fall back to
+ * its provider snippet without discarding successful pages. Returns null when
+ * the whole call fails.
  */
-function chunkMarkdown(markdown: string): string[] {
-  const chunks: string[] = [];
-  let current = "";
-
-  const flush = () => {
-    if (current.trim() !== "") chunks.push(current);
-    current = "";
-  };
-
-  for (const para of markdown.split(/\n{2,}/)) {
-    if (chunks.length >= MAX_CHUNKS) break;
-
-    if (para.length > CHUNK_CHARS) {
-      flush();
-      for (
-        let i = 0;
-        i < para.length && chunks.length < MAX_CHUNKS;
-        i += CHUNK_CHARS
-      ) {
-        chunks.push(para.slice(i, i + CHUNK_CHARS));
-      }
-      continue;
-    }
-
-    if (current.length + para.length + 2 > CHUNK_CHARS) {
-      flush();
-    }
-    current += (current === "" ? "" : "\n\n") + para;
-  }
-
-  if (chunks.length < MAX_CHUNKS) flush();
-  return chunks.slice(0, MAX_CHUNKS);
+interface HighlightBatchOptions {
+  logger: Logger;
+  logPayload?: boolean;
+  allowLegacyFallback?: boolean;
+  requestId?: string;
+  timeoutMs?: number | null;
+  onFailure?: (reason: HighlightFailureReason) => void;
 }
 
-async function scoreChunk(
-  question: string,
-  context: string,
-  logger: Logger,
-): Promise<{ text: string; score: number }[]> {
+async function generateHighlightsBatchRequest(
+  endpoint: "/batch_highlight" | "/batch_highlight_indexed",
+  query: string,
+  pages: Array<HighlightPage | HighlightIndexedPage>,
+  opts: HighlightBatchOptions,
+  legacyPages?: HighlightPage[],
+): Promise<Map<string, HighlightResult> | null> {
+  if (pages.length === 0) {
+    return new Map();
+  }
+
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeoutMs =
+    opts.timeoutMs === undefined ? REQUEST_TIMEOUT_MS : opts.timeoutMs;
+  const timer =
+    timeoutMs === null
+      ? undefined
+      : setTimeout(() => controller.abort(), timeoutMs);
+  const start = Date.now();
   try {
-    const res = await fetch(`${config.HIGHLIGHT_MODEL_URL}/v1/highlight`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        question,
-        context,
-        // threshold 0 => every sentence is returned with its score, so we can
-        // pool scores across chunks and select globally.
-        threshold: 0.0,
-        language: "auto",
-        return_sentence_metrics: true,
-      }),
-      signal: controller.signal,
-    });
+    const baseUrl = config.HIGHLIGHT_MODEL_URL!.replace(/\/$/, "");
+    const res = await fetchBatchWithRetry(
+      `${baseUrl}${endpoint}`,
+      {
+        method: "POST",
+        headers: requestHeaders(opts.requestId),
+        body: JSON.stringify({ query, pages }),
+        signal: controller.signal,
+      },
+      controller.signal,
+    );
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(
-        `highlight model HTTP ${res.status}: ${body.slice(0, 200)}`,
-      );
+      // During rollout the configured service may still be the legacy Modal
+      // endpoint, whose /batch_highlight contract uses {requests: [...]}. Keep
+      // highlights available until infra switches the URL to GCP Stage 1.
+      if (
+        legacyPages &&
+        opts.allowLegacyFallback !== false &&
+        (res.status === 400 || res.status === 404)
+      ) {
+        opts.logger.info("query highlights using legacy per-page fallback", {
+          canonicalLog: "search/highlights",
+          status: res.status,
+        });
+        return await generateLegacyHighlightsBatch(
+          baseUrl,
+          query,
+          legacyPages,
+          controller.signal,
+          opts,
+        );
+      }
+      throw new HighlightHttpError(res.status, body);
     }
 
-    const data = (await res.json()) as HighlightModelResponse;
-    const sentences = data.kept_sentences ?? [];
-    const probs = data.sentence_probabilities ?? [];
-    const n = Math.min(sentences.length, probs.length);
-    const out: { text: string; score: number }[] = [];
-    for (let i = 0; i < n; i++) {
-      out.push({ text: sentences[i], score: probs[i] });
+    const data: unknown = await res.json();
+    if (
+      typeof data !== "object" ||
+      data === null ||
+      Array.isArray(data) ||
+      ("pages" in data && !Array.isArray(data.pages))
+    ) {
+      throw new HighlightInvalidResponseError(
+        "highlight model returned an invalid response",
+      );
     }
-    return out;
+    const results = new Map<string, HighlightResult>();
+    for (const page of (data as HighlightBatchResponse).pages ?? []) {
+      if (typeof page !== "object" || page === null) continue;
+      if (typeof page.id !== "string" || !page.output) continue;
+      results.set(page.id, {
+        highlights: page.output.highlights ?? [],
+        markdown: page.output.markdown ?? "",
+      });
+    }
+
+    opts.logger.debug("query highlights batch", {
+      canonicalLog: "search/highlights",
+      requestedPages: pages.length,
+      returnedPages: results.size,
+      ...(opts.logPayload === false
+        ? {}
+        : {
+            pages: Array.from(results, ([id, result]) => ({
+              id,
+              highlights: result.highlights,
+            })),
+          }),
+      elapsedMs: Date.now() - start,
+    });
+
+    return results;
+  } catch (error) {
+    opts.onFailure?.(failureReason(error));
+    opts.logger.warn("query highlights batch failed", {
+      canonicalLog: "search/highlights",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
   }
 }
 
-/**
- * Generate query-relevant highlights from page markdown using the semantic
- * highlight model. Returns the assembled highlight string (best sentences in
- * document order), or null if nothing clears the threshold / all chunks fail.
- */
-export async function generateSemanticHighlights(
-  markdown: string,
+export async function generateHighlightsBatch(
   query: string,
-  opts: { logger: Logger },
-): Promise<string | null> {
-  const chunks = chunkMarkdown(markdown);
-  if (chunks.length === 0) return null;
+  pages: HighlightPage[],
+  opts: HighlightBatchOptions,
+): Promise<Map<string, HighlightResult> | null> {
+  return generateHighlightsBatchRequest(
+    "/batch_highlight",
+    query,
+    pages,
+    opts,
+    pages,
+  );
+}
 
-  const start = Date.now();
-  const perChunk = await Promise.all(
-    chunks.map(async (chunk, idx) => {
+export async function generateHighlightsIndexedBatch(
+  query: string,
+  pages: HighlightIndexedPage[],
+  opts: Omit<HighlightBatchOptions, "allowLegacyFallback">,
+): Promise<Map<string, HighlightResult> | null> {
+  return generateHighlightsBatchRequest(
+    "/batch_highlight_indexed",
+    query,
+    pages,
+    { ...opts, allowLegacyFallback: false },
+  );
+}
+
+async function generateLegacyHighlightsBatch(
+  baseUrl: string,
+  query: string,
+  pages: HighlightPage[],
+  signal: AbortSignal,
+  opts: { logger: Logger; requestId?: string },
+): Promise<Map<string, HighlightResult>> {
+  const entries = await Promise.all(
+    pages.map(async page => {
       try {
-        return await scoreChunk(query, chunk, opts.logger);
-      } catch (error) {
-        opts.logger.warn("highlight model chunk failed", {
-          error: error instanceof Error ? error.message : String(error),
-          chunkIdx: idx,
+        const res = await fetch(`${baseUrl}/highlight`, {
+          method: "POST",
+          headers: requestHeaders(opts.requestId),
+          body: JSON.stringify({ query, markdown: page.markdown }),
+          signal,
         });
-        return [];
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          throw new Error(
+            `highlight model HTTP ${res.status}: ${body.slice(0, 200)}`,
+          );
+        }
+        const data = (await res.json()) as HighlightResponse;
+        return [
+          page.id,
+          {
+            highlights: data.highlights ?? [],
+            markdown: data.markdown ?? "",
+          },
+        ] as const;
+      } catch (error) {
+        opts.logger.warn("legacy query highlight failed", {
+          canonicalLog: "search/highlights",
+          pageId: page.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
       }
     }),
   );
-
-  // Pool every scored sentence, preserving document order (Promise.all keeps
-  // chunk order, and sentences within a chunk are already in order).
-  const all: ScoredSentence[] = [];
-  let order = 0;
-  for (const chunkSentences of perChunk) {
-    for (const s of chunkSentences) {
-      const idx = order++;
-      const cleaned = cleanSentence(s.text);
-      if (isContentful(cleaned)) {
-        all.push({ text: cleaned, score: s.score, order: idx });
-      }
-    }
-  }
-  if (all.length === 0) return null;
-
-  // Pick the best: keep sentences at/above the threshold, cap to the top
-  // MAX_SELECTED by score, then restore document order for readability.
-  let selected = all.filter(s => s.score >= SELECT_THRESHOLD);
-  if (selected.length === 0) return null;
-  selected.sort((a, b) => b.score - a.score);
-  selected = selected.slice(0, MAX_SELECTED);
-  selected.sort((a, b) => a.order - b.order);
-
-  const text = selected
-    .map(s => s.text.trim())
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  opts.logger.info("semantic highlights generated", {
-    chunks: chunks.length,
-    scoredSentences: all.length,
-    selected: selected.length,
-    topScore: all.reduce((m, s) => Math.max(m, s.score), 0),
-    elapsedMs: Date.now() - start,
-  });
-
-  return text === "" ? null : text;
+  return new Map(entries.filter(entry => entry !== null));
 }

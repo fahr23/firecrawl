@@ -14,6 +14,8 @@ import {
   BatchScrapeRequestInput,
   SearchRequestInput,
   SearchFeedbackRequestInput,
+  EndpointFeedbackRequestInput,
+  EndpointFeedbackResponse,
   ParseRequestInput,
 } from "../../../controllers/v2/types";
 import request from "supertest";
@@ -339,6 +341,71 @@ export async function scrapeStopInteractiveBrowserRaw(
 }
 
 // =========================================
+// Interact (standalone browser sessions)
+// =========================================
+
+export async function browserCreateRaw(
+  body: {
+    ttl?: number;
+    activityTtl?: number;
+    recordSession?: boolean;
+  },
+  identity: Identity,
+) {
+  return await request(TEST_API_URL)
+    .post("/v2/interact")
+    .set("Authorization", `Bearer ${identity.apiKey}`)
+    .set("Content-Type", "application/json")
+    .send(body);
+}
+
+export async function browserExecuteRaw(
+  sessionId: string,
+  body: {
+    code: string;
+    language?: "python" | "node" | "bash";
+    timeout?: number;
+  },
+  identity: Identity,
+) {
+  return await request(TEST_API_URL)
+    .post("/v2/interact/" + encodeURIComponent(sessionId) + "/execute")
+    .set("Authorization", `Bearer ${identity.apiKey}`)
+    .set("Content-Type", "application/json")
+    .send(body);
+}
+
+export async function browserDeleteRaw(sessionId: string, identity: Identity) {
+  return await request(TEST_API_URL)
+    .delete("/v2/interact/" + encodeURIComponent(sessionId))
+    .set("Authorization", `Bearer ${identity.apiKey}`)
+    .send();
+}
+
+export async function browserReplayRaw(sessionId: string, identity: Identity) {
+  return await request(TEST_API_URL)
+    .get("/v2/interact/" + encodeURIComponent(sessionId) + "/replay")
+    .set("Authorization", `Bearer ${identity.apiKey}`)
+    .send();
+}
+
+export async function browserReplayPageRaw(
+  sessionId: string,
+  pageId: string,
+  identity: Identity,
+) {
+  return await request(TEST_API_URL)
+    .get(
+      "/v2/interact/" +
+        encodeURIComponent(sessionId) +
+        "/replay/" +
+        encodeURIComponent(pageId),
+    )
+    .set("Authorization", `Bearer ${identity.apiKey}`)
+    .send();
+}
+
+// =========================================
 // Crawl API
 // =========================================
 
@@ -636,6 +703,26 @@ export async function searchWithFailure(
   return raw.body;
 }
 
+export async function researchRaw(
+  path: string,
+  query: Record<string, string | number | boolean | string[]> | undefined,
+  identity?: Identity,
+  headers?: Record<string, string>,
+) {
+  const req = request(TEST_API_URL)
+    .get(path)
+    .set("Content-Type", "application/json");
+  if (identity) {
+    req.set("Authorization", `Bearer ${identity.apiKey}`);
+  }
+  if (headers) {
+    for (const [key, value] of Object.entries(headers)) {
+      req.set(key, value);
+    }
+  }
+  return query ? req.query(query) : req;
+}
+
 export async function searchRawFull(
   body: SearchRequestInput,
   identity: Identity,
@@ -697,6 +784,54 @@ export async function searchFeedbackWithFailure(
   details?: unknown;
 }> {
   const raw = await searchFeedbackRaw(searchId, body, identity);
+  expect(raw.statusCode).not.toBe(200);
+  expect(raw.body.success).toBe(false);
+  expect(typeof raw.body.error).toBe("string");
+  return raw.body;
+}
+
+// =========================================
+// Generic Feedback API
+// =========================================
+
+export async function endpointFeedbackRaw(
+  body: EndpointFeedbackRequestInput,
+  identity: Identity,
+) {
+  return await request(TEST_API_URL)
+    .post("/v2/feedback")
+    .set("Authorization", `Bearer ${identity.apiKey}`)
+    .set("Content-Type", "application/json")
+    .send(body);
+}
+
+export async function endpointFeedback(
+  body: EndpointFeedbackRequestInput,
+  identity: Identity,
+): Promise<Exclude<EndpointFeedbackResponse, ErrorResponse>> {
+  const raw = await endpointFeedbackRaw(body, identity);
+  if (raw.statusCode !== 200) {
+    console.warn(
+      "Endpoint feedback did not succeed",
+      JSON.stringify(raw.body, null, 2),
+    );
+  }
+  expect(raw.statusCode).toBe(200);
+  expect(raw.body.success).toBe(true);
+  expect(typeof raw.body.feedbackId).toBe("string");
+  expect(typeof raw.body.creditsRefunded).toBe("number");
+  return raw.body;
+}
+
+export async function endpointFeedbackWithFailure(
+  body: EndpointFeedbackRequestInput,
+  identity: Identity,
+): Promise<{
+  success: false;
+  error: string;
+  details?: unknown;
+}> {
+  const raw = await endpointFeedbackRaw(body, identity);
   expect(raw.statusCode).not.toBe(200);
   expect(raw.body.success).toBe(false);
   expect(typeof raw.body.error).toBe("string");

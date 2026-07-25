@@ -13,6 +13,8 @@ export type FormatString =
   | "json"
   | "attributes"
   | "branding"
+  | "product"
+  | "menu"
   | "audio"
   | "video";
 
@@ -206,6 +208,7 @@ export interface ScrapeOptions {
   storeInCache?: boolean;
   lockdown?: boolean;
   redactPII?: boolean | RedactPIIOptions;
+  threatProtection?: ThreatProtectionOptions;
   profile?: {
     name: string;
     saveChanges?: boolean;
@@ -239,6 +242,27 @@ export interface RedactPIIOptions {
   replaceStyle?: "tag" | "mask" | "remove";
 }
 
+/**
+ * Enterprise: per-request field-level override of your team's threat
+ * protection policy. Requires threat protection to be enabled for your team
+ * and request overrides to be allowed in the team configuration. Only the
+ * fields you provide replace the team policy's values.
+ */
+export interface ThreatProtectionOptions {
+  /** "off" disables scanning for this request; "normal" applies the policy. */
+  mode?: "off" | "normal";
+  /** Block verdicts at or above this risk score (integer 0-100). */
+  riskScoreThreshold?: number;
+  /** Exact domains or globs like "*.example.com" to always block (max 1000). */
+  blacklist?: string[];
+  /** Exact domains or globs to always allow; wins over everything (max 1000). */
+  whitelist?: string[];
+  /** Lowercase TLDs without the leading dot, e.g. "zip" (max 1000). */
+  blockedTlds?: string[];
+  /** Behavior when scanning is unavailable: "closed" blocks, "open" allows. */
+  failurePolicy?: "open" | "closed";
+}
+
 export type ParseFileData =
   | Blob
   | File
@@ -265,6 +289,7 @@ export type ParseOptions = Omit<
   | "storeInCache"
   | "lockdown"
   | "proxy"
+  | "threatProtection"
 > & {
   formats?: ParseFormatOption[];
   proxy?: "basic" | "auto";
@@ -427,6 +452,103 @@ export interface BrandingProfile {
   [key: string]: unknown;
 }
 
+export interface ProductPrice {
+  amount: number;
+  currency?: string;
+  formatted?: string;
+}
+
+export interface ProductAvailability {
+  inStock: boolean;
+  text?: string;
+}
+
+export interface ProductImage {
+  url: string;
+  alt?: string;
+}
+
+export interface ProductSale {
+  originalPrice: ProductPrice;
+}
+
+export interface ProductVariant {
+  id?: string;
+  sku?: string;
+  title?: string;
+  values?: Record<string, unknown>;
+  price?: ProductPrice;
+  sale?: ProductSale;
+  availability: ProductAvailability;
+  images?: ProductImage[];
+}
+
+export interface ProductProfile {
+  title: string;
+  brand?: string;
+  category?: string;
+  url: string;
+  description?: string;
+  variants: ProductVariant[];
+}
+
+export interface MenuPrice {
+  amount: number;
+  currency?: string;
+  formatted?: string;
+}
+
+export interface MenuAvailability {
+  inStock: boolean;
+  text?: string;
+}
+
+export interface MenuImage {
+  url: string;
+  alt?: string;
+}
+
+export interface MenuItemIdentifiers {
+  merchantItemId?: string;
+}
+
+export interface MenuItem {
+  id: string;
+  name: string;
+  description?: string;
+  images: MenuImage[];
+  price?: MenuPrice;
+  availability: MenuAvailability;
+  dietary: string[];
+  calories?: number;
+  optionGroups: unknown[];
+  identifiers: MenuItemIdentifiers;
+  url?: string;
+  sourceUrl: string;
+}
+
+export interface MenuSection {
+  id: string;
+  name: string;
+  description?: string;
+  items: MenuItem[];
+}
+
+export interface MenuMerchant {
+  name: string;
+  type?: string | null;
+  location?: unknown;
+}
+
+export interface MenuProfile {
+  isMenu: boolean;
+  confidence: number;
+  merchant: MenuMerchant;
+  currency?: string | null;
+  sections: MenuSection[];
+  sourceUrl: string;
+}
+
 export interface DocumentMetadata {
   // Common metadata fields
   title?: string;
@@ -471,6 +593,7 @@ export interface DocumentMetadata {
   statusCode?: number;
   scrapeId?: string;
   numPages?: number;
+  totalPages?: number;
   contentType?: string;
   timezone?: string;
   proxyUsed?: "basic" | "stealth";
@@ -509,6 +632,8 @@ export interface Document {
   warning?: string;
   changeTracking?: Record<string, unknown>;
   branding?: BrandingProfile;
+  product?: ProductProfile;
+  menu?: MenuProfile;
 }
 
 // Pagination configuration for auto-fetching pages from v2 endpoints that return a `next` URL
@@ -572,7 +697,16 @@ export interface SearchRequest {
   location?: string;
   ignoreInvalidURLs?: boolean;
   timeout?: number; // ms
+  /** Generate query-relevant highlights for search results. Defaults to true. */
+  highlights?: boolean;
   scrapeOptions?: ScrapeOptions;
+  /**
+   * Enterprise search options. Use `["zdr"]` for end-to-end Zero Data
+   * Retention or `["anon"]` for anonymized search. Must be enabled for
+   * your team.
+   */
+  enterprise?: Array<"default" | "anon" | "zdr">;
+  threatProtection?: ThreatProtectionOptions;
   integration?: string;
   origin?: string;
 }
@@ -647,6 +781,7 @@ export interface BatchScrapeJob {
 }
 
 export interface MapData {
+  id?: string;
   links: SearchResultWeb[];
 }
 
@@ -660,6 +795,52 @@ export interface MapOptions {
   integration?: string;
   origin?: string;
   location?: LocationConfig;
+  threatProtection?: ThreatProtectionOptions;
+}
+
+export type FeedbackRating = "good" | "partial" | "bad";
+export type EndpointFeedbackEndpoint = "search" | "scrape" | "parse" | "map";
+
+export interface FeedbackValuableSource {
+  url: string;
+  reason?: string;
+}
+
+export interface FeedbackMissingContent {
+  topic: string;
+  description?: string;
+}
+
+export interface SearchFeedbackRequest {
+  rating: FeedbackRating;
+  valuableSources?: FeedbackValuableSource[];
+  missingContent?: FeedbackMissingContent[];
+  querySuggestions?: string;
+  integration?: string | null;
+  origin?: string;
+}
+
+export interface EndpointFeedbackRequest extends SearchFeedbackRequest {
+  endpoint: EndpointFeedbackEndpoint;
+  jobId: string;
+  issues?: string[];
+  tags?: string[];
+  note?: string;
+  url?: string;
+  pageNumbers?: number[];
+  /** Small endpoint-specific metadata object. Must be 8KB or smaller. */
+  metadata?: Record<string, unknown>;
+}
+
+export interface FeedbackResponse {
+  success: true;
+  feedbackId: string;
+  creditsRefunded: number;
+  alreadySubmitted?: boolean;
+  dailyCapReached?: boolean;
+  creditsRefundedToday?: number;
+  dailyRefundCap?: number;
+  warning?: string;
 }
 
 /**
@@ -731,7 +912,20 @@ export interface MonitorCrawlTarget {
   scrapeOptions?: ScrapeOptions;
 }
 
-export type MonitorTarget = MonitorScrapeTarget | MonitorCrawlTarget;
+export interface MonitorSearchTarget {
+  id?: string;
+  type: "search";
+  queries: string[];
+  searchWindow?: "5m" | "15m" | "1h" | "6h" | "24h" | "7d";
+  includeDomains?: string[];
+  excludeDomains?: string[];
+  maxResults?: number;
+}
+
+export type MonitorTarget =
+  | MonitorScrapeTarget
+  | MonitorCrawlTarget
+  | MonitorSearchTarget;
 
 export interface CreateMonitorRequest {
   name: string;
@@ -804,6 +998,37 @@ export interface MonitorPageJudgment {
   }>;
 }
 
+export interface MonitorScrapeTargetResult {
+  targetId: string;
+  type: "scrape";
+  expectedJobs?: string[];
+}
+
+export interface MonitorCrawlTargetResult {
+  targetId: string;
+  type: "crawl";
+  crawlId?: string;
+}
+
+export interface MonitorSearchTargetResult {
+  targetId: string;
+  type: "search";
+  searchCompleted?: boolean;
+  resultCount?: number;
+  matches?: number;
+  summary?: string;
+  judgeDegraded?: boolean;
+  degradedReason?: string | null;
+  searchCredits?: number;
+  judgeCredits?: number;
+  resultsJudged?: number;
+}
+
+export type MonitorTargetResult =
+  | MonitorScrapeTargetResult
+  | MonitorCrawlTargetResult
+  | MonitorSearchTargetResult;
+
 export interface MonitorCheck {
   id: string;
   monitorId: string;
@@ -813,7 +1038,8 @@ export interface MonitorCheck {
     | "completed"
     | "failed"
     | "partial"
-    | "skipped_overlap";
+    | "skipped_overlap"
+    | "skipped_no_credits";
   trigger: "scheduled" | "manual";
   scheduledFor?: string | null;
   startedAt?: string | null;
@@ -828,7 +1054,7 @@ export interface MonitorCheck {
     | "released"
     | "failed";
   summary: MonitorSummary;
-  targetResults?: unknown;
+  targetResults?: MonitorTargetResult[];
   notificationStatus?: unknown;
   error?: string | null;
   createdAt: string;
@@ -1069,6 +1295,7 @@ export interface BrowserCreateResponse {
 
 export interface BrowserExecuteResponse {
   success: boolean;
+  cdpUrl?: string;
   liveViewUrl?: string;
   interactiveLiveViewUrl?: string;
   output?: string;
@@ -1129,16 +1356,18 @@ export interface PaperSignals {
   structural: number;
   /** Semantic score from the intent abstract search (0 if absent). */
   semantic: number;
-  /** Citation-graph PageRank of the candidate. */
-  pagerank: number;
+  /** Citation-graph article-rank score of the candidate. */
+  articleRank: number;
   /** Number of distinct seeds connected to this candidate. */
-  seed_overlap: number;
+  seedOverlap: number;
 }
 
-/** A ranked paper. `paper_id` is canonical; arXiv lives in `ids`. */
+/** A ranked paper. `paperId` is canonical; arXiv lives in `ids`. */
 export interface PaperResult {
   /** Canonical paper id — the Milvus INT64 primary key as a decimal string. */
-  paper_id: string;
+  paperId: string;
+  /** Preferred cite/fetch identifier such as `arxiv:<id>`, `pmid:<id>`, or `doi:<id>`. */
+  primaryId: string;
   ids?: IdMap;
   title: string;
   abstract: string;
@@ -1149,7 +1378,7 @@ export interface PaperResult {
 }
 
 export interface PaperMetadata {
-  paper_id: string;
+  paperId: string;
   ids?: IdMap;
   title: string;
   abstract: string;
@@ -1158,9 +1387,9 @@ export interface PaperMetadata {
   /** arXiv categories. Omitted if unknown. */
   categories?: string[];
   /** Original creation date string (format varies). Omitted if unknown. */
-  created_date?: string;
+  createdDate?: string;
   /** Last-updated date string. Omitted if unknown. */
-  update_date?: string;
+  updateDate?: string;
 }
 
 export interface Passage {
@@ -1171,17 +1400,20 @@ export interface Passage {
 }
 
 export interface SearchPapersResponse {
+  success: boolean;
   results: PaperResult[];
 }
 
 export interface PaperMetadataResponse {
+  success: boolean;
   paper: PaperMetadata;
 }
 
 export interface ReadPaperResponse {
+  success: boolean;
   paper: PaperMetadata;
   /** Resolved canonical paper id (empty string if not found via id-key). */
-  paper_id: string;
+  paperId: string;
   /** Echo of the read query. */
   query: string;
   /** Top matching in-body passages. */
@@ -1189,10 +1421,11 @@ export interface ReadPaperResponse {
 }
 
 export interface SimilarPapersResponse {
+  success: boolean;
   /** Ranked related papers; each carries `signals`. */
   results: PaperResult[];
   /** Number of resolved candidates considered before truncation to `k`. */
-  pool_size: number;
+  poolSize: number;
   /** True if more resolved candidates existed than were returned. */
   truncated: boolean;
   /** Human-readable note when no results are produced. */
@@ -1205,11 +1438,12 @@ export interface GitHubScoreBreakdown {
   semantic?: number;
   lexical?: number;
   fusion?: number;
+  rerank?: number;
 }
 
 export interface GitHubSearchItem {
-  resultType: "github_history" | "repo_readme";
-  /** `owner/name`. */
+  resultType: "github_history" | "repo_readme" | "web";
+  /** `owner/name`; empty for web results whose URL is not a repo page. */
   repo: string;
   url: string;
   /** History page type (e.g. `issue`, `pull`). Omitted for readmes. */
@@ -1220,6 +1454,8 @@ export interface GitHubSearchItem {
   segmentCount?: number;
   /** Readme URL (readme results). Omitted otherwise. */
   readmeUrl?: string;
+  /** SERP page title. Only set on web results. */
+  title?: string;
   /** Short matched excerpt. */
   snippet: string;
   /** Full matched content in markdown. Omitted unless available. */
@@ -1228,6 +1464,7 @@ export interface GitHubSearchItem {
 }
 
 export interface GitHubSearchResponse {
+  success: boolean;
   results: GitHubSearchItem[];
 }
 

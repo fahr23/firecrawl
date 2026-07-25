@@ -24,6 +24,8 @@ function prepareMapPayload(
       payload.integration = options.integration.trim();
     if (options.origin) payload.origin = options.origin;
     if (options.location != null) payload.location = options.location;
+    if (options.threatProtection != null)
+      payload.threatProtection = options.threatProtection;
   }
   return payload;
 }
@@ -37,6 +39,7 @@ export async function map(
   try {
     const res = await http.post<{
       success: boolean;
+      id?: string;
       error?: string;
       links?: Array<string | SearchResultWeb>;
     }>(
@@ -60,7 +63,7 @@ export async function map(
           description: (item as any).description,
         });
     }
-    return { links };
+    return { id: res.data.id, links };
   } catch (err: any) {
     if (err?.isAxiosError) return normalizeAxiosError(err, "map");
     throw err;

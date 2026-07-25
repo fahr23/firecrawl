@@ -1,25 +1,26 @@
-import type { Logger } from "winston";
+import { createLogger, type Logger } from "winston";
 import { SearchV2Response } from "../lib/entities";
-import {
-  normalizeURLForIndex,
-  hashURL,
-  getIndexFromGCS,
-  useIndex,
-} from "../services";
+import { normalizeURLForIndex, hashURL, useIndex } from "../services";
 import { indexGetRecent5 } from "../db/rpc";
-import { parseMarkdown } from "../lib/html-to-markdown";
-import { htmlTransform } from "../scraper/scrapeURL/lib/removeUnwantedElements";
-import type { ScrapeOptions } from "../controllers/v2/types";
-import { generateSemanticHighlights } from "./highlight-model";
+import {
+  generateHighlightsIndexedBatch,
+  type HighlightIndexedPage,
+} from "./highlight-model";
+import type { HighlightFailureReason } from "./highlight-model";
 import { config } from "../config";
+import { logger as rootLogger } from "../lib/logger";
 
 // How far back into the index we're willing to reach for highlight source text.
 const HIGHLIGHTS_INDEX_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const HIGHLIGHTS_API_TIMEOUT_MS = 3000;
+const shadowLogger = createLogger({ silent: true });
+
+type SearchHighlightsMode = "apply" | "shadow";
 
 /**
- * Whether the deployment has every dependency the highlights beta needs: the
+ * Whether the deployment has every dependency indexed highlights need: the
  * index DB (to find cached content), the GCS index bucket (to fetch it), and the
- * highlight model endpoint (to score it). Missing any => silently skip.
+ * highlight model service URL (to score it). Missing any => silently skip.
  */
 export function highlightsEnvReady(): boolean {
   return (
@@ -27,24 +28,48 @@ export function highlightsEnvReady(): boolean {
   );
 }
 
+function sampled(cohortKey: string, percent: number): boolean {
+  if (percent <= 0) return false;
+  if (percent >= 100) return true;
+
+  let hash = 2166136261;
+  for (let i = 0; i < cohortKey.length; i++) {
+    hash ^= cohortKey.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) / 0x1_0000_0000) * 100 < percent;
+}
+
+export function searchHighlightsMode(options: {
+  requested?: boolean;
+  origin?: string | null;
+  integration?: string | null;
+  cohortKey: string;
+  rolloutPercent: number;
+}): SearchHighlightsMode {
+  if (options.requested === true) return "apply";
+  if (options.requested === false) return "shadow";
+
+  const origin = (options.origin ?? "").toLowerCase();
+  const integration = (options.integration ?? "").toLowerCase();
+  if (integration === "cli" || origin === "cli" || origin.startsWith("mcp")) {
+    return "apply";
+  }
+
+  return sampled(options.cohortKey, options.rolloutPercent)
+    ? "apply"
+    : "shadow";
+}
+
 // Mirrors scrapeURLWithIndex: prefer the newest 2xx entry unless it sits behind
 // this many more-recent error entries, in which case we surface the newest one.
 const ERROR_COUNT_TO_REGISTER = 3;
 
-// This whole module runs out-of-line from scrapeURL on purpose: it reads
-// already-indexed content directly from the index DB + GCS instead of routing
-// through the scrape engine. That keeps highlight generation off the critical
-// scrape path and lets us experiment with latency freely.
-
-/**
- * Fetch the most recent indexed markdown for a URL within the last 30 days.
- * Returns null when the URL isn't in the index (or the lookup fails) so callers
- * can fall back to the provider snippet.
- */
-async function getIndexedMarkdownForURL(
+async function getIndexObjectForURL(
   url: string,
   logger: Logger,
-): Promise<string | null> {
+  logUrl = true,
+): Promise<{ name: string; createdAt: string | null } | null> {
   if (!useIndex) {
     return null;
   }
@@ -81,107 +106,139 @@ async function getIndexedMarkdownForURL(
         ? rows[0]
         : rows[newest200Index];
 
-    const doc = await getIndexFromGCS(
-      selected.id + ".json",
-      logger.child({ module: "search/highlights", method: "getIndexFromGCS" }),
-    );
-    if (!doc || !doc.html) {
-      return null;
-    }
-
-    // Skip raw base64 PDFs — they aren't useful as highlight source text.
-    if (typeof doc.html === "string" && doc.html.startsWith("JVBERi")) {
-      return null;
-    }
-
-    // The index stores rawHtml, so we must run the same cleaning the scrape
-    // pipeline does (strip <style>/<script>/nav, extract main content) before
-    // converting to markdown — otherwise CSS/JS leaks in and pollutes the
-    // highlight source text.
-    const cleanedHtml = await htmlTransform(doc.html, url, {
-      onlyMainContent: true,
-      includeTags: [],
-      excludeTags: [],
-    } as unknown as ScrapeOptions);
-
-    const markdown = await parseMarkdown(cleanedHtml, { logger });
-    return markdown && markdown.trim() !== "" ? markdown : null;
+    return {
+      name: selected.id + ".json",
+      createdAt: selected.created_at,
+    };
   } catch (error) {
     logger.warn("highlights: index lookup failed", {
       error: error instanceof Error ? error.message : String(error),
-      url,
+      ...(logUrl ? { url } : {}),
     });
     return null;
   }
 }
 
-async function highlightOne(
-  url: string,
-  query: string,
-  logger: Logger,
-  apply: (highlights: string) => void,
-  counters: { indexHits: number; replaced: number },
-): Promise<void> {
-  const markdown = await getIndexedMarkdownForURL(url, logger);
-  if (!markdown) {
-    return;
-  }
-  counters.indexHits++;
-
-  const highlights = await generateSemanticHighlights(markdown, query, {
-    logger,
-  });
-  if (highlights && highlights.trim() !== "") {
-    apply(highlights);
-    counters.replaced++;
-  }
+interface IndexedSearchHighlightTarget {
+  url: string;
+  apply?: (highlight: string) => void;
 }
 
-/**
- * For each search result, in parallel: look up the URL in our index (last 30
- * days), and if present, replace the provider snippet with query-relevant
- * highlights generated from the indexed content. Mutates `response` in place.
- * Results not in the index keep their original snippet.
- */
-export async function applySearchHighlights(
+function indexedSearchHighlightTargets(
+  response: SearchV2Response,
+): IndexedSearchHighlightTarget[] {
+  const targets: IndexedSearchHighlightTarget[] = [];
+  for (const result of response.web ?? []) {
+    if (!result.url) continue;
+    targets.push({
+      url: result.url,
+      apply: highlight => {
+        result.description = highlight;
+      },
+    });
+  }
+  for (const result of response.news ?? []) {
+    if (!result.url) continue;
+    targets.push({
+      url: result.url,
+      apply: highlight => {
+        result.snippet = highlight;
+      },
+    });
+  }
+  return targets;
+}
+
+async function generateIndexedSearchHighlights(
+  targets: IndexedSearchHighlightTarget[],
+  query: string,
+  logger: Logger,
+  requestId: string,
+  applyResults: boolean,
+): Promise<{
+  attempted: number;
+  indexHits: number;
+  replaced: number;
+  succeeded: boolean;
+  failureReason?: HighlightFailureReason;
+}> {
+  const attempted = targets.length;
+  const resolved = await Promise.all(
+    targets.map(target => getIndexObjectForURL(target.url, logger, false)),
+  );
+  const pages: HighlightIndexedPage[] = [];
+  resolved.forEach((indexRef, index) => {
+    if (!indexRef) return;
+    pages.push({
+      id: String(index),
+      url: targets[index].url,
+      indexObject: indexRef.name,
+    });
+  });
+
+  let failureReason: HighlightFailureReason | undefined;
+  const results = await generateHighlightsIndexedBatch(query, pages, {
+    logger,
+    logPayload: false,
+    requestId,
+    timeoutMs: HIGHLIGHTS_API_TIMEOUT_MS,
+    onFailure: reason => {
+      failureReason = reason;
+    },
+  });
+  let replaced = 0;
+  if (results) {
+    for (const page of pages) {
+      const highlight = results.get(page.id)?.markdown;
+      if (!highlight?.trim()) continue;
+      if (applyResults) {
+        targets[Number(page.id)].apply?.(highlight);
+      }
+      replaced++;
+    }
+  }
+
+  return {
+    attempted,
+    indexHits: pages.length,
+    replaced,
+    succeeded: results !== null,
+    ...(failureReason ? { failureReason } : {}),
+  };
+}
+
+export async function runIndexedSearchHighlights(
   response: SearchV2Response,
   query: string,
   logger: Logger,
-): Promise<{ attempted: number; indexHits: number; replaced: number }> {
-  const counters = { indexHits: 0, replaced: 0 };
-  const tasks: Promise<void>[] = [];
+  options: {
+    mode: SearchHighlightsMode;
+    requestId: string;
+    teamId: string;
+  },
+): ReturnType<typeof generateIndexedSearchHighlights> {
   const start = Date.now();
-
-  // Web results carry the snippet in `description` — replace it in place.
-  for (const result of response.web ?? []) {
-    if (!result.url) continue;
-    tasks.push(
-      highlightOne(result.url, query, logger, h => {
-        result.description = h;
-      }, counters),
-    );
-  }
-
-  // News results carry the snippet in `snippet` — replace it in place.
-  for (const result of response.news ?? []) {
-    if (!result.url) continue;
-    const url = result.url;
-    tasks.push(
-      highlightOne(url, query, logger, h => {
-        result.snippet = h;
-      }, counters),
-    );
-  }
-
-  const attempted = tasks.length;
-  await Promise.all(tasks);
-
-  logger.info("Search highlights applied", {
-    attempted,
-    indexHits: counters.indexHits,
-    replaced: counters.replaced,
+  const result = await generateIndexedSearchHighlights(
+    indexedSearchHighlightTargets(response),
+    query,
+    options.mode === "shadow" ? shadowLogger : logger,
+    options.requestId,
+    options.mode === "apply",
+  );
+  const summaryLogger = options.mode === "shadow" ? rootLogger : logger;
+  summaryLogger.info("Search highlights completed", {
+    canonicalLog: "search/highlights",
+    mode: options.mode,
+    outcome: result.succeeded ? "completed" : "failed",
+    requestId: options.requestId,
+    teamId: options.teamId,
+    attempted: result.attempted,
+    indexHits: result.indexHits,
+    ...(options.mode === "apply"
+      ? { applied: result.replaced }
+      : { wouldApply: result.replaced }),
+    failureReason: result.failureReason,
     timeTakenMs: Date.now() - start,
   });
-
-  return { attempted, indexHits: counters.indexHits, replaced: counters.replaced };
+  return result;
 }

@@ -7,6 +7,7 @@ import {
   scrapeURLWithFireEngineChromeCDP,
   scrapeURLWithFireEngineTLSClient,
 } from "./fire-engine";
+import { exchangeMaxReasonableTime, scrapeURLWithExchange } from "./exchange";
 import { pdfMaxReasonableTime, scrapePDF } from "./pdf";
 import { fetchMaxReasonableTime, scrapeURLWithFetch } from "./fetch";
 import {
@@ -30,8 +31,14 @@ import { getPDFMaxPages } from "../../../controllers/v2/types";
 import type { PdfMetadata } from "./pdf/types";
 import { BrandingProfile } from "../../../types/branding";
 import { BrandingNotSupportedError } from "../error";
+import { isUrlBlocked } from "../../WebScraper/utils/blocklist";
+import {
+  canUseExchangeForRequest,
+  type ExchangeScrapeMetadata,
+} from "../../../lib/exchange";
 
 export type Engine =
+  | "exchange"
   | "fire-engine;chrome-cdp"
   | "fire-engine(retry);chrome-cdp"
   | "fire-engine;chrome-cdp;stealth"
@@ -131,6 +138,7 @@ export type EngineScrapeResult = {
 
   html: string;
   markdown?: string;
+  json?: unknown;
   statusCode: number;
   error?: string;
 
@@ -161,11 +169,13 @@ export type EngineScrapeResult = {
 
   proxyUsed: "basic" | "stealth";
   timezone?: string;
+  exchange?: ExchangeScrapeMetadata;
 };
 
 const engineHandlers: {
   [E in Engine]: (meta: Meta) => Promise<EngineScrapeResult>;
 } = {
+  exchange: scrapeURLWithExchange,
   index: scrapeURLWithIndex,
   "index;documents": scrapeURLWithIndex,
   "fire-engine;chrome-cdp": scrapeURLWithFireEngineChromeCDP,
@@ -185,6 +195,7 @@ const engineHandlers: {
 const engineMRTs: {
   [E in Engine]: (meta: Meta) => number;
 } = {
+  exchange: exchangeMaxReasonableTime,
   index: indexMaxReasonableTime,
   "index;documents": indexMaxReasonableTime,
   "fire-engine;chrome-cdp": meta =>
@@ -217,6 +228,27 @@ const engineOptions: {
     quality: number;
   };
 } = {
+  exchange: {
+    features: {
+      actions: false,
+      waitFor: false,
+      screenshot: false,
+      "screenshot@fullScreen": false,
+      pdf: false,
+      document: false,
+      audio: false,
+      video: false,
+      atsv: false,
+      location: false,
+      mobile: false,
+      skipTlsVerification: true,
+      useFastMode: true,
+      stealthProxy: false,
+      branding: false,
+      disableAdblock: false,
+    },
+    quality: 2000,
+  },
   index: {
     features: {
       actions: false,
@@ -546,10 +578,77 @@ export async function buildFallbackList(meta: Meta): Promise<
     unsupportedFeatures: Set<FeatureFlag>;
   }[]
 > {
+  if (
+    !meta.internalOptions.agentIndexOnly &&
+    meta.internalOptions.forceEngine === undefined
+  ) {
+    if (
+      await canUseExchangeForRequest({
+        url: meta.rewrittenUrl ?? meta.url,
+        formats: meta.options.formats,
+        actions: meta.options.actions,
+        headers: meta.options.headers,
+        waitFor: meta.options.waitFor,
+        mobile: meta.options.mobile,
+        location: meta.options.location,
+        proxy: meta.options.proxy,
+        blockAds: meta.options.blockAds,
+        profile: meta.options.profile,
+        atsv: meta.internalOptions.atsv,
+        minAge: meta.options.minAge,
+        includeTags: meta.options.includeTags,
+        excludeTags: meta.options.excludeTags,
+        zeroDataRetention: meta.internalOptions.zeroDataRetention,
+        lockdown: meta.options.lockdown,
+        flags: meta.internalOptions.teamFlags ?? null,
+      })
+    ) {
+      return [
+        {
+          engine: "exchange",
+          unsupportedFeatures: new Set(),
+        },
+      ];
+    }
+
+    // A blocked URL can only have been admitted by the Exchange bypass in
+    // blocklistMiddleware, which only applies to flagged orgs; if the
+    // Exchange is no longer usable by execution time (catalog changed,
+    // service down), fail closed rather than letting normal engines scrape
+    // a blocklisted site. An error here also fails closed: this branch only
+    // runs for flagged orgs, and a retryable scrape failure is preferable
+    // to scraping a potentially blocklisted site with normal engines.
+    if (
+      meta.internalOptions.teamFlags?.professionalProfileCompanyDataBeta ===
+      true
+    ) {
+      try {
+        if (
+          isUrlBlocked(
+            meta.rewrittenUrl ?? meta.url,
+            meta.internalOptions.teamFlags ?? null,
+            {
+              team_id: meta.internalOptions.teamId ?? null,
+              org_id: meta.internalOptions.orgId ?? null,
+              origin: null,
+            },
+          )
+        ) {
+          return [];
+        }
+      } catch (error) {
+        meta.logger.warn("Exchange blocklist re-check failed; failing closed", {
+          error,
+        });
+        return [];
+      }
+    }
+  }
+
   const shouldPrioritizeTlsClient = meta.options.__experimental_engpicker
     ? (await queryEngpickerVerdict(
-      meta.options.__experimental_omceDomain ?? new URL(meta.url).hostname,
-    )) === "TlsClientOk"
+        meta.options.__experimental_omceDomain ?? new URL(meta.url).hostname,
+      )) === "TlsClientOk"
     : false;
 
   const _engines: Engine[] = [
@@ -646,6 +745,22 @@ export async function buildFallbackList(meta: Meta): Promise<
 
     if (supportScore >= priorityThreshold) {
       selectedEngines.push({ engine, supportScore, unsupportedFeatures });
+    }
+  }
+
+  // When stealth proxy is explicitly requested (proxy: "stealth" | "enhanced"),
+  // restrict the fallback list to engines that actually support it. Stealth
+  // engines all carry negative quality, so without this the quality filter
+  // below would drop them in favor of a regular positive-quality engine,
+  // silently ignoring the user's request and never attempting stealth.
+  // The guard keeps the original list if no stealth-capable engine qualified
+  // (e.g. self-hosted without fire-engine) so scrapes don't break entirely.
+  if (meta.featureFlags.has("stealthProxy")) {
+    const stealthCapable = selectedEngines.filter(
+      x => !x.unsupportedFeatures.has("stealthProxy"),
+    );
+    if (stealthCapable.length > 0) {
+      selectedEngines = stealthCapable;
     }
   }
 

@@ -18,6 +18,8 @@ import { performAttributes } from "./performAttributes";
 
 import { deriveDiff } from "./diff";
 import { fetchAudio } from "./audio";
+import { fetchProduct } from "./product";
+import { fetchMenu } from "./menu";
 import { fetchVideo } from "./video";
 import { performRedactPII } from "./redactPII";
 import { useIndex, useSearchIndex } from "../../../services/index";
@@ -116,10 +118,10 @@ async function deriveMarkdownFromHTML(
     return document;
   }
 
-  // Skip markdown derivation if a postprocessor already set it
-  if (document.metadata.postprocessorsUsed?.length && document.markdown) {
+  // Skip markdown derivation if the engine or a postprocessor already set it.
+  if (document.markdown !== undefined) {
     meta.logger.debug(
-      "Skipping markdown derivation - postprocessor already set markdown",
+      "Skipping markdown derivation - document already has markdown",
       { postprocessorsUsed: document.metadata.postprocessorsUsed },
     );
     return document;
@@ -316,6 +318,30 @@ async function deriveBrandingFromActions(
   return document;
 }
 
+async function performLLMExtractUnlessNativeJson(
+  meta: Meta,
+  document: Document,
+): Promise<Document> {
+  if (
+    document.json !== undefined &&
+    hasFormatOfType(meta.options.formats, "json")
+  ) {
+    if (
+      meta.internalOptions.v1OriginalFormat === "extract" &&
+      document.extract === undefined
+    ) {
+      document.extract = document.json;
+    }
+
+    meta.logger.debug(
+      "Skipping LLM JSON extraction - document already has native JSON",
+    );
+    return document;
+  }
+
+  return performLLMExtract(meta, document);
+}
+
 function coerceFieldsToFormats(meta: Meta, document: Document): Document {
   const hasMarkdown = hasFormatOfType(meta.options.formats, "markdown");
   const hasRawHtml = hasFormatOfType(meta.options.formats, "rawHtml");
@@ -334,6 +360,8 @@ function coerceFieldsToFormats(meta: Meta, document: Document): Document {
   const hasScreenshot = hasFormatOfType(meta.options.formats, "screenshot");
   const hasSummary = hasFormatOfType(meta.options.formats, "summary");
   const hasBranding = hasFormatOfType(meta.options.formats, "branding");
+  const hasProduct = hasFormatOfType(meta.options.formats, "product");
+  const hasMenu = hasFormatOfType(meta.options.formats, "menu");
   const hasQuestionFormat = hasFormatOfType(meta.options.formats, "question");
   const hasHighlightsFormat = hasFormatOfType(
     meta.options.formats,
@@ -488,6 +516,20 @@ function coerceFieldsToFormats(meta: Meta, document: Document): Document {
     );
   }
 
+  if (!hasProduct && document.product !== undefined) {
+    meta.logger.warn(
+      "Removed product from Document because it wasn't in formats -- this indicates the engine returned unexpected data.",
+    );
+    delete document.product;
+  }
+
+  if (!hasMenu && document.menu !== undefined) {
+    meta.logger.warn(
+      "Removed menu from Document because it wasn't in formats -- this indicates the engine returned unexpected data.",
+    );
+    delete document.menu;
+  }
+
   const hasAudio = hasFormatOfType(meta.options.formats, "audio");
   if (!hasAudio && document.audio !== undefined) {
     delete document.audio;
@@ -577,9 +619,11 @@ const transformerStack: Transformer[] = [
   deriveImagesFromHTML,
   deriveBrandingFromActions,
   deriveMetadataFromRawHTML,
+  fetchProduct,
+  fetchMenu,
   ...(useIndex ? [sendDocumentToIndex] : []),
   ...(useSearchIndex ? [sendDocumentToSearchIndex] : []), // Add to search index for real-time search
-  performLLMExtract,
+  performLLMExtractUnlessNativeJson,
   performDeterministicJson,
   performSummary,
   performQuery,

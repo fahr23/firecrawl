@@ -52,6 +52,9 @@ export async function sendDocumentToIndex(meta: Meta, document: Document) {
     !meta.internalOptions.zeroDataRetention &&
     meta.winnerEngine !== "index" &&
     meta.winnerEngine !== "index;documents" &&
+    // Exchange-delivered content is never stored on the Firecrawl side:
+    // every access must go through the Exchange and its ledger.
+    meta.winnerEngine !== "exchange" &&
     !(meta.winnerEngine === "pdf" && !shouldParsePDF(meta.options.parsers)) &&
     !meta.options.parsers?.some(parser => {
       if (
@@ -105,14 +108,16 @@ export async function sendDocumentToIndex(meta: Meta, document: Document) {
             meta.rewrittenUrl ??
             meta.url,
           html: document.rawHtml!,
+          json: document.json,
           statusCode: document.metadata.statusCode,
           error: document.metadata.error,
           screenshot: document.screenshot,
           pdfMetadata:
             document.metadata.numPages !== undefined
               ? {
-                  // reconstruct pdfMetadata from numPages and title
+                  // reconstruct pdfMetadata from numPages, totalPages and title
                   numPages: document.metadata.numPages,
+                  totalPages: document.metadata.totalPages ?? undefined,
                   title: document.metadata.title ?? undefined,
                 }
               : undefined,
@@ -273,9 +278,7 @@ export async function scrapeURLWithIndex(
               const value =
                 !data || data.length === 0 ? null : (data[0].max_age ?? null);
               if (useIndexCache) {
-                setCachedMaxAge(domainHash, value, meta.logger).catch(
-                  () => {},
-                );
+                setCachedMaxAge(domainHash, value, meta.logger).catch(() => {});
               }
               return { value: value ?? defaultMaxAge, source: "dynamic_db" };
             } catch (error) {
@@ -283,11 +286,10 @@ export async function scrapeURLWithIndex(
               return { value: defaultMaxAge, source: "default" };
             }
           })(),
-          new Promise<{ value: number; source: MaxAgeSource }>(
-            resolve =>
-              setTimeout(() => {
-                resolve({ value: defaultMaxAge, source: "default" });
-              }, 200),
+          new Promise<{ value: number; source: MaxAgeSource }>(resolve =>
+            setTimeout(() => {
+              resolve({ value: defaultMaxAge, source: "default" });
+            }, 200),
           ),
         ]);
         maxAge = resolved.value;
@@ -404,7 +406,10 @@ export async function scrapeURLWithIndex(
     const negStart = Date.now();
     const neg = await getCachedNegative(variantKey, meta.logger);
     timingsCache += Date.now() - negStart;
-    if (neg !== null && isNegativeStillValid(neg.emptyFrom, maxAge, Date.now())) {
+    if (
+      neg !== null &&
+      isNegativeStillValid(neg.emptyFrom, maxAge, Date.now())
+    ) {
       negativeHit = true;
     }
   }
@@ -503,6 +508,7 @@ export async function scrapeURLWithIndex(
   const doc = await getIndexFromGCS(
     id + ".json",
     meta.logger.child({ module: "index", method: "getIndexFromGCS" }),
+    { indexCreatedAt: selectedRow.created_at },
   );
   if (!doc) {
     if (servedFromCache) {
@@ -546,6 +552,7 @@ export async function scrapeURLWithIndex(
   return {
     url: doc.url,
     html: doc.html,
+    json: doc.json,
     statusCode: doc.statusCode,
     error: doc.error,
     screenshot: doc.screenshot,
