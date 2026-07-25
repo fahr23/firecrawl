@@ -145,8 +145,6 @@ services:
         condition: service_healthy
     ports:
       - "${PORT:-3002}:${INTERNAL_PORT:-3002}"
-      # Expose Turkish Financial Data Scraper FastAPI (running inside this container) on host 8000
-      - "8000:8000"
     volumes:
       - fdb-cluster-file:/var/fdb:ro
     command: node dist/src/harness.js --start-docker
@@ -155,6 +153,51 @@ services:
     cpus: 4.0
     mem_limit: 8G
     memswap_limit: 8G
+
+  turkish-financial-api:
+    build:
+      context: ./projects/turkish_financial
+    working_dir: /app
+    env_file:
+      - ./projects/turkish_financial/.env
+    environment:
+      FIRECRAWL_BASE_URL: http://api:3002
+      DB_HOST: nuq-postgres
+      DB_PORT: 5432
+      DB_NAME: postgres
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      APP_DB_HOST: nuq-postgres
+      APP_DB_PORT: 5432
+      APP_DB_NAME: postgres
+      APP_DB_USER: postgres
+      APP_DB_PASSWORD: postgres
+      DB_SCHEMA: turkish_financial
+      SENTIMENT_PROVIDER: keyword
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      api:
+        condition: service_started
+      playwright-m:
+        condition: service_started
+      nuq-postgres:
+        condition: service_started
+    networks:
+      - backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./projects/turkish_financial:/app
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/api/external/v1/health", timeout=5)
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   redis:
     # NOTE: If you want to use Valkey (open source) instead of Redis (source available),

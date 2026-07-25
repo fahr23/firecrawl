@@ -71,6 +71,43 @@ STATIC_MEMBER_OID_MAP: dict[str, str] = {
 }
 
 
+def detect_instruments(text: str) -> List[str]:
+    """
+    Detect all BIST tickers mentioned in `text`.
+
+    Two-pass scan:
+      1. Uppercase \bTICKER\b regex match (handles captions that preserve the code).
+      2. Company-name substring match (lowercased), using STATIC_BIST_MAP patterns.
+         Primary for YouTube auto-captions which are mostly lowercase.
+
+    Returns de-duplicated list in detection order.
+    """
+    import re
+
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def _add(ticker: str) -> None:
+        if ticker not in seen:
+            seen.add(ticker)
+            found.append(ticker)
+
+    # Pass 1: explicit uppercase ticker tokens in the original text
+    for ticker in STATIC_BIST_MAP:
+        if re.search(rf"\b{re.escape(ticker)}\b", text):
+            _add(ticker)
+
+    # Pass 2: company-name substrings (case-insensitive)
+    lower = text.lower()
+    for ticker, patterns in STATIC_BIST_MAP.items():
+        for pattern in patterns:
+            if pattern.lower() in lower:
+                _add(ticker)
+                break
+
+    return found
+
+
 def _normalize_instrument(instrument: str) -> str:
     return (instrument or "").strip().upper()
 

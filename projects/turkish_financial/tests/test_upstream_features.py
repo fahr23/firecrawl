@@ -54,8 +54,21 @@ class _FirecrawlCfg:
     retry_backoff         = 2
     max_batch_concurrency = 5   # NuQ default (upstream #3758)
 
+class _ProxyCfg:
+    # Proxying off in tests → kap_scraper builds a DirectProvider (no network).
+    use_proxy                 = False
+    provider                  = None
+    proxy_url                 = None
+    proxy_username            = None
+    proxy_password            = None
+    scraperapi_country_code   = None
+    scraperapi_premium        = False
+    scraperapi_ultra_premium  = False
+    def get_proxy_string(self): return None
+
 class _Cfg:
     firecrawl = _FirecrawlCfg()
+    proxy     = _ProxyCfg()
     def validate(self): return True
 
 _cfg = _Cfg()

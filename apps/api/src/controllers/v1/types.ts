@@ -512,6 +512,7 @@ const baseScrapeOptions = z.strictObject({
     })
     .optional(),
   skipTlsVerification: z.boolean().optional(),
+  bypassProxy: z.boolean().optional(),
   removeBase64Images: z.boolean().prefault(true),
   fastMode: z.boolean().prefault(false),
   useMock: z.string().optional(),

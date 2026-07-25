@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.routers import scrapers, reports, health, sentiment, external_analysis, news_sentiment
+from api.routers import youtube_sentiment
 from utils.logger import setup_logging
 
 # Setup logging
@@ -84,9 +85,11 @@ class RequestResponseLoggerMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     logger.info("API starting up")
     yield
-    # Shutdown: stop background scheduler task
+    # Shutdown: stop background scheduler tasks
     from api.news_scheduler import scheduler
     scheduler.shutdown()
+    from api.youtube_scheduler import scheduler as yt_scheduler
+    yt_scheduler.shutdown()
     logger.info("API shut down — scheduler stopped")
 
 
@@ -122,6 +125,8 @@ app.include_router(sentiment.router, prefix="/api/sentiment", tags=["sentiment_l
 app.include_router(external_analysis.router, prefix="/api/external/v1")
 # News-portal sentiment (Bloomberg HT, Foreks, Mynet, Bigpara, Investing.com TR)
 app.include_router(news_sentiment.router, prefix="/api/external/v1")
+# YouTube finance channel sentiment
+app.include_router(youtube_sentiment.router, prefix="/api/external/v1")
 
 
 @app.get("/")

@@ -25,19 +25,38 @@ from domain.value_objects.sentiment import SentimentAnalysis
 
 logger = logging.getLogger(__name__)
 
-NEWS_WEIGHT = 0.6
-SOCIAL_WEIGHT = 0.4
+# Base weights for each source. When a source is absent its weight is dropped and the
+# remaining weights are renormalized — so news+social collapses to exactly 0.6/0.4,
+# which preserves the pre-YouTube combined_score behaviour.
+_BASE_WEIGHTS: Dict[str, float] = {
+    "news": 0.6,
+    "social": 0.4,
+    "youtube": 0.25,
+}
+
+
+def blend_sources(scores: Dict[str, Optional[float]]) -> Optional[float]:
+    """
+    Weighted blend across any subset of {news, social, youtube} score sources.
+
+    Missing or None sides are excluded; the remaining weights are renormalized.
+    Returns None when no side has a value.
+
+    Backward-compat: news+social only → exactly 0.6·news + 0.4·social (same as before).
+    """
+    present = {k: v for k, v in scores.items() if v is not None}
+    if not present:
+        return None
+    total_w = sum(_BASE_WEIGHTS.get(k, 0.0) for k in present)
+    if total_w == 0.0:
+        return None
+    combined = sum(_BASE_WEIGHTS.get(k, 0.0) * v for k, v in present.items()) / total_w
+    return round(combined, 4)
 
 
 def blend_scores(news: Optional[float], social: Optional[float]) -> Optional[float]:
-    """Weighted blend of news/social scores, tolerating a missing side."""
-    if news is not None and social is not None:
-        return round(NEWS_WEIGHT * news + SOCIAL_WEIGHT * social, 4)
-    if news is not None:
-        return round(news, 4)
-    if social is not None:
-        return round(social, 4)
-    return None
+    """Backward-compat two-source blend (news + social). Delegates to blend_sources."""
+    return blend_sources({"news": news, "social": social})
 
 
 class CollectSocialSentimentUseCase:
@@ -124,8 +143,11 @@ class CollectSocialSentimentUseCase:
             social_score = round(sum(scores) / len(scores), 4)
 
             existing = self._db.get_aggregated_ticker_sentiment(ticker, day) or {}
-            news_score = existing.get("news_score")
-            combined = blend_scores(news_score, social_score)
+            combined = blend_sources({
+                "news": existing.get("news_score"),
+                "social": social_score,
+                "youtube": existing.get("youtube_score"),
+            })
 
             ok = self._db.upsert_aggregated_ticker_sentiment(
                 {

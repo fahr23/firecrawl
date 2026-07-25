@@ -34,7 +34,8 @@ _NEUTRAL_BAND = 0.05
 
 _SELECT = (
     "ticker, period_date, news_score, news_count, "
-    "social_score, social_count, combined_score, computed_at"
+    "social_score, social_count, youtube_score, youtube_count, "
+    "combined_score, computed_at"
 )
 
 
@@ -196,8 +197,16 @@ class SocialSentimentRepository(AggregateSentimentRepository):
 
 
 class CombinedSentimentRepository(AggregateSentimentRepository):
-    """Blended view (combined_score = 0.6·news + 0.4·social)."""
+    """Blended view (combined_score = 0.5·news + 0.3·social + 0.2·youtube)."""
 
     _SCORE_COL = "combined_score"
-    _COUNT_COLS = ("news_count", "social_count")
-    _PROVIDER = "news+social"
+    _COUNT_COLS = ("news_count", "social_count", "youtube_count")
+    _PROVIDER = "news+social+youtube"
+
+
+class YouTubeSentimentRepository(AggregateSentimentRepository):
+    """YouTube-only view (youtube_score)."""
+
+    _SCORE_COL = "youtube_score"
+    _COUNT_COLS = ("youtube_count",)
+    _PROVIDER = "youtube-scraper"

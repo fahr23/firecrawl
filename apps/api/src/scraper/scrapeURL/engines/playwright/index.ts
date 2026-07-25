@@ -26,6 +26,7 @@ export async function scrapeURLWithPlaywright(
         headers: meta.options.headers,
         skip_tls_verification: meta.options.skipTlsVerification,
         actions: meta.options.actions,
+        bypass_proxy: meta.options.bypassProxy,
       },
       method: "POST",
       logger: meta.logger.child("scrapeURLWithPlaywright/robustFetch"),
@@ -61,5 +62,11 @@ export async function scrapeURLWithPlaywright(
 }
 
 export function playwrightMaxReasonableTime(meta: Meta): number {
-  return (meta.options.waitFor ?? 0) + 30000;
+  const actionsWait = (meta.options.actions ?? []).reduce(
+    (acc: number, a: any) => acc + (a.type === "wait" ? (a.milliseconds ?? 0) : 0),
+    0
+  );
+  // For proxy-based scraping, page load can take 60-90 seconds; actions add extra time.
+  const proxyBuffer = meta.options.proxy ? 90000 : 30000;
+  return (meta.options.waitFor ?? 0) + actionsWait + proxyBuffer;
 }

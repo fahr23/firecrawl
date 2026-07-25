@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain Firecrawl Fork"
+  short_description: "Safely evolve and sync the Firecrawl fork"
+  default_prompt: "Use $maintain-firecrawl-fork to make a tested change without breaking fork-specific behavior."

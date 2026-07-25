@@ -30,8 +30,88 @@ from utils.pdf_downloader import PDFDownloader
 from utils.llm_analyzer import LLMAnalyzer, LocalLLMProvider, OpenAIProvider, GeminiProvider
 import csv
 import os
+import json as _json_lib
+import requests as _requests
+from config import config as _app_config
 
 logger = logging.getLogger(__name__)
+
+# Egress is sourced from a pluggable ProxyProvider (infrastructure/proxy) so the
+# backend can change (ScraperAPI today, Firecrawl/residential later) without editing
+# call sites. The module-level shapes below are what requests/aiohttp consume directly.
+from infrastructure.proxy import get_proxy_provider
+
+_PROXY_PROVIDER = get_proxy_provider(_app_config)
+_PROXY_DICT: Optional[Dict[str, str]] = _PROXY_PROVIDER.requests_proxies()
+_AIOHTTP_PROXY: Optional[str] = _PROXY_PROVIDER.aiohttp_proxy()
+# Native ScraperAPI endpoint helpers still key off the raw API key when present.
+_SCRAPERAPI_KEY: Optional[str] = _app_config.proxy.proxy_password if _app_config.proxy.use_proxy else None
+
+
+async def _scraperapi_post(url: str, body: Dict[str, Any]) -> Optional[Any]:
+    """POST to a URL via ScraperAPI native endpoint using requests (sync → thread)."""
+    if not _SCRAPERAPI_KEY:
+        return None
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    def _do_post() -> Optional[Any]:
+        try:
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/plain, */*",
+                "Referer": "https://www.kap.org.tr/",
+            }
+            r = _requests.post(
+                url,
+                json=body,
+                headers=headers,
+                proxies=_PROXY_DICT,
+                verify=False,
+                timeout=45,
+            )
+            if r.status_code == 200:
+                return r.json() if r.text.strip().startswith("[") or r.text.strip().startswith("{") else None
+            logger.warning(f"ScraperAPI POST {url} → HTTP {r.status_code}")
+            return None
+        except Exception as e:
+            logger.debug(f"ScraperAPI POST failed {url}: {e}")
+            return None
+
+    return await asyncio.to_thread(_do_post)
+
+
+async def _scraperapi_get(url: str) -> Optional[Any]:
+    """GET a JSON URL via ScraperAPI proxy using requests (sync → thread)."""
+    if not _SCRAPERAPI_KEY:
+        return None
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    def _do_get() -> Optional[Any]:
+        try:
+            headers = {
+                "Accept": "application/json, text/plain, */*",
+                "Referer": "https://www.kap.org.tr/",
+            }
+            r = _requests.get(
+                url,
+                headers=headers,
+                proxies=_PROXY_DICT,
+                verify=False,
+                timeout=30,
+            )
+            if r.status_code == 200:
+                text = r.text.strip()
+                if text.startswith("[") or text.startswith("{"):
+                    return r.json()
+            logger.warning(f"ScraperAPI GET {url} → HTTP {r.status_code}")
+            return None
+        except Exception as e:
+            logger.debug(f"ScraperAPI GET failed {url}: {e}")
+            return None
+
+    return await asyncio.to_thread(_do_get)
 
 # --- Module-level schema constants ---
 # Keeping these as module-level singletons ensures Firecrawl's deterministic JSON
@@ -1030,30 +1110,34 @@ class KAPScraper(BaseScraper):
         Returns:
             Parsed JSON (list or dict), or None when every strategy fails.
         """
-        import json as _json
-
         landing = landing_url or f"{self.BASE_URL}/tr/Bildirimler"
         full_api_url = f"{self.BASE_URL}{api_path}"
 
-        # Build the fetch() options string for the injected JS.
+        # Strategy: load KAP SPA WITHOUT proxy (bypass_proxy=True) so the browser's
+        # fetch() call reaches the KAP API from our direct IP.
+        # ScraperAPI's shared datacenter IPs trigger KAP's "multiple users from IP" 499 block;
+        # our direct IP avoids that. The browser context has the KAP session cookies set via
+        # HTTP Set-Cookie (HttpOnly), so the in-browser fetch() automatically includes them.
         if method.upper() == "POST" and body is not None:
-            # Double-encode so the body JSON is a JS string literal we can JSON.parse.
-            body_js_literal = _json.dumps(_json.dumps(body))
+            body_js_string_literal = _json_lib.dumps(_json_lib.dumps(body))
             fetch_options = (
                 f'method:"POST",'
                 f'headers:{{"Content-Type":"application/json","Accept":"application/json"}},'
                 f'credentials:"same-origin",'
-                f'body:JSON.parse({body_js_literal})'
+                f'body:{body_js_string_literal}'
             )
         else:
             fetch_options = 'method:"GET",credentials:"same-origin"'
 
-        # Async IIFE that calls the API and injects the result into a <pre> node.
-        # Uses document.documentElement (not body) so it works before body is ready.
         js_script = (
             "(async()=>{"
             "try{"
-            f'const r=await fetch({_json.dumps(full_api_url)},{{{fetch_options}}});'
+            "const ac=new AbortController();"
+            "const tid=setTimeout(()=>ac.abort(new Error('fetch timeout 30s')),30000);"
+            "let r;"
+            "try{"
+            f'r=await fetch({_json_lib.dumps(full_api_url)},{{{fetch_options},signal:ac.signal}});'
+            "}finally{clearTimeout(tid);}"
             "const t=await r.text();"
             'let el=document.getElementById("__kap_api_result");'
             'if(!el){el=document.createElement("pre");el.id="__kap_api_result";'
@@ -1064,79 +1148,72 @@ class KAPScraper(BaseScraper):
             'let el=document.getElementById("__kap_api_result");'
             'if(!el){el=document.createElement("pre");el.id="__kap_api_result";'
             "document.documentElement.appendChild(el);}"
-            'el.setAttribute("data-error",e.message);'
+            'el.setAttribute("data-error",e.message||String(e));'
             "}"
             "})()"
         )
 
-        actions: List[Dict[str, Any]] = [
-            {"type": "wait", "milliseconds": 5000},    # SPA hydration + cookie init
-            {"type": "executeJavascript", "script": js_script},
-            {"type": "wait", "milliseconds": 5000},    # async fetch completes
-            {"type": "scrape"},
-        ]
+        # Attempt 1: no proxy (bypass_proxy=True) — direct IP, correct session cookies
+        # Attempt 2-4: proxy tiers as fallback (may hit KAP's 499 shared-IP block)
+        proxy_attempts = [(None, True)] + [(p, False) for p in self.KAP_FIRECRAWL_PROXIES]
 
-        for proxy in self.KAP_FIRECRAWL_PROXIES:
+        for proxy, bypass in proxy_attempts:
+            actions: List[Dict[str, Any]] = [
+                {"type": "wait", "milliseconds": 5000},
+                {"type": "executeJavascript", "script": js_script},
+                {"type": "wait", "milliseconds": 8000},  # wait for async fetch
+                {"type": "scrape"},
+            ]
             try:
                 result = await self.scrape_with_actions(
                     url=landing,
                     actions=actions,
                     formats=["rawHtml"],
-                    proxy=proxy,
+                    proxy=proxy or "basic",
+                    bypass_proxy=bypass,
+                    timeout=180000,
                     location={"country": "TR", "languages": ["tr-TR", "tr"]},
                     only_main_content=False,
                 )
                 if not result.get("success"):
-                    logger.debug(f"KAP JS-API (proxy={proxy}): scrape_with_actions failed")
+                    logger.debug(f"KAP JS-API (proxy={proxy},bypass={bypass}): scrape_with_actions failed")
                     continue
 
                 data = result.get("data") or {}
-                raw = (
-                    data.get("rawHtml") if isinstance(data, dict)
-                    else getattr(data, "rawHtml", None)
-                )
+                raw = data.get("rawHtml") or data.get("raw_html")
                 if not raw:
-                    logger.debug(f"KAP JS-API (proxy={proxy}): no rawHtml in response")
+                    raw = (
+                        getattr(data, "rawHtml", None) or getattr(data, "raw_html", None)
+                    )
+                if not raw:
+                    logger.debug(f"KAP JS-API (proxy={proxy},bypass={bypass}): no rawHtml")
                     continue
 
-                # Extract JSON from <pre id="__kap_api_result">
                 m = re.search(
                     r'<pre[^>]*id=["\']__kap_api_result["\'][^>]*>(.*?)</pre>',
                     raw, re.DOTALL | re.IGNORECASE,
                 )
                 if m:
                     content = m.group(1).strip()
-                    parsed = self._extract_json(content)
-                    if parsed is not None:
-                        logger.info(
-                            f"KAP JS-API (proxy={proxy}): got JSON via fetch() for {api_path}"
-                        )
-                        return parsed
-                    # data-error attribute means fetch succeeded but API returned no JSON
-                    if "data-error" in raw[m.start():m.end()]:
-                        logger.warning(
-                            f"KAP JS-API fetch error in browser: {content[:200]}"
-                        )
-
-                # Also check Firecrawl actions.results envelope as a secondary source.
-                actions_data = (
-                    data.get("actions") if isinstance(data, dict)
-                    else getattr(data, "actions", None)
-                )
-                if isinstance(actions_data, dict):
-                    for k in ("results", "result", "output"):
-                        inner = actions_data.get(k)
-                        if inner:
-                            parsed = self._extract_json(
-                                str(inner[0].get("result", ""))
-                                if isinstance(inner, list) else str(inner)
+                    whole = raw[m.start():m.end()]
+                    if "data-error" in whole:
+                        logger.warning(f"KAP JS-API fetch error in browser: {content[:200]}")
+                    else:
+                        parsed = self._extract_json(content)
+                        if parsed is not None:
+                            logger.info(
+                                f"KAP JS-API (proxy={proxy},bypass={bypass}): "
+                                f"got JSON via fetch() for {api_path}"
                             )
-                            if parsed is not None:
-                                return parsed
+                            return parsed
+                        logger.debug(
+                            f"KAP JS-API (proxy={proxy},bypass={bypass}): "
+                            f"fetch returned non-JSON: {content[:200]}"
+                        )
 
-                logger.debug(f"KAP JS-API (proxy={proxy}): no JSON found for {api_path}")
+                logger.debug(f"KAP JS-API (proxy={proxy},bypass={bypass}): no JSON for {api_path}")
             except Exception as e:
-                logger.debug(f"KAP JS-API (proxy={proxy}) exception for {api_path}: {e}")
+                logger.debug(f"KAP JS-API (proxy={proxy},bypass={bypass}) exception: {e}")
 
         return None
 
@@ -1193,7 +1270,7 @@ class KAPScraper(BaseScraper):
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
                 for attempt in range(3):
-                    async with session.get(url) as resp:
+                    async with session.get(url, proxy=_AIOHTTP_PROXY, ssl=False) as resp:
                         if resp.status == 200:
                             return self._extract_json(await resp.text())
                         if resp.status == 429:
@@ -1206,7 +1283,15 @@ class KAPScraper(BaseScraper):
                         logger.warning(f"KAP API {url} returned HTTP {resp.status}")
                         break
         except Exception as e:
-            logger.error(f"Direct KAP API fetch failed for {url}: {e}")
+            logger.debug(f"Direct KAP API fetch (aiohttp) failed for {url}: {e}")
+
+        # 4. ScraperAPI proxy via requests — works when aiohttp proxy auth fails.
+        result = await _scraperapi_get(url)
+        if result is not None:
+            logger.info(f"KAP GET succeeded via ScraperAPI for {url}")
+            return result
+
+        logger.error(f"KAP GET all fallbacks failed for {url}")
         return None
 
     async def list_company_excel_members(
@@ -1402,6 +1487,7 @@ class KAPScraper(BaseScraper):
         year: Optional[int] = None,
         term: str = "T",
         market_data: Optional[Dict[str, Dict[str, Any]]] = None,
+        delay_s: float = 0.0,
     ) -> Dict[str, Any]:
         """
         Fetch KAP "Finansal Tablolar" via the financialTable API and save fundamentals.
@@ -1417,6 +1503,10 @@ class KAPScraper(BaseScraper):
             term: KAP term code ("T" = all periods of the year).
             market_data: optional ``{ticker: {"price": .., "shares_outstanding": ..}}``
                 to enable price multiples (P/E, P/B, EV/EBITDA, dividend yield).
+            delay_s: seconds to pause between instruments. KAP's anti-bot is rate-based,
+                so a gentle GET cadence (a few seconds) keeps the crawl non-blocking when
+                sweeping many companies. Applied only between instruments (not before the
+                first, nor after the last).
 
         Returns a per-instrument summary; instruments we could not resolve / fetch /
         parse are reported under ``failed`` (we never fabricate data).
@@ -1434,7 +1524,9 @@ class KAPScraper(BaseScraper):
         processed: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
 
-        for ticker in instruments:
+        for idx, ticker in enumerate(instruments):
+            if idx and delay_s > 0:
+                await asyncio.sleep(delay_s)  # pace; KAP anti-bot is rate-based
             code = ticker.strip().upper()
             oid = resolve_member_oid(code, db_manager=self.db_manager)
             if not oid:
@@ -1831,6 +1923,8 @@ class KAPScraper(BaseScraper):
                         f"{self.BASE_URL}/tr/Bildirimler",
                         headers={**headers, "Accept": "text/html,*/*"},
                         allow_redirects=True,
+                        proxy=_AIOHTTP_PROXY,
+                        ssl=False,
                     ) as warm:
                         logger.debug(
                             f"KAP POST cookie warm-up: HTTP {warm.status}, "
@@ -1840,7 +1934,7 @@ class KAPScraper(BaseScraper):
                     logger.debug(f"KAP POST cookie warm-up failed (non-fatal): {e}")
 
                 # Now POST with the warmed session.
-                async with session.post(url, json=body) as resp:
+                async with session.post(url, json=body, proxy=_AIOHTTP_PROXY, ssl=False) as resp:
                     if resp.status == 200:
                         return self._extract_json(await resp.text())
                     logger.warning(f"KAP cookie-warmed POST {url} → HTTP {resp.status}")
@@ -1851,12 +1945,20 @@ class KAPScraper(BaseScraper):
         try:
             timeout = aiohttp.ClientTimeout(total=30)
             async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-                async with session.post(url, json=body) as resp:
+                async with session.post(url, json=body, proxy=_AIOHTTP_PROXY, ssl=False) as resp:
                     if resp.status == 200:
                         return self._extract_json(await resp.text())
                     logger.warning(f"KAP POST {url} → HTTP {resp.status}")
         except Exception as e:
-            logger.error(f"KAP POST failed {url}: {e}")
+            logger.debug(f"KAP POST (aiohttp) failed {url}: {e}")
+
+        # 4. ScraperAPI proxy via requests — works when aiohttp proxy auth fails.
+        result = await _scraperapi_post(url, body)
+        if result is not None:
+            logger.info(f"KAP POST succeeded via ScraperAPI for {url}")
+            return result
+
+        logger.error(f"KAP POST all fallbacks failed for {url}")
         return None
 
     # ------------------------------------------------------------------

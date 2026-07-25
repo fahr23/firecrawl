@@ -1,0 +1,4 @@
+interface:
+  display_name: "Develop Turkish Financial"
+  short_description: "Maintain the BIST/KAP external analysis service"
+  default_prompt: "Use $develop-turkish-financial to implement and verify a change in the Turkish financial provider."

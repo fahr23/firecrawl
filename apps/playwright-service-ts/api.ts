@@ -178,6 +178,7 @@ interface UrlModel {
   headers?: { [key: string]: string };
   check_selector?: string;
   skip_tls_verification?: boolean;
+  bypass_proxy?: boolean;
   action?: string; // 'click', 'write', 'press', etc.
   selector?: string; // selector for the action
   value?: string; // value for write/type actions
@@ -200,7 +201,7 @@ const initializeBrowser = async () => {
   });
 };
 
-const createContext = async (skipTlsVerification: boolean = false, userAgentOverride?: string): Promise<{ context: BrowserContext; securityState: ContextSecurityState }> => {
+const createContext = async (skipTlsVerification: boolean = false, userAgentOverride?: string, bypassProxy: boolean = false): Promise<{ context: BrowserContext; securityState: ContextSecurityState }> => {
   const userAgent = userAgentOverride || new UserAgent().toString();
   const viewport = { width: 1280, height: 800 };
   const securityState: ContextSecurityState = {
@@ -214,13 +215,13 @@ const createContext = async (skipTlsVerification: boolean = false, userAgentOver
     serviceWorkers: 'block',
   };
 
-  if (PROXY_SERVER && PROXY_USERNAME && PROXY_PASSWORD) {
+  if (!bypassProxy && PROXY_SERVER && PROXY_USERNAME && PROXY_PASSWORD) {
     contextOptions.proxy = {
       server: PROXY_SERVER,
       username: PROXY_USERNAME,
       password: PROXY_PASSWORD,
     };
-  } else if (PROXY_SERVER) {
+  } else if (!bypassProxy && PROXY_SERVER) {
     contextOptions.proxy = {
       server: PROXY_SERVER,
     };
@@ -356,7 +357,8 @@ app.get('/health', async (req: Request, res: Response) => {
 });
 
 app.post('/scrape', async (req: Request, res: Response) => {
-  const { url, wait_after_load = 0, timeout = 15000, headers, check_selector, skip_tls_verification = false, action, selector, value }: UrlModel = req.body;
+  const defaultTimeout = parseInt(process.env.DEFAULT_TIMEOUT || '90000');
+  const { url, wait_after_load = 0, timeout = defaultTimeout, headers, check_selector, skip_tls_verification = false, action, selector, value, bypass_proxy = false }: UrlModel = req.body;
 
   console.log(`================= Scrape Request =================`);
   console.log(`URL: ${url}`);
@@ -413,7 +415,7 @@ app.post('/scrape', async (req: Request, res: Response) => {
       ? Object.entries(headers).find(([k]) => k.toLowerCase() === 'user-agent')?.[1]
       : undefined;
 
-    const contextBundle = await createContext(skip_tls_verification, customUserAgent);
+    const contextBundle = await createContext(skip_tls_verification, customUserAgent, bypass_proxy);
     requestContext = contextBundle.context;
     securityState = contextBundle.securityState;
     page = await requestContext.newPage();
@@ -429,10 +431,11 @@ app.post('/scrape', async (req: Request, res: Response) => {
       }
     }
 
+    const waitUntil = (process.env.DEFAULT_WAIT_UNTIL as 'load' | 'networkidle' | 'domcontentloaded' | 'commit') || 'domcontentloaded';
     const result = await scrapePage(
       page,
       url,
-      'load',
+      waitUntil as 'load' | 'networkidle',
       wait_after_load,
       timeout,
       check_selector,
@@ -521,6 +524,21 @@ app.post('/scrape', async (req: Request, res: Response) => {
             res.locals.screenshot = screenshot.toString('base64');
             break;
 
+          case 'executejavascript':
+            if (act.script) {
+              console.log(`Executing JavaScript`);
+              try {
+                await page.evaluate(act.script);
+              } catch (e: any) {
+                console.warn(`JavaScript execution error: ${e.message}`);
+              }
+            }
+            break;
+
+          case 'scrape':
+            // Marker action — content is captured at the end automatically.
+            break;
+
           default:
             console.warn(`Unknown action type: ${actionType}`);
         }
@@ -535,17 +553,28 @@ app.post('/scrape', async (req: Request, res: Response) => {
     // Get updated content after actions
     const updatedContent = await page.content();
     result.content = updatedContent;
-    const pageError = result.status !== 200 ? getError(result.status) : undefined;
+
+    // SPA client-side routes often return HTTP 404 from the server, but after
+    // JavaScript executes the correct content is rendered. When actions were
+    // provided the caller explicitly wanted client-side rendering, so treat 404
+    // as non-fatal and report 200 if we have content.
+    const hasActions = actionsToExecute.length > 0;
+    const effectiveStatus =
+      result.status === 404 && hasActions && updatedContent.length > 500
+        ? 200
+        : result.status;
+
+    const pageError = effectiveStatus !== 200 ? getError(effectiveStatus) : undefined;
 
     if (!pageError) {
-      console.log(`✅ Scrape successful!`);
+      console.log(`✅ Scrape successful! (original HTTP ${result.status})`);
     } else {
       console.log(`🚨 Scrape failed with status code: ${result.status} ${pageError}`);
     }
 
     const responseBody: any = {
       content: result.content,
-      pageStatusCode: result.status,
+      pageStatusCode: effectiveStatus,
       contentType: result.contentType,
       ...(pageError && { pageError })
     };

@@ -1,15 +1,23 @@
 """
 Shared dependencies for FastAPI routes
 """
-from functools import lru_cache
+from threading import Lock
 from database.db_manager import DatabaseManager
 from config import config
 
+_db_manager: DatabaseManager | None = None
+_db_manager_lock = Lock()
 
-@lru_cache()
 def get_db_manager() -> DatabaseManager:
-    """Get database manager singleton"""
-    return DatabaseManager()
+    """Get a process-wide database manager singleton safely."""
+    global _db_manager
+
+    if _db_manager is None:
+        with _db_manager_lock:
+            if _db_manager is None:
+                _db_manager = DatabaseManager()
+
+    return _db_manager
 
 
 def get_config():

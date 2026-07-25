@@ -114,7 +114,7 @@ export type Meta = {
   id: string;
   url: string;
   rewrittenUrl?: string;
-  options: ScrapeOptions & { skipTlsVerification: boolean };
+  options: ScrapeOptions & { skipTlsVerification: boolean; bypassProxy?: boolean };
   internalOptions: InternalOptions;
   logger: Logger;
   abort: AbortManager;

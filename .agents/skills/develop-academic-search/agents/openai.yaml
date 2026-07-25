@@ -1,0 +1,4 @@
+interface:
+  display_name: "Develop Academic Search"
+  short_description: "Build reliable multi-source literature search"
+  default_prompt: "Use $develop-academic-search to improve the academic literature search package with reproducible tests."

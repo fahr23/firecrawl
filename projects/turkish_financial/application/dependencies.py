@@ -7,6 +7,7 @@ from functools import lru_cache
 from database.db_manager import DatabaseManager
 from infrastructure.repositories.kap_report_repository_impl import KAPReportRepository
 from infrastructure.repositories.sentiment_repository_impl import SentimentRepository
+from infrastructure.services.keyword_sentiment_provider import KeywordSentimentProvider
 from infrastructure.services.sentiment_analyzer_impl import SentimentAnalyzerService
 from utils.llm_analyzer import LocalLLMProvider, OpenAIProvider, GeminiProvider, HuggingFaceLocalProvider
 from application.use_cases.analyze_sentiment_use_case import AnalyzeSentimentUseCase
@@ -38,6 +39,10 @@ def get_sentiment_repository(db_manager: DatabaseManager = None) -> SentimentRep
 def get_sentiment_analyzer_service():
     """Get sentiment analyzer service"""
     provider_type = os.getenv("SENTIMENT_PROVIDER", "huggingface")
+
+    if provider_type == "keyword":
+        logger.info("Using keyword sentiment analysis.")
+        return SentimentAnalyzerService(KeywordSentimentProvider())
 
     if provider_type == "gemini":
         gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")

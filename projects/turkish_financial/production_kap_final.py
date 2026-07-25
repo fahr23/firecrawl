@@ -214,15 +214,15 @@ class ProductionKAPScraper:
                         }
                     else:
                         logger.warning(f"Firecrawl API failed for {url}")
-                        return await self._fallback_scrape_url(url)
+                        return {"success": False, "url": url, "error": "Firecrawl API failed"}
                 
                 except Exception as e:
                     logger.error(f"Firecrawl API error for {url}: {e}")
-                    return await self._fallback_scrape_url(url)
+                    return {"success": False, "url": url, "error": f"Firecrawl API error: {e}"}
             
             # Fallback to direct Playwright service if Firecrawl not available
             else:
-                return await self._fallback_scrape_url(url)
+                return {"success": False, "url": url, "error": "No scraping method available"}
             
         except Exception as e:
             logger.error(f"Scraping failed {url}: {e}")
@@ -323,7 +323,7 @@ class ProductionKAPScraper:
         except Exception as e:
             logger.error(f"Button clicking scrape failed for {url}: {e}")
             # Fallback to simple scrape without clicking
-            return await self._fallback_scrape_url(url)
+            return {"success": False, "url": url, "error": "No scraping method available"}
     
     async def get_pdf_attachments_from_detail(self, detail_url: str) -> list:
         """Extract PDF attachment URLs from disclosure detail page"""
@@ -369,6 +369,7 @@ class ProductionKAPScraper:
         import io
         import aiohttp
         import pdfplumber
+        from config import config
         
         if not pdf_url:
             return {"success": False, "error": "No PDF URL provided"}
@@ -376,9 +377,18 @@ class ProductionKAPScraper:
         try:
             logger.info(f"Fetching PDF: {pdf_url}")
             
+            # Setup proxy if configured
+            proxy_url = config.proxy.get_proxy_string()
+            if proxy_url:
+                logger.info(f"Using proxy for PDF download: {proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url}")
+            
             # Download PDF file directly
             async with aiohttp.ClientSession() as session:
-                async with session.get(pdf_url, timeout=aiohttp.ClientTimeout(total=60)) as response:
+                async with session.get(
+                    pdf_url, 
+                    proxy=proxy_url,
+                    timeout=aiohttp.ClientTimeout(total=60)
+                ) as response:
                     if response.status != 200:
                         logger.warning(f"PDF fetch failed {pdf_url}: {response.status}")
                         return {"success": False, "error": f"Status {response.status}"}

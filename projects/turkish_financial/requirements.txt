@@ -52,6 +52,10 @@ colorlog>=6.8.0
 fastapi>=0.104.1
 uvicorn[standard]>=0.24.0
 
+# YouTube
+yt-dlp>=2024.1.1
+youtube-transcript-api>=0.6.2
+
 # Testing
 pytest>=7.4.3
 pytest-asyncio>=0.21.1

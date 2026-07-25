@@ -45,7 +45,8 @@ class BaseScraper(ABC):
             if value is not None:
                 data[attr] = value
 
-        raw_html = getattr(result, "rawHtml", None)
+        # v2 SDK uses snake_case `raw_html`; v1/dict path uses camelCase `rawHtml`
+        raw_html = getattr(result, "rawHtml", None) or getattr(result, "raw_html", None)
         if raw_html is not None:
             data["rawHtml"] = raw_html
 
@@ -90,6 +91,7 @@ class BaseScraper(ABC):
             "waitFor": "wait_for",
             "onlyMainContent": "only_main_content",
             "skipTLSVerification": "skip_tls_verification",
+            "bypassProxy": "bypass_proxy",
             "removeBase64Images": "remove_base64_images",
             "fastMode": "fast_mode",
             "useMock": "use_mock",
@@ -98,13 +100,51 @@ class BaseScraper(ABC):
             "storeInCache": "store_in_cache",
         }
         for key, value in params.items():
-            if value is None:
+            # bypassProxy is handled by _call_scrape's raw-requests path; the v2 SDK's
+            # scrape() rejects it, so never forward it as a keyword argument.
+            if value is None or key in ("bypassProxy", "bypass_proxy"):
                 continue
             kwargs[mapping.get(key, key)] = value
         return kwargs
 
     def _call_scrape(self, url: str, params: Dict[str, Any]) -> Any:
         """Call the installed Firecrawl scrape method with v2-first compatibility."""
+        # If bypassProxy is set, post the raw JSON payload directly to the Firecrawl API
+        # because the SDK's typed scrape() doesn't expose this custom field.
+        if params.get("bypassProxy"):
+            import requests as _req
+            from firecrawl.v2.types import Document
+            from firecrawl.v2.utils.normalize import normalize_document_input
+
+            api_url = (config.firecrawl.base_url or "http://localhost:3002").rstrip("/")
+            api_key = config.firecrawl.api_key or ""
+            payload: Dict[str, Any] = {"url": url}
+            skip_sdk_fields = {"bypassProxy", "bypass_proxy"}
+            camel = {"waitFor": "waitFor", "onlyMainContent": "onlyMainContent",
+                     "skipTLSVerification": "skipTlsVerification",
+                     "actions": "actions", "formats": "formats",
+                     "timeout": "timeout", "proxy": "proxy",
+                     "mobile": "mobile", "location": "location",
+                     "blockAds": "blockAds"}
+            for k, v in params.items():
+                if k in skip_sdk_fields or v is None:
+                    continue
+                payload[camel.get(k, k)] = v
+            payload["bypassProxy"] = True
+
+            resp = _req.post(
+                f"{api_url}/v2/scrape",
+                json=payload,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                timeout=max((params.get("timeout") or 180000) / 1000 + 10, 30),
+            )
+            if not resp.ok:
+                raise Exception(f"Firecrawl scrape error {resp.status_code}: {resp.text[:200]}")
+            body = resp.json()
+            if not body.get("success"):
+                raise Exception(body.get("error", "Unknown error"))
+            return Document(**normalize_document_input(body.get("data", {})))
+
         scrape = getattr(self.firecrawl, "scrape", None)
         if callable(scrape):
             return scrape(url, **self._build_v2_scrape_kwargs(params))
@@ -158,6 +198,7 @@ class BaseScraper(ABC):
             "onlyMainContent": only_main_content,
             "proxy": proxy,
             "mobile": mobile,
+            "skipTLSVerification": kwargs.pop("skipTLSVerification", True),
             **kwargs,
         }
         if location:
@@ -726,10 +767,13 @@ class BaseScraper(ABC):
         actions: List[Dict[str, Any]],
         formats: Optional[List[str]] = None,
         wait_for: Optional[int] = None,
+        timeout: Optional[int] = None,
         proxy: str = "stealth",
         location: Optional[Dict[str, Any]] = None,
         only_main_content: bool = True,
         mobile: bool = False,
+        skip_tls_verification: bool = True,
+        bypass_proxy: bool = False,
     ) -> Dict[str, Any]:
         """
         Scrape a page after executing browser actions (click, scroll, write, etc.).
@@ -755,14 +799,18 @@ class BaseScraper(ABC):
         """
         formats = formats or ["markdown", "html"]
         wait_for = wait_for or config.firecrawl.wait_for
+        timeout = timeout or config.firecrawl.timeout
 
         scrape_params: Dict[str, Any] = {
             "formats": formats,
             "actions": actions,
             "waitFor": wait_for,
+            "timeout": timeout,
             "onlyMainContent": only_main_content,
             "proxy": proxy,
             "mobile": mobile,
+            "skipTLSVerification": skip_tls_verification,
+            "bypassProxy": bypass_proxy,
         }
         if location:
             scrape_params["location"] = location

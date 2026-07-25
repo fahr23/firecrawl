@@ -15,6 +15,7 @@ error/unavailable envelope (§5).
 """
 import logging
 import os
+from functools import lru_cache
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -83,6 +84,7 @@ def _db_error(detail: str) -> JSONResponse:
     )
 
 
+@lru_cache(maxsize=1)
 def _build_sentiment_analyzer():
     """
     Build a SentimentAnalyzerService from whatever LLM provider is configured.

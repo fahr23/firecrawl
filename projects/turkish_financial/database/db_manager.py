@@ -488,11 +488,27 @@ class DatabaseManager:
                     news_count INTEGER DEFAULT 0,
                     social_score REAL,
                     social_count INTEGER DEFAULT 0,
+                    youtube_score REAL,
+                    youtube_count INTEGER DEFAULT 0,
                     combined_score REAL,
                     computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(ticker, period_date)
                 )
             ''').format(sql.Identifier(self.schema)))
+
+            # Migrate: add youtube columns to existing DBs
+            for col, coldef in [
+                ("youtube_score", "REAL"),
+                ("youtube_count", "INTEGER DEFAULT 0"),
+            ]:
+                cursor.execute(sql.SQL(
+                    "ALTER TABLE {}.aggregated_ticker_sentiment "
+                    "ADD COLUMN IF NOT EXISTS {} {}"
+                ).format(
+                    sql.Identifier(self.schema),
+                    sql.Identifier(col),
+                    sql.SQL(coldef),
+                ))
 
             cursor.execute(sql.SQL('''
                 CREATE INDEX IF NOT EXISTS idx_agg_ticker_sentiment_ticker
@@ -535,6 +551,49 @@ class DatabaseManager:
                     UNIQUE(post_id)
                 )
             ''').format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
+
+            # --- YouTube finance channels — Phase 3 --------------------------
+            # Videos from Turkish finance YouTube channels. Each video may mention
+            # multiple BIST tickers; sentiment is recorded per (video, ticker) pair
+            # and rolled up into youtube_* columns of aggregated_ticker_sentiment.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.youtube_videos (
+                    id SERIAL PRIMARY KEY,
+                    video_id VARCHAR(20) UNIQUE,
+                    channel TEXT,
+                    title TEXT,
+                    url TEXT,
+                    transcript TEXT,
+                    published_at TIMESTAMP,
+                    duration INTEGER,
+                    lang VARCHAR(10),
+                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_youtube_videos_channel_published
+                ON {}.youtube_videos(channel, published_at DESC)
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.youtube_video_sentiment (
+                    id SERIAL PRIMARY KEY,
+                    video_id INTEGER REFERENCES {}.youtube_videos(id) ON DELETE CASCADE,
+                    ticker VARCHAR(20) NOT NULL,
+                    overall_sentiment VARCHAR(20),
+                    sentiment_score REAL DEFAULT 0.0,
+                    confidence REAL DEFAULT 0.0,
+                    analyzer VARCHAR(100),
+                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(video_id, ticker)
+                )
+            ''').format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_youtube_sentiment_ticker
+                ON {}.youtube_video_sentiment(ticker, analyzed_at DESC)
+            ''').format(sql.Identifier(self.schema)))
 
             conn.commit()
             logger.info("Database tables created/verified")
@@ -987,7 +1046,8 @@ class DatabaseManager:
         try:
             cursor = conn.cursor()
             cols = ["ticker", "period_date", "news_score", "news_count",
-                    "social_score", "social_count", "combined_score"]
+                    "social_score", "social_count", "youtube_score", "youtube_count",
+                    "combined_score"]
             row = {c: data.get(c) for c in cols if data.get(c) is not None}
             if not row.get("ticker") or not row.get("period_date"):
                 return False
@@ -1092,8 +1152,87 @@ class DatabaseManager:
         """Fetch the existing daily aggregate row for (ticker, period_date), or None."""
         rows = self.query(
             "SELECT ticker, period_date, news_score, news_count, social_score, "
-            "social_count, combined_score FROM aggregated_ticker_sentiment "
+            "social_count, youtube_score, youtube_count, combined_score "
+            "FROM aggregated_ticker_sentiment "
             "WHERE ticker = %s AND period_date = %s",
             (ticker.strip().upper(), period_date),
         )
         return rows[0] if rows else None
+
+    # ── YouTube video persistence ─────────────────────────────────────────────
+
+    def upsert_youtube_video(self, data: Dict[str, Any]) -> Optional[int]:
+        """
+        Upsert one row into youtube_videos keyed on video_id. Returns the row id.
+
+        ``data`` must contain ``video_id``.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cols = ["video_id", "channel", "title", "url", "transcript",
+                    "published_at", "duration", "lang"]
+            row = {c: data.get(c) for c in cols if data.get(c) is not None}
+            if not row.get("video_id"):
+                return None
+
+            set_clause = sql.SQL(", ").join(
+                sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
+                for k in row if k != "video_id"
+            )
+            q = sql.SQL(
+                "INSERT INTO {schema}.youtube_videos ({cols}) VALUES ({vals}) "
+                "ON CONFLICT (video_id) DO UPDATE SET {set} RETURNING id"
+            ).format(
+                schema=sql.Identifier(self.schema),
+                cols=sql.SQL(", ").join(sql.Identifier(k) for k in row),
+                vals=sql.SQL(", ").join(sql.Placeholder() * len(row)),
+                set=set_clause,
+            )
+            cursor.execute(q, list(row.values()))
+            result = cursor.fetchone()
+            conn.commit()
+            return result[0] if result else None
+        except Exception as e:
+            logger.error(f"upsert_youtube_video failed for {data.get('video_id')}: {e}")
+            conn.rollback()
+            return None
+        finally:
+            self.return_connection(conn)
+
+    def upsert_youtube_video_sentiment(
+        self, video_db_id: int, ticker: str, data: Dict[str, Any]
+    ) -> bool:
+        """Upsert the sentiment row for a (video, ticker) pair."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            row: Dict[str, Any] = {"video_id": video_db_id, "ticker": ticker.strip().upper()}
+            for col in ("overall_sentiment", "sentiment_score", "confidence", "analyzer"):
+                if data.get(col) is not None:
+                    row[col] = data[col]
+
+            set_clause = sql.SQL(", ").join(
+                sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
+                for k in row if k not in ("video_id", "ticker")
+            )
+            q = sql.SQL(
+                "INSERT INTO {schema}.youtube_video_sentiment ({cols}) VALUES ({vals}) "
+                "ON CONFLICT (video_id, ticker) DO UPDATE SET {set}"
+            ).format(
+                schema=sql.Identifier(self.schema),
+                cols=sql.SQL(", ").join(sql.Identifier(k) for k in row),
+                vals=sql.SQL(", ").join(sql.Placeholder() * len(row)),
+                set=set_clause,
+            )
+            cursor.execute(q, list(row.values()))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(
+                f"upsert_youtube_video_sentiment failed for video {video_db_id}/{ticker}: {e}"
+            )
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)

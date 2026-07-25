@@ -718,6 +718,241 @@ console.log("Is collecting now:", sched.is_running);
 
 ---
 
+## 9. YouTube channel sentiment
+
+Sentiment derived from Turkish finance YouTube channels (e.g. `@bistyatirimcipsikolojisi`).
+Videos are discovered via yt-dlp, transcripts fetched via youtube-transcript-api, and each
+video is scored **per BIST ticker mentioned** — so one video can contribute to multiple tickers.
+Results feed the same `aggregated_ticker_sentiment` rollup as news and social sentiment.
+
+The `combined-sentiment` endpoint already blends YouTube into its score automatically once
+you collect it.
+
+### 9a. Trigger a collection run
+
+```bash
+curl -s -X POST "http://localhost:8000/api/external/v1/youtube-sentiment/collect" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "channels": ["https://www.youtube.com/@bistyatirimcipsikolojisi/videos"],
+    "days_back": 7,
+    "limit_per_channel": 50
+  }'
+```
+
+```json
+{
+  "contract_version": "1.0",
+  "success": true,
+  "scraped": 12,
+  "analyzed": 34,
+  "saved": 34,
+  "aggregated_tickers": 8,
+  "by_channel": {
+    "https://www.youtube.com/@bistyatirimcipsikolojisi/videos": 12
+  }
+}
+```
+
+| Field | Notes |
+|-------|-------|
+| `scraped` | Videos fetched that had a transcript |
+| `analyzed` | Sentiment calls made (≥ `scraped` because each video can mention many tickers) |
+| `saved` | Per-(video, ticker) sentiment rows persisted |
+| `aggregated_tickers` | Daily rollup rows updated |
+| `by_channel` | Video count per channel URL |
+
+When `channels` is omitted the service uses its configured seed list
+(`YOUTUBE_CHANNELS` env var, defaulting to `@bistyatirimcipsikolojisi`).
+
+### 9b. Latest YouTube sentiment for a ticker
+
+```bash
+curl -s "http://localhost:8000/api/external/v1/youtube-sentiment/THYAO?market=bist"
+```
+
+```json
+{
+  "contract_version": "1.0",
+  "instrument": "THYAO",
+  "market": "bist",
+  "kind": "sentiment",
+  "as_of": "2026-06-29T00:00:00Z",
+  "provider": "youtube-scraper",
+  "source": "external-db",
+  "freshness_seconds": 7200,
+  "status": "ok",
+  "payload": {
+    "overall_sentiment": "positive",
+    "score": 0.62,
+    "confidence": 0.62,
+    "analyzer": "youtube-scraper",
+    "sample_size": 4
+  }
+}
+```
+
+`sample_size` is the number of (video, ticker) sentiment rows that fed the daily aggregate.
+
+### 9c. YouTube sentiment history
+
+```bash
+curl -s "http://localhost:8000/api/external/v1/youtube-sentiment/THYAO/history?market=bist&from=2026-06-01&to=2026-06-30&limit=30"
+```
+
+Response shape is identical to `/sentiment/{ticker}/history` — cursor-paginated, newest-first.
+
+### 9d. Schedule automatic collection
+
+```bash
+# Read current schedule
+curl "http://localhost:8000/api/external/v1/youtube-sentiment/schedule"
+
+# Switch to hourly auto-collect
+curl -s -X POST "http://localhost:8000/api/external/v1/youtube-sentiment/schedule" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "interval",
+    "interval_minutes": 60,
+    "channels": ["https://www.youtube.com/@bistyatirimcipsikolojisi/videos"],
+    "days_back": 7,
+    "limit_per_channel": 50
+  }'
+
+# Switch back to manual
+curl -s -X POST "http://localhost:8000/api/external/v1/youtube-sentiment/schedule" \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "manual"}'
+```
+
+Schedule body parameters:
+
+| Field | Type | Default | Notes |
+|-------|------|---------|-------|
+| `mode` | `"manual"` \| `"interval"` | required | switches immediately |
+| `interval_minutes` | int 5–1440 | `60` | ignored in manual mode |
+| `channels` | list[str] | seed list | channel URLs to scrape |
+| `days_back` | int 1–30 | `7` | look-back window per run |
+| `limit_per_channel` | int 1–200 | `50` | max videos per channel |
+
+### Python example
+
+```python
+import requests
+
+BASE = "http://localhost:8000/api/external/v1"
+
+def collect_youtube(channels=None, days_back=7):
+    payload = {"days_back": days_back, "limit_per_channel": 50}
+    if channels:
+        payload["channels"] = channels
+    r = requests.post(f"{BASE}/youtube-sentiment/collect", json=payload)
+    r.raise_for_status()
+    return r.json()
+
+def get_youtube_sentiment(ticker: str) -> dict | None:
+    r = requests.get(f"{BASE}/youtube-sentiment/{ticker}", params={"market": "bist"})
+    r.raise_for_status()
+    envelope = r.json()
+    return envelope["payload"] if envelope["status"] == "ok" else None
+
+def youtube_sentiment_history(ticker: str, from_date: str, to_date: str) -> list[dict]:
+    params = {"market": "bist", "from": from_date, "to": to_date, "limit": 100}
+    items = []
+    while True:
+        r = requests.get(f"{BASE}/youtube-sentiment/{ticker}/history", params=params)
+        r.raise_for_status()
+        body = r.json()
+        items.extend(body.get("items", []))
+        if not body.get("next_cursor"):
+            break
+        params["cursor"] = body["next_cursor"]
+    return items
+
+def set_youtube_schedule(mode="interval", every_minutes=60, channels=None, days_back=7):
+    payload = {"mode": mode, "interval_minutes": every_minutes, "days_back": days_back}
+    if channels:
+        payload["channels"] = channels
+    r = requests.post(f"{BASE}/youtube-sentiment/schedule", json=payload)
+    r.raise_for_status()
+    return r.json()
+
+
+# --- Usage examples ---
+
+# One-shot collection from the default seed channel
+result = collect_youtube(days_back=7)
+print(f"Scraped {result['scraped']} videos → {result['aggregated_tickers']} ticker-days updated")
+
+# Collect from a specific channel
+result = collect_youtube(
+    channels=["https://www.youtube.com/@bistyatirimcipsikolojisi/videos"],
+    days_back=14,
+)
+
+# Latest YouTube-derived sentiment for THYAO
+yt = get_youtube_sentiment("THYAO")
+if yt:
+    print(f"THYAO YouTube: {yt['overall_sentiment']} score={yt['score']:+.2f}")
+
+# Full YouTube history for the month
+history = youtube_sentiment_history("THYAO", "2026-06-01", "2026-06-30")
+for point in history:
+    print(f"  {point['as_of']}: score={point['payload']['score']:+.2f}")
+
+# Schedule hourly auto-collection
+set_youtube_schedule(mode="interval", every_minutes=60, days_back=7)
+```
+
+### TypeScript example
+
+```typescript
+const BASE = "http://localhost:8000/api/external/v1";
+
+async function collectYouTube(channels?: string[], daysBack = 7) {
+  const res = await fetch(`${BASE}/youtube-sentiment/collect`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channels, days_back: daysBack, limit_per_channel: 50 }),
+  });
+  return res.json();
+}
+
+async function getYouTubeSentiment(ticker: string) {
+  const res = await fetch(`${BASE}/youtube-sentiment/${ticker}?market=bist`);
+  const env = await res.json();
+  return env.status === "ok" ? env.payload : null;
+}
+
+async function setYouTubeSchedule(
+  mode: "manual" | "interval",
+  intervalMinutes = 60,
+  channels?: string[],
+) {
+  const res = await fetch(`${BASE}/youtube-sentiment/schedule`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, interval_minutes: intervalMinutes, channels }),
+  });
+  return res.json();
+}
+
+// Usage
+const result = await collectYouTube(
+  ["https://www.youtube.com/@bistyatirimcipsikolojisi/videos"],
+  7,
+);
+console.log(`Scraped ${result.scraped} videos → ${result.aggregated_tickers} ticker-days updated`);
+
+const yt = await getYouTubeSentiment("THYAO");
+if (yt) console.log(`THYAO YouTube: ${yt.overall_sentiment} score=${yt.score}`);
+
+// Hourly auto-collection
+await setYouTubeSchedule("interval", 60);
+```
+
+---
+
 ## Common patterns
 
 **Is the service fresh?**

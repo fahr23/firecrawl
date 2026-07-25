@@ -70,9 +70,53 @@ class LoggingConfig(BaseModel):
     )
 
 
+class ProxyConfig(BaseModel):
+    """Proxy configuration for direct requests"""
+    use_proxy: bool = Field(default_factory=lambda: os.getenv("USE_PROXY", "false").lower() == "true")
+    proxy_url: Optional[str] = Field(default_factory=lambda: os.getenv("APP_PROXY_URL"))
+    proxy_username: Optional[str] = Field(default_factory=lambda: os.getenv("APP_PROXY_USERNAME"))
+    proxy_password: Optional[str] = Field(default_factory=lambda: os.getenv("APP_PROXY_PASSWORD"))
+    # Pluggable backend selector (see infrastructure/proxy/providers.py):
+    # "scraperapi" (default when use_proxy), "direct", or "firecrawl" (future).
+    provider: Optional[str] = Field(default_factory=lambda: os.getenv("PROXY_PROVIDER"))
+    # ScraperAPI per-request options — set these (no code change) when the plan supports
+    # them, e.g. to geo-target Turkey or use residential/premium IPs for protected hosts.
+    scraperapi_country_code: Optional[str] = Field(
+        default_factory=lambda: os.getenv("SCRAPERAPI_COUNTRY_CODE")
+    )
+    scraperapi_premium: bool = Field(
+        default_factory=lambda: os.getenv("SCRAPERAPI_PREMIUM", "false").lower() == "true"
+    )
+    scraperapi_ultra_premium: bool = Field(
+        default_factory=lambda: os.getenv("SCRAPERAPI_ULTRA_PREMIUM", "false").lower() == "true"
+    )
+
+    def get_proxy_string(self) -> Optional[str]:
+        """Get the full proxy string with authentication"""
+        if not self.use_proxy or not self.proxy_url:
+            return None
+        
+        if self.proxy_username and self.proxy_password:
+            # Insert auth into URL, e.g. http://proxy-server.scraperapi.com:8001 -> http://user:pass@proxy-server.scraperapi.com:8001
+            try:
+                protocol, rest = self.proxy_url.split("://", 1)
+                return f"{protocol}://{self.proxy_username}:{self.proxy_password}@{rest}"
+            except ValueError:
+                return self.proxy_url
+        return self.proxy_url
+
+
+class YouTubeConfig(BaseModel):
+    """YouTube channel scraper configuration."""
+    channels: list[str] = Field(default_factory=list)
+    days_back: int = Field(default=7)
+    limit_per_channel: int = Field(default=50)
+    transcript_languages: list[str] = Field(default=["tr", "en"])
+
+
 class Config:
     """Main configuration class"""
-    
+
     def __init__(self):
         self.database = DatabaseConfig(
             host=os.getenv("APP_DB_HOST", "localhost"),
@@ -103,7 +147,24 @@ class Config:
             level=os.getenv("LOG_LEVEL", "INFO"),
             log_file=os.getenv("LOG_FILE", "logs/scraper.log"),
         )
-    
+        
+        self.proxy = ProxyConfig()
+
+        _yt_channels_raw = os.getenv("YOUTUBE_CHANNELS", "")
+        _yt_channels = [c.strip() for c in _yt_channels_raw.split(",") if c.strip()]
+        if not _yt_channels:
+            _yt_channels = [
+                "https://www.youtube.com/@bistyatirimcipsikolojisi/videos",
+            ]
+        self.youtube = YouTubeConfig(
+            channels=_yt_channels,
+            days_back=int(os.getenv("YOUTUBE_DAYS_BACK", "7")),
+            limit_per_channel=int(os.getenv("YOUTUBE_LIMIT_PER_CHANNEL", "50")),
+            transcript_languages=os.getenv(
+                "YOUTUBE_TRANSCRIPT_LANGUAGES", "tr,en"
+            ).split(","),
+        )
+
     def validate(self) -> bool:
         """Validate configuration"""
         # API key is optional for self-hosted instances with base_url

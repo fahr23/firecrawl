@@ -127,7 +127,7 @@ class CollectNewsSentimentUseCase:
         """
         if self._db is None:
             return 0
-        from application.use_cases.collect_social_sentiment_use_case import blend_scores
+        from application.use_cases.collect_social_sentiment_use_case import blend_sources
 
         count = 0
         for (ticker, day), scores in buckets.items():
@@ -136,8 +136,11 @@ class CollectNewsSentimentUseCase:
             news_score = round(sum(scores) / len(scores), 4)
 
             existing = self._db.get_aggregated_ticker_sentiment(ticker, day) or {}
-            social_score = existing.get("social_score")
-            combined = blend_scores(news_score, social_score)
+            combined = blend_sources({
+                "news": news_score,
+                "social": existing.get("social_score"),
+                "youtube": existing.get("youtube_score"),
+            })
 
             ok = self._db.upsert_aggregated_ticker_sentiment(
                 {
