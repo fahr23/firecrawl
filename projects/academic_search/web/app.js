@@ -1,6 +1,7 @@
 const form = document.querySelector("#search-form");
 const queryInput = document.querySelector("#query");
 const categorySelect = document.querySelector("#category");
+const providerSelect = document.querySelector("#providers");
 const statusText = document.querySelector("#status");
 const resultTitle = document.querySelector("#result-title");
 const resultsList = document.querySelector("#results");
@@ -16,8 +17,17 @@ const documentResultTitle = document.querySelector("#document-result-title");
 const documentMeta = document.querySelector("#document-meta");
 const documentMarkdown = document.querySelector("#document-markdown");
 const documentSubmit = documentForm.querySelector("button[type='submit']");
+const projectSelect = document.querySelector("#project-select");
+const newProjectButton = document.querySelector("#new-project");
+const exportProjectButton = document.querySelector("#export-project");
+const projectDialog = document.querySelector("#project-dialog");
+const projectForm = document.querySelector("#project-form");
+const cancelProjectButton = document.querySelector("#cancel-project");
+const historyPanel = document.querySelector("#history-panel");
+const searchHistory = document.querySelector("#search-history");
+const coverage = document.querySelector("#coverage");
 
-const state = { categories: new Map() };
+const state = { categories: new Map(), projects: new Map() };
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -37,6 +47,80 @@ function populateCategories(payload) {
     chip.title = category.description;
     categoryStrip.append(chip);
   }
+}
+
+function applyProviderAvailability(payload) {
+  const clarivate = providerSelect.querySelector("option[value='clarivate']");
+  const enabled = payload.providers?.clarivate === true;
+  clarivate.disabled = !enabled;
+  clarivate.textContent = enabled
+    ? "Web of Science (Clarivate)"
+    : "Web of Science (Clarivate · key required)";
+  if (!enabled && providerSelect.value === "clarivate") {
+    providerSelect.value = "openalex";
+  }
+}
+
+function selectedProjectId() {
+  return projectSelect.value || null;
+}
+
+function applyProjectDefaults(project) {
+  categorySelect.value = project.default_category || "all";
+  providerSelect.value = project.default_providers || "openalex";
+  document.querySelector("#year-min").value = project.default_year_min || "";
+}
+
+function historyItem(search) {
+  const item = element("li", "history-item");
+  const title = element("strong", "", search.query);
+  const detail = element(
+    "span", "",
+    `${search.returned_count} linked result${search.returned_count === 1 ? "" : "s"} · ${search.category} · ${new Date(search.retrieved_at).toLocaleString()}`
+  );
+  item.append(title, detail);
+  return item;
+}
+
+async function refreshHistory() {
+  const projectId = selectedProjectId();
+  searchHistory.replaceChildren();
+  historyPanel.hidden = !projectId;
+  if (!projectId) return;
+  const response = await fetch(`/api/v1/projects/${projectId}/searches`);
+  if (!response.ok) return;
+  const payload = await response.json();
+  for (const search of payload.searches) searchHistory.append(historyItem(search));
+  if (!payload.searches.length) searchHistory.hidden = true;
+  else searchHistory.hidden = false;
+}
+
+async function refreshProjects(preferredId) {
+  const response = await fetch("/api/v1/projects");
+  if (!response.ok) throw new Error("Projects could not be loaded");
+  const payload = await response.json();
+  state.projects = new Map(payload.projects.map((project) => [project.id, project]));
+  const savedId = preferredId || localStorage.getItem("academic-search-current-project");
+  projectSelect.replaceChildren(element("option", "", "No project — temporary search"));
+  projectSelect.firstChild.value = "";
+  for (const project of payload.projects) {
+    const option = element("option", "", project.name);
+    option.value = project.id;
+    projectSelect.append(option);
+  }
+  if (savedId && state.projects.has(savedId)) projectSelect.value = savedId;
+  exportProjectButton.disabled = !selectedProjectId();
+  if (selectedProjectId()) applyProjectDefaults(state.projects.get(selectedProjectId()));
+  await refreshHistory();
+}
+
+function renderCoverage(entries) {
+  coverage.replaceChildren();
+  for (const entry of entries || []) {
+    const item = element("span", `coverage-item ${entry.status}`, `${entry.provider}: ${entry.status === "responded" ? "responded" : "no results / unavailable"}`);
+    coverage.append(item);
+  }
+  coverage.hidden = !entries?.length;
 }
 
 function paperCard(paper) {
@@ -75,6 +159,7 @@ async function runSearch() {
   for (const [key, value] of formData.entries()) {
     if (String(value).trim()) params.set(key, value);
   }
+  if (selectedProjectId()) params.set("project_id", selectedProjectId());
 
   resultsSection.setAttribute("aria-busy", "true");
   submitButton.disabled = true;
@@ -95,6 +180,7 @@ async function runSearch() {
     statusText.textContent =
       `${payload.returned} linked result${payload.returned === 1 ? "" : "s"} · ` +
       `${payload.sources_responded.join(", ") || "No source responded"}`;
+    renderCoverage(payload.provider_coverage);
 
     for (const paper of payload.results) {
       resultsList.append(paperCard(paper));
@@ -104,6 +190,7 @@ async function runSearch() {
       emptyState.textContent =
         "No linked papers matched this query and category. Try All fields, another source, or a broader query.";
     }
+    if (payload.project_id) await refreshProjects(payload.project_id);
   } catch (error) {
     statusText.textContent = "Search unavailable";
     emptyState.hidden = false;
@@ -155,9 +242,57 @@ documentForm.addEventListener("submit", async (event) => {
   }
 });
 
-fetch("/api/v1/categories")
-  .then((response) => response.json())
-  .then(populateCategories)
+projectSelect.addEventListener("change", async () => {
+  const projectId = selectedProjectId();
+  if (projectId) {
+    localStorage.setItem("academic-search-current-project", projectId);
+    applyProjectDefaults(state.projects.get(projectId));
+  } else {
+    localStorage.removeItem("academic-search-current-project");
+  }
+  exportProjectButton.disabled = !projectId;
+  await refreshHistory();
+});
+
+newProjectButton.addEventListener("click", () => projectDialog.showModal());
+cancelProjectButton.addEventListener("click", () => projectDialog.close());
+projectForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formData = new FormData(projectForm);
+  const response = await fetch("/api/v1/projects", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      name: formData.get("name"),
+      research_question: formData.get("research_question"),
+      default_category: categorySelect.value,
+      default_providers: providerSelect.value,
+      default_year_min: document.querySelector("#year-min").value || null,
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok) {
+    statusText.textContent = payload.detail || "Project could not be created";
+    return;
+  }
+  projectForm.reset();
+  projectDialog.close();
+  await refreshProjects(payload.id);
+});
+
+exportProjectButton.addEventListener("click", () => {
+  if (selectedProjectId()) window.location.href = `/api/v1/projects/${selectedProjectId()}/evidence?format=markdown`;
+});
+
+Promise.all([
+  fetch("/api/v1/categories").then((response) => response.json()),
+  fetch("/api/v1/health").then((response) => response.json()),
+])
+  .then(async ([categories, health]) => {
+    populateCategories(categories);
+    applyProviderAvailability(health);
+    await refreshProjects();
+  })
   .catch(() => {
     statusText.textContent = "Categories could not be loaded.";
   });

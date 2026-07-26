@@ -247,6 +247,7 @@ services:
       SERPER_API_KEY: ${SERPER_API_KEY:-}
       CLARIVATE_API_KEY: ${CLARIVATE_API_KEY:-}
       ACADEMIC_CORS_ORIGINS: ${ACADEMIC_CORS_ORIGINS:-*}
+      ACADEMIC_PROJECT_DB_PATH: /data/projects.db
       PYTHONPATH: /workspace/projects
       PYTHONUNBUFFERED: "1"
     depends_on:
@@ -259,6 +260,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./projects/academic_search:/workspace/projects/academic_search
+      - academic-project-data:/data
     healthcheck:
       test:
         - CMD
@@ -395,3 +397,4 @@ networks:
 volumes:
   fdb-data:
   fdb-cluster-file:
+  academic-project-data:

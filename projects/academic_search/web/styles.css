@@ -71,6 +71,44 @@ h1 {
   box-shadow: var(--shadow);
 }
 
+.project-panel {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 28px;
+  margin-top: 34px;
+  padding: 22px 26px;
+  border: 1px solid #bfd6ca;
+  border-radius: 20px;
+  background: rgba(225, 238, 231, 0.54);
+}
+
+.project-panel h2 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.55rem;
+  font-weight: 500;
+}
+
+.project-panel p:not(.eyebrow) {
+  max-width: 610px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.project-controls { min-width: min(100%, 330px); }
+.project-actions { display: flex; gap: 10px; margin-top: 10px; }
+.project-actions button { min-width: 0; flex: 1; }
+
+button.secondary {
+  border-color: var(--line);
+  color: var(--accent-dark);
+  background: transparent;
+}
+
+button.secondary:hover { background: var(--tag); }
+
 .document-panel {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.8fr);
@@ -264,6 +302,42 @@ button:disabled {
   list-style: none;
 }
 
+.coverage { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 4px; }
+.coverage-item {
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+.coverage-item.responded { border-color: #9fc9b3; color: var(--accent-dark); background: var(--tag); }
+
+.history-panel { margin-top: 46px; }
+.search-history { display: grid; gap: 8px; padding: 0; list-style: none; }
+.history-item {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.history-item span { color: var(--muted); font-size: 0.86rem; }
+
+dialog {
+  width: min(560px, calc(100% - 32px));
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+dialog::backdrop { background: rgba(22, 34, 29, 0.4); }
+dialog form { display: grid; gap: 16px; }
+dialog h2 { margin: -8px 0 0; font-family: Georgia, "Times New Roman", serif; font-weight: 500; }
+textarea { min-height: 110px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; font: inherit; resize: vertical; }
+.dialog-actions { display: flex; justify-content: end; gap: 10px; }
+
 .paper {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -334,9 +408,12 @@ button:disabled {
 
   .search-row,
   .filters,
-  .document-panel {
+  .document-panel,
+  .project-panel {
     grid-template-columns: 1fr;
   }
+
+  .project-panel { display: grid; align-items: stretch; }
 
   button {
     width: 100%;

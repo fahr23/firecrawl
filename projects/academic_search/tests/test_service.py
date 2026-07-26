@@ -4,6 +4,7 @@ import requests
 from fastapi.testclient import TestClient
 
 from academic_search.models import Article, SearchResult
+from academic_search.project_store import ProjectStore
 from academic_search.service import create_app, get_search_engine
 
 
@@ -59,7 +60,7 @@ class FakeEngine:
 
 def make_client():
     engine = FakeEngine()
-    app = create_app()
+    app = create_app(ProjectStore(":memory:"))
     app.dependency_overrides[get_search_engine] = lambda: engine
     return TestClient(app), engine
 
@@ -73,9 +74,11 @@ def test_ui_and_assets_are_served():
     assert page.status_code == 200
     assert "Find papers. Keep the trail." in page.text
     assert "Parse document" in page.text
+    assert "Web of Science" in page.text
     assert script.status_code == 200
     assert "/api/v1/search" in script.text
     assert "/api/v1/documents/parse" in script.text
+    assert "/api/v1/health" in script.text
 
 
 def test_search_returns_only_safe_linked_results_with_derived_category():
@@ -118,6 +121,48 @@ def test_search_rejects_unknown_category_and_inverted_year_range():
     assert bad_years.status_code == 422
 
 
+def test_project_keeps_search_defaults_history_and_exportable_evidence():
+    client, _ = make_client()
+    created = client.post(
+        "/api/v1/projects",
+        json={
+            "name": "Carbon essay",
+            "research_question": "Which interventions reduce emissions?",
+            "default_providers": "openalex",
+        },
+    )
+    assert created.status_code == 201
+    project = created.json()
+
+    searched = client.get(
+        "/api/v1/search",
+        params={
+            "q": "machine learning", "project_id": project["id"],
+            "category": "computer-science", "providers": "openalex", "year_min": 2024,
+        },
+    )
+    assert searched.status_code == 200
+    payload = searched.json()
+    assert payload["project_id"] == project["id"]
+    assert payload["provider_coverage"] == [{"provider": "OpenAlex", "status": "responded"}]
+
+    history = client.get(f"/api/v1/projects/{project['id']}/searches").json()["searches"]
+    assert history[0]["query"] == "machine learning"
+    assert history[0]["year_min"] == 2024
+    assert client.get(f"/api/v1/projects/{project['id']}").json()["default_category"] == "computer-science"
+
+    evidence = client.get(f"/api/v1/projects/{project['id']}/evidence?format=markdown")
+    assert evidence.status_code == 200
+    assert "Which interventions reduce emissions?" in evidence.text
+    assert "https://example.org/paper" in evidence.text
+
+
+def test_project_search_rejects_an_unknown_project():
+    client, _ = make_client()
+    response = client.get("/api/v1/search", params={"q": "energy", "project_id": "missing"})
+    assert response.status_code == 404
+
+
 def test_categories_expose_derived_provenance():
     client, _ = make_client()
 
@@ -127,6 +172,34 @@ def test_categories_expose_derived_provenance():
     payload = response.json()
     assert payload["category_provenance"] == "derived:keyword-rules-v1"
     assert any(item["id"] == "economics-finance" for item in payload["categories"])
+
+
+def test_health_reports_each_provider_availability():
+    client, _ = make_client()
+
+    response = client.get("/api/v1/health")
+
+    assert response.status_code == 200
+    providers = response.json()["providers"]
+    assert set(providers) == {
+        "openalex", "semantic-scholar", "arxiv", "firecrawl-research",
+        "science-direct", "scopus", "google-scholar", "clarivate",
+    }
+    assert providers["openalex"] is True
+    assert providers["semantic-scholar"] is True
+    assert providers["arxiv"] is True
+    assert all(isinstance(value, bool) for value in providers.values())
+
+
+def test_provider_availability_matches_web_of_science_to_clarivate():
+    class WebOfScienceEngine:
+        _searchers = [
+            type("WebOfScience", (), {"source_name": "Web of Science", "is_available": True})()
+        ]
+
+    from academic_search.service import _provider_availability
+
+    assert _provider_availability(WebOfScienceEngine())["clarivate"] is True
 
 
 def test_document_parse_forwards_supported_upload_without_persisting_it():

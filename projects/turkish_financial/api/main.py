@@ -6,9 +6,11 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.routers import scrapers, reports, health, sentiment, external_analysis, news_sentiment
@@ -124,6 +126,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+WEB_DIR = Path(__file__).resolve().parents[1] / "web"
+app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
+
 # Include routers
 app.include_router(health.router)
 app.include_router(scrapers.router)
@@ -140,7 +145,7 @@ app.include_router(youtube_sentiment.router, prefix="/api/external/v1")
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Machine-readable service index retained for existing clients."""
     return {
         "message": "Turkish Financial Data Scraper API with AI Sentiment Analysis",
         "version": "1.2.0",
@@ -150,6 +155,12 @@ async def root():
         "sentiment_api": "/api/v1/sentiment/",
         "documentation": "See API_DOCUMENTATION.md for detailed usage guide"
     }
+
+
+@app.get("/ui", include_in_schema=False)
+async def financial_ui():
+    """Serve the read-only external-analysis dashboard."""
+    return FileResponse(WEB_DIR / "index.html")
 
 
 @app.exception_handler(Exception)

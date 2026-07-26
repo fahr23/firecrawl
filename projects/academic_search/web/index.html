@@ -19,6 +19,26 @@
         </p>
       </header>
 
+      <section class="project-panel" aria-label="Research project">
+        <div>
+          <p class="eyebrow">Essay workspace</p>
+          <h2>Keep each research question separate</h2>
+          <p>Project searches retain their exact query, filters, responding sources, and linked result snapshot.</p>
+        </div>
+        <div class="project-controls">
+          <label>
+            Current project
+            <select id="project-select">
+              <option value="">No project — temporary search</option>
+            </select>
+          </label>
+          <div class="project-actions">
+            <button id="new-project" type="button">New project</button>
+            <button id="export-project" type="button" class="secondary" disabled>Export evidence</button>
+          </div>
+        </div>
+      </section>
+
       <section class="search-panel" aria-labelledby="search-title">
         <h2 id="search-title" class="sr-only">Search papers</h2>
         <form id="search-form">
@@ -50,6 +70,7 @@
                 <option value="openalex">OpenAlex</option>
                 <option value="semantic-scholar">Semantic Scholar</option>
                 <option value="arxiv">arXiv</option>
+                <option value="clarivate" disabled>Web of Science (Clarivate · key required)</option>
                 <option value="openalex,semantic-scholar,arxiv">All free sources</option>
               </select>
             </label>
@@ -104,12 +125,33 @@
           <a class="api-link" href="/docs">API docs</a>
         </div>
         <div id="category-strip" class="category-strip" aria-label="Available categories"></div>
+        <div id="coverage" class="coverage" hidden></div>
         <ol id="results" class="results"></ol>
         <div id="empty-state" class="empty-state">
           Results include their source, DOI link when available, and a transparent
           keyword-derived category.
         </div>
       </section>
+
+      <section id="history-panel" class="history-panel" hidden aria-labelledby="history-title">
+        <div class="results-heading">
+          <div>
+            <p class="status">Saved for the selected project</p>
+            <h2 id="history-title">Recent searches</h2>
+          </div>
+        </div>
+        <ol id="search-history" class="search-history"></ol>
+      </section>
     </main>
+
+    <dialog id="project-dialog">
+      <form id="project-form" method="dialog">
+        <p class="eyebrow">New essay project</p>
+        <h2>Create a focused search space</h2>
+        <label>Project name <input id="project-name" name="name" maxlength="160" required placeholder="e.g. Carbon mitigation essay"></label>
+        <label>Research question (optional) <textarea id="project-question" name="research_question" maxlength="1000" placeholder="What are you trying to establish?"></textarea></label>
+        <div class="dialog-actions"><button value="cancel" type="button" id="cancel-project" class="secondary">Cancel</button><button type="submit">Create project</button></div>
+      </form>
+    </dialog>
   </body>
 </html>

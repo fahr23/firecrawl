@@ -13,6 +13,7 @@ The `external_analysis` router is mounted on a minimal app so the heavy legacy
 `sentiment` router (openai / huggingface imports) is not pulled in.
 """
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -110,6 +111,16 @@ def make_client(db: FakeDB) -> TestClient:
     app.include_router(external_analysis.router, prefix="/api/external/v1")
     app.dependency_overrides[get_db_manager] = lambda: db
     return TestClient(app)
+
+
+def test_finance_dashboard_assets_describe_the_external_contract_without_advice():
+    web_dir = Path(__file__).resolve().parents[2] / "web"
+    page = (web_dir / "index.html").read_text()
+    script = (web_dir / "app.js").read_text()
+
+    assert "not investment advice" in page
+    assert "/api/external/v1/capabilities" in script
+    assert "/api/external/v1/${selectedKind}" in script
 
 
 def test_capabilities_only_advertises_the_confirmed_local_parse_route():

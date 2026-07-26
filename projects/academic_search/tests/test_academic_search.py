@@ -22,6 +22,7 @@ from academic_search import (
     JSONExporter, MarkdownExporter, CSVExporter,
     BaseSearcher, BaseAbstractEnricher
 )
+from academic_search.providers import ClarivateSearcher
 
 
 class TestArticle(unittest.TestCase):
@@ -224,6 +225,18 @@ class TestCreateEngine(unittest.TestCase):
         """Test creating engine with Elsevier key."""
         engine = create_engine(elsevier_api_key="test-key")
         self.assertIn("Scopus API", engine.available_sources)
+
+
+class TestClarivateProvider(unittest.TestCase):
+    """Validate request options without making live licensed-data calls."""
+
+    def test_uses_starter_api_sort_direction_format(self):
+        config = Config(api=APIConfig(clarivate_api_key="test-key"))
+        searcher = ClarivateSearcher(config)
+
+        self.assertEqual(searcher._get_sort_field("relevance"), "RS D")
+        self.assertEqual(searcher._get_sort_field("citations"), "TC D")
+        self.assertEqual(searcher._get_sort_field("year_desc"), "PY D")
 
 
 class TestCustomComponents(unittest.TestCase):

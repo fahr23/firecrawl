@@ -1296,22 +1296,19 @@ class ClarivateSearcher(BaseSearcher):
         Map sort_by parameter to WoS sortField value.
         
         Options:
-        - RS: Relevance Score (default)
-        - TC+D: Times Cited Descending (most cited first)
-        - PY+D: Publication Year Descending (newest first)
-        - PY+A: Publication Year Ascending (oldest first)
-        - LD+D: Load Date Descending
+        The Starter API expects ``TAG DIRECTION`` (for example ``PY D``),
+        not the older ``TAG+D`` notation.
         """
         sort_map = {
-            'relevance': 'RS',
-            'citations': 'TC+D',
-            'year_desc': 'PY+D',
-            'year_asc': 'PY+A',
-            'newest': 'PY+D',
-            'oldest': 'PY+A',
-            'most_cited': 'TC+D'
+            'relevance': 'RS D',
+            'citations': 'TC D',
+            'year_desc': 'PY D',
+            'year_asc': 'PY A',
+            'newest': 'PY D',
+            'oldest': 'PY A',
+            'most_cited': 'TC D'
         }
-        return sort_map.get(sort_by.lower(), 'RS')
+        return sort_map.get(sort_by.lower(), 'RS D')
     
     def get_document_by_uid(self, uid: str, detail: str = "full") -> Optional[Article]:
         """

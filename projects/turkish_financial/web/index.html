@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Read-only Turkish financial data and sentiment dashboard.">
+    <title>BIST Research Console</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <p class="eyebrow">External analysis · BIST</p>
+        <h1>Financial evidence, clearly labelled.</h1>
+        <p class="intro">Inspect available sentiment and KAP fundamentals from the external service. This is informational research output, not investment advice.</p>
+      </header>
+
+      <section class="status-grid" aria-live="polite">
+        <article class="status-card"><span>Service</span><strong id="service-status">Checking…</strong></article>
+        <article class="status-card"><span>Firecrawl</span><strong id="firecrawl-status">Checking…</strong></article>
+        <a class="docs-link" href="/docs">API documentation ↗</a>
+      </section>
+
+      <section class="lookup" aria-labelledby="lookup-title">
+        <div>
+          <p class="eyebrow">Lookup</p>
+          <h2 id="lookup-title">Company signal</h2>
+        </div>
+        <form id="lookup-form">
+          <label>Ticker<input id="instrument" name="instrument" value="THYAO" maxlength="12" pattern="[A-Za-z0-9.]{1,12}" required></label>
+          <label>Dataset
+            <select id="kind" name="kind">
+              <option value="sentiment">Sentiment</option>
+              <option value="fundamental">KAP fundamentals</option>
+            </select>
+          </label>
+          <button type="submit">Load data</button>
+        </form>
+        <p id="lookup-status" class="note">Fundamental data may require an on-demand KAP retrieval when no cached record exists.</p>
+      </section>
+
+      <section id="result" class="result" hidden aria-live="polite">
+        <div class="result-heading"><div><p id="result-kicker" class="eyebrow"></p><h2 id="result-title"></h2></div><span id="result-status" class="pill"></span></div>
+        <dl id="summary" class="summary"></dl>
+        <details><summary>Source response</summary><pre id="raw-response"></pre></details>
+      </section>
+    </main>
+  </body>
+</html>
