@@ -21,10 +21,13 @@ Snapshot inspected 2026-07-25. Re-check status-sensitive details before relying 
 - Playwright renderer: host port `3001`, container port `3000`.
 - Finance FastAPI service: host/container port `8000` when its current Compose service
   is retained.
+- Academic FastAPI/UI service: host/container port `8010` by default.
 - PostgreSQL, Redis, RabbitMQ, FoundationDB, and HTML-to-Markdown support the local
   Firecrawl/finance topology.
 
-Inspect Compose rather than assuming that publishing a port starts an application.
+Both application projects are container-first. Inspect Compose rather than assuming
+that publishing a port starts an application. Inside project containers, reach
+Firecrawl through `http://api:3002`; never substitute host `localhost`.
 
 ## Fork-specific behavior currently present in the dirty worktree
 

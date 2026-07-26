@@ -1,5 +1,12 @@
 # Firecrawl testing and upstream synchronization
 
+## Container integration
+
+Run `docker compose config --quiet` after Compose changes. Build the affected project
+service and execute its focused tests in the container that will run it. Host tests are
+fast feedback only; Compose service DNS, bind mounts, Python/Node versions, and installed
+dependencies define integration behavior.
+
 ## API test rules
 
 Follow root `AGENTS.md` as the controlling instruction:

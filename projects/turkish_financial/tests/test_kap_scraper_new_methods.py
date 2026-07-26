@@ -16,7 +16,7 @@ import importlib.util
 import os
 import sys
 import types
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,6 +25,9 @@ import pytest
 # ---------------------------------------------------------------------------
 # Stubs for everything kap_scraper.py imports at module level
 # ---------------------------------------------------------------------------
+
+_MISSING_MODULE = object()
+
 
 def _inject_stubs():
     """Put lightweight stubs into sys.modules before loading kap_scraper."""
@@ -66,13 +69,17 @@ def _inject_stubs():
     stubs["utils.llm_analyzer"].OpenAIProvider = MagicMock()
     stubs["utils.llm_analyzer"].GeminiProvider = MagicMock()
 
+    originals = {
+        name: sys.modules.get(name, _MISSING_MODULE)
+        for name in stubs
+    }
     for name, mod in stubs.items():
-        sys.modules.setdefault(name, mod)
+        sys.modules[name] = mod
 
-    return FakeBaseScraper, _FakePath
+    return FakeBaseScraper, _FakePath, originals
 
 
-_FakeBase, _FakePath = _inject_stubs()
+_FakeBase, _FakePath, _ORIGINAL_MODULES = _inject_stubs()
 
 _SCRAPER_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "scrapers", "kap_scraper.py")
@@ -87,7 +94,15 @@ def _load_scraper_module():
     return mod
 
 
-_kap_mod = _load_scraper_module()
+try:
+    _kap_mod = _load_scraper_module()
+finally:
+    for _name, _original in _ORIGINAL_MODULES.items():
+        if _original is _MISSING_MODULE:
+            sys.modules.pop(_name, None)
+        else:
+            sys.modules[_name] = _original
+
 KAPScraper = _kap_mod.KAPScraper
 
 
@@ -352,14 +367,14 @@ SAMPLE_NEWS_API = [
         "id": "n001",
         "title": "SPK Bülten 2026-06-10",
         "content": "SPK yönetim kurulu kararları açıklandı.",
-        "publishDate": "2026-06-10T10:00:00",
+        "publishDate": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
         "type": "SPK",
     },
     {
         "id": "n002",
         "title": "MKK Duyurusu",
         "content": "Merkezi Kayıt Kuruluşu yeni hizmet başlattı.",
-        "publishDate": "2026-06-11T08:00:00",
+        "publishDate": (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
         "type": "MKK",
     },
 ]
@@ -421,7 +436,13 @@ class TestScrapeKapNews:
         scraper.db_manager = db
 
         async def fake_get_json(url, prefer_firecrawl=True):
-            return [{"title": "Unnamed News", "publishDate": "2026-06-10", "type": "KAP"}]
+            return [{
+                "title": "Unnamed News",
+                "publishDate": (
+                    datetime.now(timezone.utc) - timedelta(days=1)
+                ).isoformat(),
+                "type": "KAP",
+            }]
 
         scraper._fetch_kap_api_json = fake_get_json
         run(scraper.scrape_kap_news())

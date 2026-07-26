@@ -10,12 +10,15 @@ Keep generic scraper-runtime work separate from the applications under `projects
 ## Start safely
 
 1. Run `git status --short --branch`, `git remote -v`, and a focused `git diff` before editing.
-2. Preserve all existing changes. Never reset or overwrite a dirty worktree to simplify an
+2. Treat root Docker Compose as the canonical integration runtime for Firecrawl and
+   both project consumers. Validate service DNS, mounts, build contexts, and container
+   environment variables when a change affects either project.
+3. Preserve all existing changes. Never reset or overwrite a dirty worktree to simplify an
    upstream sync.
-3. Read the root `AGENTS.md`.
-4. Read [project-map.md](references/project-map.md) before changing schemas, the
+4. Read the root `AGENTS.md`.
+5. Read [project-map.md](references/project-map.md) before changing schemas, the
    Playwright request contract, Docker topology, or upstream history.
-5. Read [testing-and-sync.md](references/testing-and-sync.md) before implementing API
+6. Read [testing-and-sync.md](references/testing-and-sync.md) before implementing API
    behavior, running the harness, or synchronizing with upstream.
 
 ## Place changes at the correct boundary

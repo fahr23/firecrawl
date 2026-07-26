@@ -37,24 +37,63 @@ class BaseScraper(ABC):
     def _normalize_document(self, result: Any) -> Dict[str, Any]:
         """Normalize Firecrawl document-like responses across SDK versions."""
         if isinstance(result, dict):
-            return dict(result)
+            data = dict(result)
+        else:
+            data = {}
+            for attr in ("html", "markdown", "metadata", "links", "summary", "json", "videos"):
+                value = getattr(result, attr, None)
+                if value is not None:
+                    data[attr] = value
 
-        data: Dict[str, Any] = {}
-        for attr in ("html", "markdown", "metadata", "links", "summary", "json", "videos"):
-            value = getattr(result, attr, None)
-            if value is not None:
-                data[attr] = value
+            # v2 SDK uses snake_case `raw_html`; v1/dict path uses camelCase `rawHtml`
+            raw_html = getattr(result, "rawHtml", None) or getattr(result, "raw_html", None)
+            if raw_html is not None:
+                data["rawHtml"] = raw_html
 
-        # v2 SDK uses snake_case `raw_html`; v1/dict path uses camelCase `rawHtml`
-        raw_html = getattr(result, "rawHtml", None) or getattr(result, "raw_html", None)
-        if raw_html is not None:
-            data["rawHtml"] = raw_html
+            action_results = getattr(result, "actions", None)
+            if action_results is not None:
+                data["action_results"] = action_results
 
-        action_results = getattr(result, "actions", None)
-        if action_results is not None:
-            data["action_results"] = action_results
+        metadata = self._mapping_from_model(data.get("metadata"))
+        if metadata is not None:
+            total_pages = metadata.get("totalPages", metadata.get("total_pages"))
+            num_pages = metadata.get("numPages", metadata.get("num_pages"))
+            if total_pages is not None:
+                metadata["totalPages"] = total_pages
+            if num_pages is not None:
+                metadata["numPages"] = num_pages
+            data["metadata"] = metadata
 
         return data
+
+    @staticmethod
+    def _mapping_from_model(value: Any) -> Optional[Dict[str, Any]]:
+        """Convert dict/Pydantic/dataclass-like SDK values into plain mappings."""
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return dict(value)
+
+        model_dump = getattr(value, "model_dump", None)
+        if callable(model_dump):
+            dumped = model_dump(exclude_none=True)
+            if isinstance(dumped, dict):
+                return dumped
+
+        as_dict = getattr(value, "dict", None)
+        if callable(as_dict):
+            dumped = as_dict(exclude_none=True)
+            if isinstance(dumped, dict):
+                return dumped
+
+        try:
+            return {
+                key: item
+                for key, item in vars(value).items()
+                if not key.startswith("_") and item is not None
+            }
+        except TypeError:
+            return None
 
     def _normalize_links(self, result: Any) -> List[str]:
         """Normalize map() results into a plain list of URLs."""
@@ -97,6 +136,7 @@ class BaseScraper(ABC):
             "useMock": "use_mock",
             "blockAds": "block_ads",
             "maxAge": "max_age",
+            "minAge": "min_age",
             "storeInCache": "store_in_cache",
         }
         for key, value in params.items():
@@ -107,30 +147,53 @@ class BaseScraper(ABC):
             kwargs[mapping.get(key, key)] = value
         return kwargs
 
+    def _build_raw_scrape_payload(
+        self, url: str, params: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Serialize v2 options for the custom bypassProxy HTTP path."""
+        payload: Dict[str, Any] = {"url": url}
+        skip_sdk_fields = {"bypassProxy", "bypass_proxy"}
+        camel = {
+            "waitFor": "waitFor",
+            "wait_for": "waitFor",
+            "onlyMainContent": "onlyMainContent",
+            "only_main_content": "onlyMainContent",
+            "skipTLSVerification": "skipTlsVerification",
+            "skip_tls_verification": "skipTlsVerification",
+            "actions": "actions",
+            "formats": "formats",
+            "timeout": "timeout",
+            "proxy": "proxy",
+            "mobile": "mobile",
+            "location": "location",
+            "blockAds": "blockAds",
+            "block_ads": "blockAds",
+            "maxAge": "maxAge",
+            "max_age": "maxAge",
+            "minAge": "minAge",
+            "min_age": "minAge",
+            "storeInCache": "storeInCache",
+            "store_in_cache": "storeInCache",
+        }
+        for key, value in params.items():
+            if key in skip_sdk_fields or value is None:
+                continue
+            payload[camel.get(key, key)] = value
+        payload["bypassProxy"] = True
+        return payload
+
     def _call_scrape(self, url: str, params: Dict[str, Any]) -> Any:
         """Call the installed Firecrawl scrape method with v2-first compatibility."""
         # If bypassProxy is set, post the raw JSON payload directly to the Firecrawl API
         # because the SDK's typed scrape() doesn't expose this custom field.
-        if params.get("bypassProxy"):
+        if params.get("bypassProxy") or params.get("bypass_proxy"):
             import requests as _req
             from firecrawl.v2.types import Document
             from firecrawl.v2.utils.normalize import normalize_document_input
 
             api_url = (config.firecrawl.base_url or "http://localhost:3002").rstrip("/")
             api_key = config.firecrawl.api_key or ""
-            payload: Dict[str, Any] = {"url": url}
-            skip_sdk_fields = {"bypassProxy", "bypass_proxy"}
-            camel = {"waitFor": "waitFor", "onlyMainContent": "onlyMainContent",
-                     "skipTLSVerification": "skipTlsVerification",
-                     "actions": "actions", "formats": "formats",
-                     "timeout": "timeout", "proxy": "proxy",
-                     "mobile": "mobile", "location": "location",
-                     "blockAds": "blockAds"}
-            for k, v in params.items():
-                if k in skip_sdk_fields or v is None:
-                    continue
-                payload[camel.get(k, k)] = v
-            payload["bypassProxy"] = True
+            payload = self._build_raw_scrape_payload(url, params)
 
             resp = _req.post(
                 f"{api_url}/v2/scrape",
@@ -166,6 +229,9 @@ class BaseScraper(ABC):
         location: Optional[Dict[str, Any]] = None,
         mobile: bool = False,
         include_video: bool = False,
+        max_age: Optional[int] = None,
+        min_age: Optional[int] = None,
+        store_in_cache: Optional[bool] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -180,6 +246,9 @@ class BaseScraper(ABC):
             only_main_content: Strip nav/footer/ads for cleaner output
             location: Geolocation dict, e.g. {"country": "TR"}
             mobile: Emulate a mobile device
+            max_age: Maximum accepted cache age in milliseconds
+            min_age: Require a cached result at least this old; no fresh fallback
+            store_in_cache: Whether Firecrawl may store the result
             **kwargs: Additional Firecrawl parameters
 
         Returns:
@@ -201,6 +270,12 @@ class BaseScraper(ABC):
             "skipTLSVerification": kwargs.pop("skipTLSVerification", True),
             **kwargs,
         }
+        if max_age is not None:
+            params["maxAge"] = max_age
+        if min_age is not None:
+            params["minAge"] = min_age
+        if store_in_cache is not None:
+            params["storeInCache"] = store_in_cache
         if location:
             params["location"] = location
 
@@ -225,6 +300,63 @@ class BaseScraper(ABC):
                 "error": str(e),
                 "scraper": self.__class__.__name__,
             }
+
+    def assess_pdf_completeness(
+        self,
+        document: Any,
+        expected_total_pages: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Assess whether Firecrawl parsed every page of a PDF.
+
+        Firecrawl reports ``numPages`` (parsed pages) and, for supported PDF
+        paths, ``totalPages`` (pages in the source document). Missing or
+        contradictory metadata is reported as unknown rather than guessed.
+        """
+        data = self._normalize_document(document)
+        metadata = data.get("metadata") or {}
+
+        def positive_int(value: Any) -> Optional[int]:
+            try:
+                number = int(value)
+                return number if number > 0 else None
+            except (TypeError, ValueError):
+                return None
+
+        parsed_pages = positive_int(
+            metadata.get("numPages", metadata.get("num_pages"))
+        )
+        reported_total = positive_int(
+            metadata.get("totalPages", metadata.get("total_pages"))
+        )
+        expected_pages = positive_int(expected_total_pages) or reported_total
+
+        result = {
+            "status": "unknown",
+            "complete": None,
+            "parsed_pages": parsed_pages,
+            "total_pages": reported_total,
+            "expected_pages": expected_pages,
+        }
+
+        if parsed_pages is None or expected_pages is None:
+            result["reason"] = "page_metadata_unavailable"
+        elif parsed_pages == expected_pages:
+            result.update(
+                status="complete",
+                complete=True,
+                reason="parsed_page_count_matches_total",
+            )
+        elif parsed_pages < expected_pages:
+            result.update(
+                status="partial",
+                complete=False,
+                reason="parsed_fewer_pages_than_expected",
+            )
+        else:
+            result["reason"] = "parsed_page_count_exceeds_expected"
+
+        return result
     
     async def crawl_website(
         self,

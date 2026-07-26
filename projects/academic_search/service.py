@@ -1,0 +1,384 @@
+"""Persistent HTTP service and UI for the academic-search package."""
+
+from __future__ import annotations
+
+import os
+import json
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlparse
+
+import requests
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from .engine import AcademicSearchEngine
+from .models import Article
+
+
+SERVICE_VERSION = "1.0"
+WEB_DIR = Path(__file__).resolve().parent / "web"
+DOCUMENT_MAX_BYTES = 50 * 1024 * 1024
+SUPPORTED_DOCUMENT_SUFFIXES = {
+    ".html", ".htm", ".pdf", ".docx", ".doc", ".odt", ".rtf", ".xlsx", ".xls",
+}
+
+# Categories are derived labels, not provider-supplied scholarly classifications.
+CATEGORIES: Dict[str, Dict[str, Any]] = {
+    "computer-science": {
+        "label": "Computer science",
+        "description": "AI, software, data, algorithms, and computing systems.",
+        "keywords": (
+            "algorithm", "artificial intelligence", "computer", "computing",
+            "data science", "deep learning", "machine learning", "neural",
+            "software", "information system",
+        ),
+    },
+    "engineering": {
+        "label": "Engineering",
+        "description": "Applied engineering, manufacturing, control, and materials.",
+        "keywords": (
+            "engineering", "manufacturing", "control system", "robot",
+            "materials", "mechanical", "electrical", "civil engineering",
+        ),
+    },
+    "medicine-health": {
+        "label": "Medicine & health",
+        "description": "Clinical research, public health, biology, and care.",
+        "keywords": (
+            "clinical", "disease", "health", "medical", "medicine", "patient",
+            "therapy", "biomedical", "epidemiology", "diagnosis",
+        ),
+    },
+    "economics-finance": {
+        "label": "Economics & finance",
+        "description": "Markets, organizations, policy, accounting, and economics.",
+        "keywords": (
+            "accounting", "bank", "business", "economic", "economy", "finance",
+            "financial", "market", "monetary", "investment",
+        ),
+    },
+    "environment-energy": {
+        "label": "Environment & energy",
+        "description": "Climate, emissions, energy systems, and sustainability.",
+        "keywords": (
+            "climate", "carbon", "emission", "energy", "environment",
+            "renewable", "sustainability", "solar", "wind power",
+        ),
+    },
+    "social-sciences": {
+        "label": "Social sciences",
+        "description": "Society, education, behavior, institutions, and culture.",
+        "keywords": (
+            "behavior", "education", "policy", "political", "psychology",
+            "social", "society", "sociology", "culture", "institution",
+        ),
+    },
+    "multidisciplinary": {
+        "label": "Multidisciplinary",
+        "description": "Results without a strong match to one listed field.",
+        "keywords": (),
+    },
+}
+
+PROVIDERS = {
+    "openalex": "OpenAlex",
+    "semantic-scholar": "Semantic Scholar",
+    "arxiv": "arXiv",
+    "firecrawl-research": "Firecrawl Research",
+    "science-direct": "ScienceDirect",
+    "scopus": "Scopus",
+    "google-scholar": "Google Scholar",
+    "clarivate": "Clarivate",
+}
+DEFAULT_PROVIDERS = ("openalex",)
+
+
+def _cors_origins() -> List[str]:
+    value = os.getenv("ACADEMIC_CORS_ORIGINS", "*")
+    origins = [item.strip() for item in value.split(",") if item.strip()]
+    return origins or ["*"]
+
+
+def _safe_url(article: Article) -> Optional[str]:
+    candidates = [article.url]
+    if article.doi:
+        candidates.append(f"https://doi.org/{article.doi_normalized}")
+    for candidate in candidates:
+        if not candidate:
+            continue
+        parsed = urlparse(candidate)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return candidate
+    return None
+
+
+def _article_text(article: Article) -> str:
+    return " ".join(
+        [
+            article.title or "",
+            article.abstract or "",
+            article.journal or "",
+            " ".join(article.keywords or []),
+        ]
+    ).lower()
+
+
+def derive_category(article: Article) -> str:
+    """Assign a transparent keyword-derived category to an article."""
+    text = _article_text(article)
+    scores = {
+        slug: sum(1 for keyword in data["keywords"] if keyword in text)
+        for slug, data in CATEGORIES.items()
+        if slug != "multidisciplinary"
+    }
+    best = max(scores, key=scores.get)
+    return best if scores[best] else "multidisciplinary"
+
+
+def _parse_providers(value: Optional[str]) -> List[str]:
+    requested = [
+        item.strip().lower()
+        for item in (value or ",".join(DEFAULT_PROVIDERS)).split(",")
+        if item.strip()
+    ]
+    unknown = sorted(set(requested) - set(PROVIDERS))
+    if unknown:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown provider(s): {', '.join(unknown)}",
+        )
+    return [PROVIDERS[item] for item in requested]
+
+
+def _serialize_article(article: Article) -> Optional[Dict[str, Any]]:
+    url = _safe_url(article)
+    if not url:
+        return None
+    category = derive_category(article)
+    return {
+        "title": article.title,
+        "url": url,
+        "doi": article.doi,
+        "authors": article.authors,
+        "journal": article.journal,
+        "year": article.year,
+        "abstract": article.abstract,
+        "source": article.source,
+        "is_open_access": article.is_open_access,
+        "citation_count": article.citation_count,
+        "keywords": article.keywords,
+        "category": category,
+        "category_label": CATEGORIES[category]["label"],
+        "category_provenance": "derived:keyword-rules-v1",
+    }
+
+
+def _provider_availability(engine: AcademicSearchEngine) -> Dict[str, bool]:
+    configured = {
+        searcher.source_name.lower()
+        for searcher in getattr(engine, "_searchers", [])
+        if searcher.is_available
+    }
+
+
+def _document_filename_is_supported(filename: str) -> bool:
+    return Path(filename).suffix.lower() in SUPPORTED_DOCUMENT_SUFFIXES
+
+
+def _parse_document_with_firecrawl(filename: str, content: bytes) -> Dict[str, Any]:
+    """Parse a user-supplied document through the configured Firecrawl instance.
+
+    The application accepts raw bytes rather than persisting uploads.  Firecrawl is
+    the document parser; this service keeps the user-facing response focused on
+    source, content, and parser metadata needed for research reproducibility.
+    """
+    base_url = os.getenv("FIRECRAWL_API_URL", "http://api:3002").rstrip("/")
+    try:
+        response = requests.post(
+            f"{base_url}/v2/parse",
+            files={"file": (filename, content)},
+            data={"options": json.dumps({"formats": ["markdown"], "onlyMainContent": True})},
+            timeout=60,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Firecrawl document parser is unavailable",
+        ) from exc
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {"error": "Firecrawl returned a non-JSON response"}
+
+    if response.status_code >= 400 or not payload.get("success", False):
+        detail = payload.get("error") or payload.get("message") or "Document parsing failed"
+        raise HTTPException(status_code=502, detail=f"Firecrawl document parser: {detail}")
+    return payload.get("data") or {}
+    return {
+        slug: any(
+            label.lower() in name or name in label.lower()
+            for name in configured
+        )
+        for slug, label in PROVIDERS.items()
+    }
+
+
+@lru_cache(maxsize=1)
+def get_search_engine() -> AcademicSearchEngine:
+    return AcademicSearchEngine()
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="Academic Search Service",
+        description=(
+            "Search scholarly providers and return linked, normalized records. "
+            "UI categories are explicitly derived keyword labels."
+        ),
+        version=SERVICE_VERSION,
+        docs_url="/docs",
+        redoc_url="/redoc",
+    )
+
+    origins = _cors_origins()
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials="*" not in origins,
+        allow_methods=["GET"],
+        allow_headers=["*"],
+    )
+
+    app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        return FileResponse(WEB_DIR / "index.html")
+
+    @app.get("/api/v1/health")
+    async def health() -> Dict[str, Any]:
+        engine = get_search_engine()
+        return {
+            "status": "ok",
+            "service": "academic-search",
+            "version": SERVICE_VERSION,
+            "providers": _provider_availability(engine),
+        }
+
+    @app.get("/api/v1/categories")
+    async def categories() -> Dict[str, Any]:
+        return {
+            "category_provenance": "derived:keyword-rules-v1",
+            "categories": [
+                {
+                    "id": slug,
+                    "label": data["label"],
+                    "description": data["description"],
+                }
+                for slug, data in CATEGORIES.items()
+            ],
+        }
+
+    @app.post("/api/v1/documents/parse")
+    async def parse_document(
+        request: Request,
+        filename: str = Query(min_length=1, max_length=255),
+    ) -> Dict[str, Any]:
+        """Parse an uploaded scholarly document without storing its original bytes.
+
+        Send the document as the raw request body and its original filename in the
+        `filename` query parameter.  This intentionally supports only the formats
+        accepted by the local Firecrawl `/v2/parse` endpoint.
+        """
+        safe_filename = Path(filename).name
+        if safe_filename != filename or not _document_filename_is_supported(safe_filename):
+            raise HTTPException(
+                status_code=422,
+                detail="Supported document types: HTML, PDF, DOCX, DOC, ODT, RTF, XLSX, XLS",
+            )
+        content = await request.body()
+        if not content:
+            raise HTTPException(status_code=422, detail="Document body is empty")
+        if len(content) > DOCUMENT_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Document exceeds the 50 MB parser limit")
+
+        parsed = await run_in_threadpool(
+            _parse_document_with_firecrawl, safe_filename, content
+        )
+        metadata = parsed.get("metadata") if isinstance(parsed.get("metadata"), dict) else {}
+        return {
+            "source": "firecrawl:/v2/parse",
+            "filename": safe_filename,
+            "retrieval": "user-upload",
+            "markdown": parsed.get("markdown"),
+            "summary": parsed.get("summary"),
+            "links": parsed.get("links", []),
+            "metadata": metadata,
+        }
+
+    @app.get("/api/v1/search")
+    async def search(
+        q: str = Query(min_length=2, max_length=300),
+        category: str = Query(default="all"),
+        providers: Optional[str] = Query(default=None),
+        limit: int = Query(default=20, ge=1, le=50),
+        year_min: Optional[int] = Query(default=None, ge=1800, le=2200),
+        year_max: Optional[int] = Query(default=None, ge=1800, le=2200),
+        engine: AcademicSearchEngine = Depends(get_search_engine),
+    ) -> Dict[str, Any]:
+        query = q.strip()
+        if len(query) < 2:
+            raise HTTPException(status_code=422, detail="Query is too short")
+        if category != "all" and category not in CATEGORIES:
+            raise HTTPException(status_code=422, detail="Unknown category")
+        if year_min is not None and year_max is not None and year_min > year_max:
+            raise HTTPException(
+                status_code=422,
+                detail="year_min must be less than or equal to year_max",
+            )
+
+        provider_names = _parse_providers(providers)
+        candidate_limit = min(limit * 3 if category != "all" else limit, 100)
+        result = await run_in_threadpool(
+            engine.search,
+            query,
+            candidate_limit,
+            False,
+            year_min,
+            year_max,
+            provider_names,
+        )
+
+        serialized = [
+            item
+            for item in (_serialize_article(article) for article in result.articles)
+            if item is not None
+        ]
+        if category != "all":
+            serialized = [
+                item for item in serialized if item["category"] == category
+            ]
+        serialized = serialized[:limit]
+
+        return {
+            "query": query,
+            "category": category,
+            "category_provenance": "derived:keyword-rules-v1",
+            "providers_requested": provider_names,
+            "sources_responded": result.sources,
+            "retrieved_at": result.timestamp,
+            "search_time": result.search_time,
+            "total_provider_matches": result.total_found,
+            "returned": len(serialized),
+            "results": serialized,
+        }
+
+    return app
+
+
+app = create_app()

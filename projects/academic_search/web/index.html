@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Search and browse linked academic literature by category.">
+    <title>Academic Search</title>
+    <link rel="stylesheet" href="/assets/styles.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <p class="eyebrow">Research workspace</p>
+        <h1>Find papers. Keep the trail.</h1>
+        <p class="intro">
+          Search scholarly sources, filter by a derived subject category, and open the
+          original paper or DOI.
+        </p>
+      </header>
+
+      <section class="search-panel" aria-labelledby="search-title">
+        <h2 id="search-title" class="sr-only">Search papers</h2>
+        <form id="search-form">
+          <label for="query">What are you researching?</label>
+          <div class="search-row">
+            <input
+              id="query"
+              name="q"
+              type="search"
+              minlength="2"
+              maxlength="300"
+              placeholder="e.g. agent-based models for carbon mitigation"
+              autocomplete="off"
+              required
+            >
+            <button type="submit">Search</button>
+          </div>
+
+          <div class="filters">
+            <label>
+              Category
+              <select id="category" name="category">
+                <option value="all">All fields</option>
+              </select>
+            </label>
+            <label>
+              Source
+              <select id="providers" name="providers">
+                <option value="openalex">OpenAlex</option>
+                <option value="semantic-scholar">Semantic Scholar</option>
+                <option value="arxiv">arXiv</option>
+                <option value="openalex,semantic-scholar,arxiv">All free sources</option>
+              </select>
+            </label>
+            <label>
+              From year
+              <input id="year-min" name="year_min" type="number" min="1800" max="2200" placeholder="Any">
+            </label>
+            <label>
+              Results
+              <select id="limit" name="limit">
+                <option>10</option>
+                <option selected>20</option>
+                <option>30</option>
+                <option>50</option>
+              </select>
+            </label>
+          </div>
+        </form>
+      </section>
+
+      <section class="document-panel" aria-labelledby="document-title">
+        <div>
+          <p class="eyebrow">Document evidence</p>
+          <h2 id="document-title">Read a local research document</h2>
+          <p>
+            Parse a PDF, office document, spreadsheet, or HTML file through the local
+            Firecrawl service. The upload is processed for this request and is not stored
+            by this application.
+          </p>
+        </div>
+        <form id="document-form" class="document-form">
+          <label for="document-file">
+            Document
+            <input id="document-file" type="file" accept=".html,.htm,.pdf,.docx,.doc,.odt,.rtf,.xlsx,.xls" required>
+          </label>
+          <button type="submit">Parse document</button>
+        </form>
+        <p id="document-status" class="status">Supported: HTML, PDF, DOCX, DOC, ODT, RTF, XLSX, XLS. Maximum 50 MB.</p>
+        <article id="document-result" class="document-result" hidden>
+          <h3 id="document-result-title">Parsed document</h3>
+          <p id="document-meta" class="meta"></p>
+          <pre id="document-markdown"></pre>
+        </article>
+      </section>
+
+      <section class="results-section" aria-live="polite" aria-busy="false">
+        <div class="results-heading">
+          <div>
+            <p id="status" class="status">Enter a query to begin.</p>
+            <h2 id="result-title">Paper links</h2>
+          </div>
+          <a class="api-link" href="/docs">API docs</a>
+        </div>
+        <div id="category-strip" class="category-strip" aria-label="Available categories"></div>
+        <ol id="results" class="results"></ol>
+        <div id="empty-state" class="empty-state">
+          Results include their source, DOI link when available, and a transparent
+          keyword-derived category.
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

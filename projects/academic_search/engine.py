@@ -14,7 +14,7 @@ from .models import Article, SearchResult
 from .config import Config
 from .providers import (
     ScienceDirectSearcher, ScopusSearcher, OpenAlexSearcher, SemanticScholarSearcher, ArXivSearcher,
-    GoogleScholarSearcher, ClarivateSearcher,
+    GoogleScholarSearcher, ClarivateSearcher, FirecrawlResearchSearcher,
     CrossRefEnricher, SemanticScholarEnricher, ScopusEnricher
 )
 from .exporters import JSONExporter, MarkdownExporter, CSVExporter, BibTeXExporter
@@ -91,9 +91,14 @@ class AcademicSearchEngine:
         self._searchers.append(OpenAlexSearcher(self.config))
         self._searchers.append(SemanticScholarSearcher(self.config))
         self._searchers.append(ArXivSearcher(self.config))
+
+        # Optional supplemental discovery. Self-hosted Firecrawl only serves this
+        # API when its external RESEARCH_PROXY_URL is configured.
+        if self.config.enable_firecrawl_research:
+            self._searchers.append(FirecrawlResearchSearcher(self.config))
         
-        # Google Scholar (via Serper or Firecrawl fallback if still configured)
-        if self.config.api.serper_api_key or self.config.api.firecrawl_api_key:
+        # Google Scholar is backed by Serper; Firecrawl Research is a separate provider.
+        if self.config.api.serper_api_key:
             self._searchers.append(GoogleScholarSearcher(self.config))
         
         # Enrichers for adding abstracts
@@ -543,7 +548,10 @@ def create_engine(elsevier_api_key: Optional[str] = None,
                   enable_llm: bool = False,
                   llm_provider: Optional[str] = None,
                   llm_api_key: Optional[str] = None,
-                  debug: bool = False) -> AcademicSearchEngine:
+                  debug: bool = False,
+                  enable_firecrawl_research: bool = False,
+                  firecrawl_api_key: Optional[str] = None,
+                  firecrawl_api_url: Optional[str] = None) -> AcademicSearchEngine:
     """
     Factory function to create a configured search engine.
     
@@ -551,6 +559,9 @@ def create_engine(elsevier_api_key: Optional[str] = None,
     
     Args:
         elsevier_api_key: Elsevier/Scopus API key.
+        enable_firecrawl_research: Enable the optional supplemental provider.
+        firecrawl_api_key: Firecrawl credential, when required by the endpoint.
+        firecrawl_api_url: Firecrawl base URL; Compose uses ``http://api:3002``.
         enable_llm: Enable LLM-based analysis.
         llm_provider: LLM provider ("openai", "anthropic").
         llm_api_key: LLM API key.
@@ -570,6 +581,7 @@ def create_engine(elsevier_api_key: Optional[str] = None,
     """
     config = Config(
         debug=debug,
+        enable_firecrawl_research=enable_firecrawl_research,
         enable_llm_analysis=enable_llm,
         llm_provider=llm_provider,
         llm_api_key=llm_api_key
@@ -580,5 +592,11 @@ def create_engine(elsevier_api_key: Optional[str] = None,
         
     if clarivate_api_key:
         config.api.clarivate_api_key = clarivate_api_key
+
+    if firecrawl_api_key:
+        config.api.firecrawl_api_key = firecrawl_api_key
+
+    if firecrawl_api_url:
+        config.api.firecrawl_api_url = firecrawl_api_url
     
     return AcademicSearchEngine(config)

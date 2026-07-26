@@ -11,15 +11,18 @@ monorepo or its older experimental paths.
 ## Start safely
 
 1. Run `git status --short --branch` and preserve every existing change.
-2. Treat `projects/turkish_financial` as the finance application. Treat `apps/api` and
+2. Treat the finance project as container-first. Inspect
+   `projects/turkish_financial/Dockerfile` and the `turkish-financial-api` Compose
+   service before changing dependencies, paths, environment variables, or test commands.
+3. Treat `projects/turkish_financial` as the finance application. Treat `apps/api` and
    `apps/playwright-service-ts` as its self-hosted Firecrawl dependency.
-3. Read [project-map.md](references/project-map.md) before changing architecture,
+4. Read [project-map.md](references/project-map.md) before changing architecture,
    persistence, entry points, or data flow.
-4. Read [data-contract.md](references/data-contract.md) before changing routes, DTOs,
+5. Read [data-contract.md](references/data-contract.md) before changing routes, DTOs,
    scoring, database fields consumed by APIs, or instrument identity.
-5. Read [sources-and-runtime.md](references/sources-and-runtime.md) before changing
+6. Read [sources-and-runtime.md](references/sources-and-runtime.md) before changing
    scraping, proxies, KAP access, schedulers, Docker, or Firecrawl compatibility.
-6. Read [validation-and-risks.md](references/validation-and-risks.md) before testing,
+7. Read [validation-and-risks.md](references/validation-and-risks.md) before testing,
    deployment, or security hardening.
 
 ## Follow the change workflow
@@ -58,6 +61,10 @@ monorepo or its older experimental paths.
 
 ## Verify proportionally
 
+- Run `docker compose config --quiet`, build `turkish-financial-api` and
+  `turkish-financial-test`, and run the focused lane inside the test service container.
+- Treat host-Python tests as a fast supplement; the container's Python and installed
+  dependencies define deployment compatibility.
 - Run domain/use-case/repository tests for business changes.
 - Run API contract tests for every served-shape or provider-ID change.
 - Run Firecrawl compatibility tests for scrape/map/search/batch/action changes.

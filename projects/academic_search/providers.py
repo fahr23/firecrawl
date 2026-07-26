@@ -17,10 +17,248 @@ from .config import Config
 try:
     from firecrawl import Firecrawl
 except ImportError:
-    # Use a dummy class if firecrawl is not installed to prevent ImportErrors
-    class Firecrawl:
-        def __init__(self, **kwargs): pass
-        def scrape_url(self, **kwargs): return {}
+    Firecrawl = None
+
+
+class FirecrawlResearchSearcher(BaseSearcher):
+    """
+    Supplemental scholarly discovery through Firecrawl Research.
+
+    The Research API is optional and may not be configured by a self-hosted
+    Firecrawl deployment. Failures therefore produce an empty provider result
+    while the engine continues with its official scholarly API providers.
+    """
+
+    def __init__(self, config: Config, client: Any = None):
+        super().__init__(config)
+        self.client = client
+        if (
+            self.client is None
+            and config.enable_firecrawl_research
+            and config.api.firecrawl_api_url
+            and Firecrawl is not None
+        ):
+            self.client = Firecrawl(
+                api_key=config.api.firecrawl_api_key,
+                api_url=config.api.firecrawl_api_url,
+                timeout=config.timeout,
+            )
+
+    @property
+    def source_name(self) -> str:
+        return "Firecrawl Research"
+
+    @property
+    def is_available(self) -> bool:
+        return bool(self.config.enable_firecrawl_research and self.client is not None)
+
+    def search(
+        self,
+        query: str,
+        max_results: int = 25,
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+    ) -> SearchResult:
+        if not self.is_available or not query.strip() or max_results <= 0:
+            return self._empty_result(query)
+
+        if year_min is not None and year_max is not None and year_min > year_max:
+            self.logger.warning("Firecrawl Research: invalid year range")
+            return self._empty_result(query)
+
+        try:
+            response = self.client.v2.search_papers(
+                query,
+                k=min(max_results, 500),
+                from_date=f"{year_min}-01-01" if year_min is not None else None,
+                to_date=f"{year_max}-12-31" if year_max is not None else None,
+            )
+        except Exception as exc:
+            self.logger.warning("Firecrawl Research request failed: %s", exc)
+            return self._empty_result(query)
+
+        if not isinstance(response, dict) or response.get("success") is False:
+            self.logger.warning("Firecrawl Research returned an invalid response")
+            return self._empty_result(query)
+
+        records = response.get("results")
+        if not isinstance(records, list):
+            self.logger.warning("Firecrawl Research response did not contain results")
+            return self._empty_result(query)
+
+        articles: List[Article] = []
+        for record in records:
+            try:
+                article = self._parse_paper(record, year_min, year_max)
+            except (TypeError, ValueError) as exc:
+                self.logger.debug("Skipping malformed Firecrawl paper: %s", exc)
+                continue
+            if article is not None:
+                articles.append(article)
+            if len(articles) >= max_results:
+                break
+
+        return SearchResult(
+            query=query,
+            articles=articles,
+            total_found=len(articles),
+            sources=[self.source_name],
+        )
+
+    def _empty_result(self, query: str) -> SearchResult:
+        return SearchResult(
+            query=query,
+            articles=[],
+            total_found=0,
+            sources=[self.source_name],
+        )
+
+    @staticmethod
+    def _first(record: Dict[str, Any], *keys: str) -> Any:
+        for key in keys:
+            value = record.get(key)
+            if value not in (None, "", []):
+                return value
+        return None
+
+    @staticmethod
+    def _year(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        match = re.search(r"\b(18|19|20|21)\d{2}\b", str(value))
+        return match.group(0) if match else None
+
+    @staticmethod
+    def _authors(value: Any) -> Optional[str]:
+        if isinstance(value, str):
+            return value.strip() or None
+        if not isinstance(value, list):
+            return None
+
+        names: List[str] = []
+        for author in value:
+            if isinstance(author, str) and author.strip():
+                names.append(author.strip())
+            elif isinstance(author, dict):
+                name = (
+                    author.get("name")
+                    or author.get("displayName")
+                    or author.get("display_name")
+                )
+                if isinstance(name, str) and name.strip():
+                    names.append(name.strip())
+        return ", ".join(names) or None
+
+    @staticmethod
+    def _text(value: Any) -> Optional[str]:
+        if isinstance(value, str):
+            return value.strip() or None
+        if isinstance(value, dict):
+            for key in ("name", "displayName", "display_name", "title"):
+                text = value.get(key)
+                if isinstance(text, str) and text.strip():
+                    return text.strip()
+        return None
+
+    @staticmethod
+    def _boolean(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in ("true", "1", "yes")
+        if isinstance(value, (int, float)):
+            return value == 1
+        return False
+
+    def _parse_paper(
+        self,
+        record: Any,
+        year_min: Optional[int],
+        year_max: Optional[int],
+    ) -> Optional[Article]:
+        if not isinstance(record, dict):
+            return None
+
+        title = self._first(record, "title", "name")
+        if not isinstance(title, str) or not title.strip():
+            return None
+
+        year = self._year(
+            self._first(
+                record,
+                "year",
+                "publishedDate",
+                "published_date",
+                "publicationDate",
+                "publication_date",
+                "date",
+            )
+        )
+        if year is not None:
+            numeric_year = int(year)
+            if year_min is not None and numeric_year < year_min:
+                return None
+            if year_max is not None and numeric_year > year_max:
+                return None
+
+        doi = self._first(record, "doi", "DOI")
+        if isinstance(doi, str):
+            doi = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", doi.strip(), flags=re.I)
+            doi = doi or None
+        else:
+            doi = None
+
+        url = self._text(
+            self._first(
+                record,
+                "url",
+                "paperUrl",
+                "paper_url",
+                "landingPageUrl",
+                "landing_page_url",
+            )
+        )
+        if url is None:
+            url = f"https://doi.org/{doi}" if doi else ""
+
+        keywords_value = self._first(record, "keywords", "categories")
+        if isinstance(keywords_value, list):
+            keywords = [str(value) for value in keywords_value if value]
+        else:
+            keywords = []
+
+        citation_count = self._first(
+            record, "citationCount", "citation_count", "citedByCount"
+        )
+        try:
+            citation_count = int(citation_count) if citation_count is not None else None
+        except (TypeError, ValueError):
+            citation_count = None
+
+        return Article(
+            title=title.strip(),
+            url=url,
+            doi=doi,
+            abstract=self._text(self._first(record, "abstract", "summary")),
+            authors=self._authors(self._first(record, "authors", "author")),
+            journal=self._text(
+                self._first(
+                    record,
+                    "journal",
+                    "venue",
+                    "publicationName",
+                    "publication_name",
+                )
+            ),
+            year=year,
+            keywords=keywords,
+            source=self.source_name,
+            is_open_access=self._boolean(
+                self._first(record, "isOpenAccess", "is_open_access", "openAccess")
+            ),
+            citation_count=citation_count,
+            raw_data=record,
+        )
 
 
 class ScienceDirectSearcher(BaseSearcher):

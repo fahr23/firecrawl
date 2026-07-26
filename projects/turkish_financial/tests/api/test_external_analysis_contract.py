@@ -13,6 +13,7 @@ The `external_analysis` router is mounted on a minimal app so the heavy legacy
 `sentiment` router (openai / huggingface imports) is not pulled in.
 """
 from datetime import datetime, timezone, timedelta
+from unittest.mock import Mock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -109,6 +110,37 @@ def make_client(db: FakeDB) -> TestClient:
     app.include_router(external_analysis.router, prefix="/api/external/v1")
     app.dependency_overrides[get_db_manager] = lambda: db
     return TestClient(app)
+
+
+def test_capabilities_only_advertises_the_confirmed_local_parse_route():
+    client = make_client(FakeDB())
+    root = Mock(status_code=200)
+    parse_probe = Mock(status_code=400)
+
+    with patch("api.routers.external_analysis.requests.get", return_value=root), patch(
+        "api.routers.external_analysis.requests.post", return_value=parse_probe
+    ):
+        response = client.get("/api/external/v1/capabilities")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["contract_version"] == "1.0"
+    assert body["firecrawl"]["status"] == "ok"
+    assert body["firecrawl"]["document_parse"] is True
+    assert "parse" in body["firecrawl"]["operations"]
+
+
+def test_capabilities_degrades_honestly_when_firecrawl_is_unreachable():
+    client = make_client(FakeDB())
+
+    with patch(
+        "api.routers.external_analysis.requests.get",
+        side_effect=external_analysis.requests.RequestException("offline"),
+    ):
+        body = client.get("/api/external/v1/capabilities").json()
+
+    assert body["firecrawl"]["status"] == "unavailable"
+    assert body["firecrawl"]["operations"] == []
 
 
 # ════════════════════════════════════════════════════════════════════════════

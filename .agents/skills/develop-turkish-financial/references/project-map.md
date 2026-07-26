@@ -71,10 +71,16 @@ detail rows, so a partial rerun can shrink the aggregate while older videos rema
 
 ## Runtime
 
-The current uncommitted Compose diff adds `turkish-financial-api` on port `8000`,
-connected to local Firecrawl and PostgreSQL. Its Dockerfile uses Python 3.11 and
-`requirements.runtime.txt`. Verify that this diff is committed and deployed before
-assuming Compose starts the service.
+The project is container-first. Root Compose defines `turkish-financial-api` on port
+`8000`, connected to Firecrawl and PostgreSQL by Compose DNS. Its Dockerfile uses
+Python 3.11 and `requirements.runtime.txt`. Bind-mounted development source can differ
+from the image contents, so validate Compose, image build, mounted tests, and service
+health before assuming deployment behavior.
+
+`turkish-financial-api` is the persistent service used by external clients. Its stable
+contract remains under `/api/external/v1`, health is `/api/external/v1/health`, and
+OpenAPI is `/docs`. Host port is configurable with `TURKISH_FINANCIAL_PORT`; configure
+browser origins with `FINANCIAL_CORS_ORIGINS` rather than changing route contracts.
 
 The intended DDD split is incomplete: routes and scrapers still use the database
 manager directly, schema changes happen during manager startup, and duplicate modules

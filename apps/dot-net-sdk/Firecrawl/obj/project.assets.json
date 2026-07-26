@@ -204,7 +204,7 @@
     "/Users/FF/.nuget/packages/": {}
   },
   "project": {
-    "version": "1.7.0",
+    "version": "1.9.1",
     "restore": {
       "projectUniqueName": "/Users/FF/Projects/myProjects/backtofuture_scraper/firecrawl/apps/dot-net-sdk/Firecrawl/Firecrawl.csproj",
       "projectName": "firecrawl-sdk",

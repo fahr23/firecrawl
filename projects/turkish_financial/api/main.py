@@ -3,6 +3,7 @@ FastAPI application for Turkish Financial Data Scraper REST API
 """
 import logging
 import json
+import os
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
@@ -106,11 +107,19 @@ app = FastAPI(
 # Add request/response logging middleware
 app.add_middleware(RequestResponseLoggerMiddleware)
 
-# CORS middleware
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv("FINANCIAL_CORS_ORIGINS", "*").split(",")
+    if origin.strip()
+] or ["*"]
+
+# CORS middleware for browser-based external clients. Credentials are disabled
+# when all origins are allowed because wildcard origins and credentialed requests
+# are not a safe production combination.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials="*" not in cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -134,9 +143,10 @@ async def root():
     """Root endpoint"""
     return {
         "message": "Turkish Financial Data Scraper API with AI Sentiment Analysis",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "docs": "/docs",
-        "health": "/api/v1/health",
+        "health": "/api/external/v1/health",
+        "external_api": "/api/external/v1",
         "sentiment_api": "/api/v1/sentiment/",
         "documentation": "See API_DOCUMENTATION.md for detailed usage guide"
     }

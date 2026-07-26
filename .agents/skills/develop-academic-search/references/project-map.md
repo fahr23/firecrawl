@@ -20,6 +20,30 @@ Snapshot inspected 2026-07-25.
 There is no observed package-specific `pyproject.toml` or locked dependency file. Run
 from the repository with `PYTHONPATH=projects` until packaging is made explicit.
 
+## Container runtime
+
+Treat the academic project as container-first. Its Dockerfile and root
+`docker-compose.yaml` services are the runtime source of truth:
+
+- `academic-search-api` is the persistent FastAPI/UI service on container port `8010`;
+- `academic-search-test` is the tools-profile pytest service.
+
+The API service must reach Firecrawl by its Compose DNS name (`http://api:3002`), not
+by container-local `localhost`. Bind mounts may hide files copied into an image, so
+verify both the image build and the mounted development service. Do not claim
+deployment compatibility from host-Python tests alone.
+
+The academic HTTP surface is:
+
+- UI: `/`;
+- health: `/api/v1/health`;
+- categories: `/api/v1/categories`;
+- search: `/api/v1/search`;
+- OpenAPI: `/docs`.
+
+Subject categories in this UI are keyword-derived navigation labels, not provider
+classifications. Preserve the `category_provenance` marker when changing that contract.
+
 ## Pipeline
 
 `AcademicSearchEngine`

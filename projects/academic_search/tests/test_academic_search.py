@@ -110,10 +110,12 @@ class TestConfig(unittest.TestCase):
         self.assertFalse(config.enable_llm_analysis)
     
     def test_api_config(self):
-        """Test API configuration."""
-        config = Config()
-        # Default Elsevier key should be set
-        self.assertIsNotNone(config.api.elsevier_api_key)
+        """Provider credentials are never supplied as source-code defaults."""
+        with patch.dict(os.environ, {}, clear=True):
+            api = APIConfig()
+        self.assertIsNone(api.elsevier_api_key)
+        self.assertIsNone(api.serper_api_key)
+        self.assertIsNone(api.clarivate_api_key)
     
     def test_config_modification(self):
         """Test config modification."""

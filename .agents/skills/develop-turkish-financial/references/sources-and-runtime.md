@@ -41,6 +41,17 @@ Record which fallback succeeded without logging credentials or proxy URLs.
 
 ## Deployment
 
+Use the root `docker-compose.yaml` as the canonical runtime topology. Inside
+`turkish-financial-api`, Firecrawl is `http://api:3002` and PostgreSQL is addressed by
+its Compose service name; `localhost` refers only to the finance container. Run tests
+through `docker compose run --rm --no-deps turkish-financial-test ...` when dependencies
+are not required, and include dependencies for integration/health checks.
+
+External clients reach the persistent finance service on
+`${TURKISH_FINANCIAL_PORT:-8000}`. Keep `/api/external/v1` backward compatible and set
+`FINANCIAL_CORS_ORIGINS` to a comma-separated allowlist for browser clients in
+non-local deployments.
+
 The current worktree adds a Python 3.11 Docker image and a Compose service for the
 finance API. Verify:
 

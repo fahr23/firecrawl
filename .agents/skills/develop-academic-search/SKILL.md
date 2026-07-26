@@ -11,11 +11,14 @@ and user-facing claims distinguishable.
 ## Start safely
 
 1. Run `git status --short --branch` and preserve existing changes and result artifacts.
-2. Treat `projects/academic_search` as the package root and `academic_search` as the
+2. Treat the academic project as container-first. Inspect its Dockerfile and the root
+   Compose service before choosing commands; run verification inside the project
+   container whenever the container definition exists.
+3. Treat `projects/academic_search` as the package root and `academic_search` as the
    intended import name.
-3. Read [project-map.md](references/project-map.md) before changing providers, models,
+4. Read [project-map.md](references/project-map.md) before changing providers, models,
    orchestration, CLI behavior, or exporters.
-4. Read [validation-and-integrity.md](references/validation-and-integrity.md) before
+5. Read [validation-and-integrity.md](references/validation-and-integrity.md) before
    testing, using credentials, running live searches, or making research-quality claims.
 
 ## Change a provider or pipeline
@@ -59,6 +62,14 @@ and user-facing claims distinguishable.
 
 ## Verify proportionally
 
+- Validate the Compose model and build the academic image after dependency or runtime
+  changes. The persistent service is `academic-search-api`; use
+  `academic-search-test` for pytest. Treat host-Python tests as a fast supplement,
+  not deployment verification.
+- Run offline provider/package tests in the academic container with network calls
+  mocked. Use the Compose service network when testing its Firecrawl dependency.
+- Verify the service UI at `/`, health at `/api/v1/health`, and the versioned search
+  contract at `/api/v1/search`. Keep UI category labels identified as derived output.
 - Run fast model, engine, parser, analyzer, and exporter tests offline.
 - Run each provider's mocked tests before an optional live smoke test.
 - Test CLI imports and one end-to-end export in a temporary directory.

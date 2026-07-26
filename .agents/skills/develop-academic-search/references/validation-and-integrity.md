@@ -39,6 +39,25 @@ Do not equate this result with CLI or provider integration coverage.
 
 ## Test lanes
 
+### Container baseline
+
+Validate Compose first, then build the runtime and test services:
+
+```bash
+docker compose config --quiet
+docker compose build academic-search-api academic-search-test
+docker compose run --rm --no-deps academic-search-test \
+  python -m pytest -q \
+  academic_search/tests/test_academic_search.py \
+  academic_search/tests/test_firecrawl_research.py \
+  academic_search/tests/test_service.py
+docker compose up -d academic-search-api
+curl http://localhost:8010/api/v1/health
+```
+
+Use the service container for the authoritative Python version and dependency set.
+Host tests remain useful for speed but are not deployment verification.
+
 ### Fast offline
 
 - article normalization and DOI/title matching;

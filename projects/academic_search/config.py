@@ -24,10 +24,7 @@ class APIConfig:
     def __post_init__(self):
         """Load from environment if not provided."""
         if not self.elsevier_api_key:
-            self.elsevier_api_key = os.getenv(
-                "ELSEVIER_API_KEY",
-                "7e0c8c4ed4e0fb320d69074f093779d9"  # Default key
-            )
+            self.elsevier_api_key = os.getenv("ELSEVIER_API_KEY")
         if not self.semantic_scholar_api_key:
             self.semantic_scholar_api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
         
@@ -38,11 +35,10 @@ class APIConfig:
             self.firecrawl_api_url = os.getenv("FIRECRAWL_API_URL")
 
         if not self.serper_api_key:
-             # Default from user request
-            self.serper_api_key = os.getenv("SERPER_API_KEY", "d37ce4e3555a198dbda59f69f97d2eb96df7efc1")
+            self.serper_api_key = os.getenv("SERPER_API_KEY")
             
         if not self.clarivate_api_key:
-            self.clarivate_api_key = os.getenv("CLARIVATE_API_KEY", "25c3c04668c64cd41731c51b0dc253d790b262dd")
+            self.clarivate_api_key = os.getenv("CLARIVATE_API_KEY")
 
 
 @dataclass
@@ -69,6 +65,7 @@ class Config:
     timeout: int = 30
     enable_abstract_enrichment: bool = True
     deduplicate_results: bool = True
+    enable_firecrawl_research: bool = False
     
     # LLM Analysis Settings
     llm_provider: Optional[str] = None  # "openai", "anthropic", "local"
@@ -105,6 +102,15 @@ class Config:
         # Debug
         if os.getenv("ACADEMIC_SEARCH_DEBUG"):
             self.debug = os.getenv("ACADEMIC_SEARCH_DEBUG").lower() in ("true", "1", "yes")
+
+        # This environment variable is an opt-in. A false/empty Compose default
+        # must not override an explicitly enabled Config instance.
+        if os.getenv("ACADEMIC_ENABLE_FIRECRAWL_RESEARCH", "").lower() in (
+            "true",
+            "1",
+            "yes",
+        ):
+            self.enable_firecrawl_research = True
     
     @classmethod
     def from_env(cls) -> "Config":
@@ -142,11 +148,14 @@ class Config:
             "api": {
                 "elsevier_api_key": "***" if self.api.elsevier_api_key else None,
                 "semantic_scholar_api_key": "***" if self.api.semantic_scholar_api_key else None,
+                "firecrawl_api_key": "***" if self.api.firecrawl_api_key else None,
                 "clarivate_api_key": "***" if self.api.clarivate_api_key else None,
+                "serper_api_key": "***" if self.api.serper_api_key else None,
             },
             "max_results": self.max_results,
             "timeout": self.timeout,
             "enable_abstract_enrichment": self.enable_abstract_enrichment,
+            "enable_firecrawl_research": self.enable_firecrawl_research,
             "llm_provider": self.llm_provider,
             "enable_llm_analysis": self.enable_llm_analysis,
             "debug": self.debug,
@@ -159,6 +168,7 @@ class Config:
             "timeout": self.timeout,
             "enable_abstract_enrichment": self.enable_abstract_enrichment,
             "deduplicate_results": self.deduplicate_results,
+            "enable_firecrawl_research": self.enable_firecrawl_research,
             "llm_provider": self.llm_provider,
             "llm_model": self.llm_model,
             "enable_llm_analysis": self.enable_llm_analysis,

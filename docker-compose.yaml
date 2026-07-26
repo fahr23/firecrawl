@@ -157,6 +157,55 @@ services:
   turkish-financial-api:
     build:
       context: ./projects/turkish_financial
+      target: runtime
+    working_dir: /app
+    env_file:
+      - ./projects/turkish_financial/.env
+    environment:
+      FIRECRAWL_BASE_URL: http://api:3002
+      DB_HOST: nuq-postgres
+      DB_PORT: 5432
+      DB_NAME: postgres
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      APP_DB_HOST: nuq-postgres
+      APP_DB_PORT: 5432
+      APP_DB_NAME: postgres
+      APP_DB_USER: postgres
+      APP_DB_PASSWORD: postgres
+      DB_SCHEMA: turkish_financial
+      SENTIMENT_PROVIDER: keyword
+      FINANCIAL_CORS_ORIGINS: ${FINANCIAL_CORS_ORIGINS:-*}
+      PYTHONUNBUFFERED: "1"
+    depends_on:
+      api:
+        condition: service_started
+      playwright-service:
+        condition: service_started
+      nuq-postgres:
+        condition: service_started
+    networks:
+      - backend
+    ports:
+      - "${TURKISH_FINANCIAL_PORT:-8000}:8000"
+    restart: unless-stopped
+    volumes:
+      - ./projects/turkish_financial:/app
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/api/external/v1/health", timeout=5)
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  turkish-financial-test:
+    build:
+      context: ./projects/turkish_financial
+      target: test
     working_dir: /app
     env_file:
       - ./projects/turkish_financial/.env
@@ -175,29 +224,74 @@ services:
       DB_SCHEMA: turkish_financial
       SENTIMENT_PROVIDER: keyword
       PYTHONUNBUFFERED: "1"
+    networks:
+      - backend
+    volumes:
+      - ./projects/turkish_financial:/app
+      - ./projects/getData_ff:/getData_ff:ro
+    profiles:
+      - tools
+
+  academic-search-api:
+    build:
+      context: .
+      dockerfile: projects/academic_search/Dockerfile
+      target: runtime
+    working_dir: /workspace/projects
+    environment:
+      FIRECRAWL_API_URL: http://api:3002
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      ACADEMIC_ENABLE_FIRECRAWL_RESEARCH: ${ACADEMIC_ENABLE_FIRECRAWL_RESEARCH:-false}
+      ELSEVIER_API_KEY: ${ELSEVIER_API_KEY:-}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
+      CLARIVATE_API_KEY: ${CLARIVATE_API_KEY:-}
+      ACADEMIC_CORS_ORIGINS: ${ACADEMIC_CORS_ORIGINS:-*}
+      PYTHONPATH: /workspace/projects
+      PYTHONUNBUFFERED: "1"
     depends_on:
       api:
-        condition: service_started
-      playwright-service:
-        condition: service_started
-      nuq-postgres:
         condition: service_started
     networks:
       - backend
     ports:
-      - "8000:8000"
+      - "${ACADEMIC_SEARCH_PORT:-8010}:8010"
+    restart: unless-stopped
     volumes:
-      - ./projects/turkish_financial:/app
+      - ./projects/academic_search:/workspace/projects/academic_search
     healthcheck:
       test:
         - CMD
         - python
         - -c
-        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/api/external/v1/health", timeout=5)
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8010/api/v1/health", timeout=5)
       interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 20s
+
+  academic-search-test:
+    build:
+      context: .
+      dockerfile: projects/academic_search/Dockerfile
+      target: test
+    working_dir: /workspace/projects
+    environment:
+      FIRECRAWL_API_URL: http://api:3002
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+      ACADEMIC_ENABLE_FIRECRAWL_RESEARCH: ${ACADEMIC_ENABLE_FIRECRAWL_RESEARCH:-false}
+      ELSEVIER_API_KEY: ${ELSEVIER_API_KEY:-}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
+      SERPER_API_KEY: ${SERPER_API_KEY:-}
+      CLARIVATE_API_KEY: ${CLARIVATE_API_KEY:-}
+      PYTHONPATH: /workspace/projects
+      PYTHONUNBUFFERED: "1"
+    networks:
+      - backend
+    volumes:
+      - ./projects/academic_search:/workspace/projects/academic_search
+    profiles:
+      - tools
 
   redis:
     # NOTE: If you want to use Valkey (open source) instead of Redis (source available),

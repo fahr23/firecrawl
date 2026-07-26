@@ -4,13 +4,12 @@ Snapshot inspected 2026-07-25. Re-run tests and classify failures before changin
 
 ## Python environment
 
-The repository declares or uses Python 3.11 syntax, but all three checked local virtual
-environments resolve to Python 3.9.7. On Python 3.9, API contract collection currently
-fails at `DatabaseManager | None`. A system Python 3.11 exists but does not currently
-have pytest installed.
+The project is container-first and its image uses Python 3.11. Local environments may
+resolve to Python 3.9 and fail on supported syntax such as `DatabaseManager | None`.
+Use the `turkish-financial-api` container as the authoritative environment.
 
-Build a clean Python 3.11+ environment from the runtime requirements before interpreting
-API collection failures as product regressions.
+Build the service image from `requirements.runtime.txt` before interpreting collection
+failures as product regressions.
 
 ## Focused results observed
 
@@ -30,6 +29,15 @@ python -m pytest -q --ignore=tests/test_upstream_features.py \
 ```
 
 Use the narrowest lane applicable to the change.
+
+Container equivalents should be preferred, for example:
+
+```bash
+docker compose config --quiet
+docker compose build turkish-financial-api turkish-financial-test
+docker compose run --rm --no-deps turkish-financial-test \
+  python -m pytest -q tests/test_upstream_features.py
+```
 
 ## Highest risks
 

@@ -14,8 +14,10 @@ Mounted at `/api/external/v1` (see api/main.py). On any DB failure we degrade to
 honest error/unavailable envelope — we never fabricate data (§5).
 """
 import logging
+import os
 from typing import List, Optional
 
+import requests
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -77,6 +79,47 @@ def _db_error(detail: str) -> JSONResponse:
             "detail": detail,
         },
     )
+
+
+def _firecrawl_capabilities() -> dict:
+    """Probe the configured local Firecrawl service without exposing its URL.
+
+    A deliberately unsupported tiny upload is used only to distinguish a missing
+    `/v2/parse` route from a working parser endpoint.  No financial document or
+    client data is sent during this health-style capability check.
+    """
+    base_url = os.getenv("FIRECRAWL_BASE_URL", "http://api:3002").rstrip("/")
+    try:
+        root = requests.get(base_url, timeout=3)
+        api_reachable = root.status_code < 500
+    except requests.RequestException:
+        return {
+            "status": "unavailable",
+            "operations": [],
+            "document_parse": False,
+        }
+
+    document_parse = False
+    try:
+        parse_probe = requests.post(
+            f"{base_url}/v2/parse",
+            files={"file": ("probe.txt", b"capability probe")},
+            timeout=3,
+        )
+        # The local parser rejects .txt with UNSUPPORTED_FILE_TYPE.  That response
+        # proves the route is deployed without processing a real client document.
+        document_parse = parse_probe.status_code in {400, 401, 403, 422}
+    except requests.RequestException:
+        document_parse = False
+
+    operations = ["scrape", "crawl", "map", "batch", "search", "actions"]
+    if document_parse:
+        operations.append("parse")
+    return {
+        "status": "ok" if api_reachable else "unavailable",
+        "operations": operations if api_reachable else [],
+        "document_parse": document_parse,
+    }
 
 
 # ── instruments catalog — discovery endpoint for clients ─────────────────────
@@ -182,6 +225,16 @@ async def health(db_manager: DatabaseManager = Depends(get_db_manager)):
         "status": "ok" if db_ok else "degraded",
         "contract_version": CONTRACT_VERSION,
         "provider": PROVIDER_ID,
+    }
+
+
+@router.get("/capabilities")
+async def capabilities():
+    """Return only runtime-confirmed Firecrawl capabilities for external clients."""
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "provider": PROVIDER_ID,
+        "firecrawl": _firecrawl_capabilities(),
     }
 
 

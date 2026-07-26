@@ -314,6 +314,138 @@ async def test_scrape_url_only_main_content_default_true():
     assert call_params.get("only_main_content") is True
 
 
+@pytest.mark.asyncio
+async def test_scrape_url_passes_cache_age_controls():
+    """Cache freshness controls use the v2 SDK's snake_case keyword names."""
+    fc = MagicMock()
+    page = MagicMock()
+    page.markdown = "content"
+    page.metadata = {}
+    fc.scrape.return_value = page
+
+    scraper = _make_scraper(fc)
+    await scraper.scrape_url(
+        "https://example.com/static-company-list",
+        max_age=86_400_000,
+        min_age=3_600_000,
+        store_in_cache=True,
+    )
+
+    call_params = fc.scrape.call_args[1]
+    assert call_params["max_age"] == 86_400_000
+    assert call_params["min_age"] == 3_600_000
+    assert call_params["store_in_cache"] is True
+
+
+def test_v2_cache_kwargs_accept_camel_and_snake_case():
+    scraper = _make_scraper(MagicMock())
+
+    assert scraper._build_v2_scrape_kwargs(
+        {"maxAge": 10, "minAge": 5, "storeInCache": False}
+    ) == {"max_age": 10, "min_age": 5, "store_in_cache": False}
+    assert scraper._build_v2_scrape_kwargs(
+        {"max_age": 10, "min_age": 5, "store_in_cache": False}
+    ) == {"max_age": 10, "min_age": 5, "store_in_cache": False}
+
+
+def test_bypass_proxy_payload_serializes_cache_fields_as_v2_camel_case():
+    scraper = _make_scraper(MagicMock())
+
+    payload = scraper._build_raw_scrape_payload(
+        "https://www.kap.org.tr/tr/Bildirimler",
+        {
+            "bypass_proxy": True,
+            "max_age": 60_000,
+            "min_age": 5_000,
+            "store_in_cache": False,
+            "only_main_content": False,
+        },
+    )
+
+    assert payload == {
+        "url": "https://www.kap.org.tr/tr/Bildirimler",
+        "maxAge": 60_000,
+        "minAge": 5_000,
+        "storeInCache": False,
+        "onlyMainContent": False,
+        "bypassProxy": True,
+    }
+
+
+def test_normalize_document_preserves_pdf_page_metadata_from_sdk_model():
+    class Metadata:
+        def model_dump(self, exclude_none=True):
+            return {"num_pages": 8, "total_pages": 10, "title": "KAP filing"}
+
+    page = MagicMock()
+    page.markdown = "filing"
+    page.metadata = Metadata()
+    page.raw_html = None
+    page.actions = None
+
+    scraper = _make_scraper(MagicMock())
+    data = scraper._normalize_document(page)
+
+    assert data["metadata"]["numPages"] == 8
+    assert data["metadata"]["totalPages"] == 10
+    assert data["metadata"]["title"] == "KAP filing"
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected_total", "status", "complete", "reason"),
+    [
+        (
+            {"numPages": 10, "totalPages": 10},
+            None,
+            "complete",
+            True,
+            "parsed_page_count_matches_total",
+        ),
+        (
+            {"num_pages": 7, "total_pages": 10},
+            None,
+            "partial",
+            False,
+            "parsed_fewer_pages_than_expected",
+        ),
+        (
+            {},
+            None,
+            "unknown",
+            None,
+            "page_metadata_unavailable",
+        ),
+        (
+            {"numPages": 11, "totalPages": 10},
+            None,
+            "unknown",
+            None,
+            "parsed_page_count_exceeds_expected",
+        ),
+        (
+            {"numPages": 12},
+            12,
+            "complete",
+            True,
+            "parsed_page_count_matches_total",
+        ),
+    ],
+)
+def test_assess_pdf_completeness(
+    metadata, expected_total, status, complete, reason
+):
+    scraper = _make_scraper(MagicMock())
+
+    assessment = scraper.assess_pdf_completeness(
+        {"metadata": metadata},
+        expected_total_pages=expected_total,
+    )
+
+    assert assessment["status"] == status
+    assert assessment["complete"] is complete
+    assert assessment["reason"] == reason
+
+
 # ---------------------------------------------------------------------------
 # KAPScraper new methods (mocked)
 # ---------------------------------------------------------------------------
