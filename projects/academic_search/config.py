@@ -66,6 +66,9 @@ class Config:
     enable_abstract_enrichment: bool = True
     deduplicate_results: bool = True
     enable_firecrawl_research: bool = False
+    enable_elsevier: bool = False
+    enable_clarivate: bool = False
+    enable_serper: bool = False
     
     # LLM Analysis Settings
     llm_provider: Optional[str] = None  # "openai", "anthropic", "local"
@@ -111,6 +114,9 @@ class Config:
             "yes",
         ):
             self.enable_firecrawl_research = True
+        self.enable_elsevier = self.enable_elsevier or os.getenv("ACADEMIC_ENABLE_ELSEVIER", "").lower() in ("true", "1", "yes")
+        self.enable_clarivate = self.enable_clarivate or os.getenv("ACADEMIC_ENABLE_CLARIVATE", "").lower() in ("true", "1", "yes")
+        self.enable_serper = self.enable_serper or os.getenv("ACADEMIC_ENABLE_SERPER", "").lower() in ("true", "1", "yes")
     
     @classmethod
     def from_env(cls) -> "Config":
@@ -156,6 +162,9 @@ class Config:
             "timeout": self.timeout,
             "enable_abstract_enrichment": self.enable_abstract_enrichment,
             "enable_firecrawl_research": self.enable_firecrawl_research,
+            "enable_elsevier": self.enable_elsevier,
+            "enable_clarivate": self.enable_clarivate,
+            "enable_serper": self.enable_serper,
             "llm_provider": self.llm_provider,
             "enable_llm_analysis": self.enable_llm_analysis,
             "debug": self.debug,
@@ -169,6 +178,9 @@ class Config:
             "enable_abstract_enrichment": self.enable_abstract_enrichment,
             "deduplicate_results": self.deduplicate_results,
             "enable_firecrawl_research": self.enable_firecrawl_research,
+            "enable_elsevier": self.enable_elsevier,
+            "enable_clarivate": self.enable_clarivate,
+            "enable_serper": self.enable_serper,
             "llm_provider": self.llm_provider,
             "llm_model": self.llm_model,
             "enable_llm_analysis": self.enable_llm_analysis,

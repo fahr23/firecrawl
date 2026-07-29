@@ -87,6 +87,16 @@ class RequestResponseLoggerMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("API starting up")
+    try:
+        from api.dependencies import get_db_manager
+        from infrastructure.contracts.instrument_identity_map import STATIC_BIST_CATALOG
+
+        seeded = get_db_manager().seed_bist_catalog(STATIC_BIST_CATALOG)
+        logger.info("BIST catalogue seed completed: %d instruments", seeded)
+    except Exception as exc:
+        # The API can still report an honest DB-unavailable response; startup should
+        # not hide the original database failure behind catalogue initialization.
+        logger.warning("BIST catalogue seed skipped: %s", exc)
     yield
     # Shutdown: stop background scheduler tasks
     from api.news_scheduler import scheduler

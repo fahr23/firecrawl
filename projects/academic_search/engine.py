@@ -6,18 +6,19 @@ all search providers, enrichers, analyzers, and exporters.
 """
 
 import logging
+import re
 from typing import List, Dict, Any, Optional, Type
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .base import BaseSearcher, BaseAbstractEnricher, BaseAnalyzer, BaseExporter
-from .models import Article, SearchResult
+from .models import Article, ProviderOutcome, SearchResult
 from .config import Config
 from .providers import (
     ScienceDirectSearcher, ScopusSearcher, OpenAlexSearcher, SemanticScholarSearcher, ArXivSearcher,
     GoogleScholarSearcher, ClarivateSearcher, FirecrawlResearchSearcher,
     CrossRefEnricher, SemanticScholarEnricher, ScopusEnricher
 )
-from .exporters import JSONExporter, MarkdownExporter, CSVExporter, BibTeXExporter
+from .exporters import JSONExporter, MarkdownExporter, CSVExporter, BibTeXExporter, RISExporter
 from .analyzers import TopicExtractor, LLMAnalyzer
 
 
@@ -79,12 +80,12 @@ class AcademicSearchEngine:
     def _setup_default_components(self):
         """Set up default searchers, enrichers, and exporters."""
         # Elsevier searchers (requires API key)
-        if self.config.api.elsevier_api_key:
+        if self.config.enable_elsevier and self.config.api.elsevier_api_key:
             self._searchers.append(ScienceDirectSearcher(self.config))  # Best for Elsevier content
             self._searchers.append(ScopusSearcher(self.config))         # Broad multi-publisher search
         
         # Clarivate
-        if self.config.api.clarivate_api_key:
+        if self.config.enable_clarivate and self.config.api.clarivate_api_key:
             self._searchers.append(ClarivateSearcher(self.config))
         
         # Free searchers (no API key needed)
@@ -98,7 +99,7 @@ class AcademicSearchEngine:
             self._searchers.append(FirecrawlResearchSearcher(self.config))
         
         # Google Scholar is backed by Serper; Firecrawl Research is a separate provider.
-        if self.config.api.serper_api_key:
+        if self.config.enable_serper and self.config.api.serper_api_key:
             self._searchers.append(GoogleScholarSearcher(self.config))
         
         # Enrichers for adding abstracts
@@ -108,7 +109,7 @@ class AcademicSearchEngine:
         ])
         
         # Add Scopus enricher if we have the API key
-        if self.config.api.elsevier_api_key:
+        if self.config.enable_elsevier and self.config.api.elsevier_api_key:
             self._enrichers.append(ScopusEnricher(self.config))
         
         # Analyzers
@@ -124,7 +125,8 @@ class AcademicSearchEngine:
             'md': MarkdownExporter(self.config),
             'csv': CSVExporter(self.config),
             'bibtex': BibTeXExporter(self.config),
-            'bib': BibTeXExporter(self.config)
+            'bib': BibTeXExporter(self.config),
+            'ris': RISExporter(self.config),
         }
     
     # ========== Search Methods ==========
@@ -155,8 +157,11 @@ class AcademicSearchEngine:
             year_range = f" ({year_min or 'any'} - {year_max or 'now'})"
             self.logger.info(f"Year filter: {year_range}")
         
-        # Determine active searchers
+        # Determine active searchers. Provider names are retained even when a
+        # requested optional provider is not configured, so callers can see that
+        # lack of coverage rather than mistaking it for an empty search.
         active_searchers = self._searchers
+        requested_names = list(providers or [])
         if providers:
             # Normalize names
             provider_names = [p.lower() for p in providers]
@@ -167,20 +172,43 @@ class AcademicSearchEngine:
             
             if not active_searchers:
                 self.logger.warning(f"No matching providers found for: {providers}")
-                return SearchResult(query=query, articles=[], total_found=0, sources=[])
+                return SearchResult(
+                    query=query,
+                    requested_providers=requested_names,
+                    provider_outcomes=[
+                        ProviderOutcome(name, "unavailable", error_code="not_configured",
+                                        message="provider is not configured")
+                        for name in requested_names
+                    ],
+                    year_min=year_min,
+                    year_max=year_max,
+                    limit=max_results,
+                )
         
         if use_all_sources or providers: # If specific providers requested, imply use_all_sources behavior usually? 
             # The prompt says "if not given do it all if given use them". 
             # So if providers are given, we iterate them all (implied 'all' behavior for the subset).
-            return self._search_all_sources(query, max_results, year_min, year_max, active_searchers)
+            return self._search_all_sources(
+                query, max_results, year_min, year_max, active_searchers, requested_names
+            )
         else:
-            return self._search_primary_source(query, max_results, year_min, year_max, active_searchers)
+            return self._search_primary_source(
+                query, max_results, year_min, year_max, active_searchers, requested_names
+            )
     
-    def _search_primary_source(self, query: str, max_results: int, year_min: Optional[int] = None, year_max: Optional[int] = None, searchers: List[BaseSearcher] = None) -> SearchResult:
+    def _search_primary_source(self, query: str, max_results: int, year_min: Optional[int] = None,
+                               year_max: Optional[int] = None, searchers: List[BaseSearcher] = None,
+                               requested_names: Optional[List[str]] = None) -> SearchResult:
         """Search using the first available source."""
         searchers = searchers or self._searchers
+        outcomes: List[ProviderOutcome] = []
         for searcher in searchers:
+            if not searcher.is_available:
+                outcomes.append(ProviderOutcome(searcher.source_name, "unavailable", error_code="not_configured",
+                                                message="provider is not configured"))
+                continue
             try:
+                searcher.clear_last_failure()
                 self.logger.info(f"Trying {searcher.source_name}...")
                 result = searcher.search(query, max_results, year_min, year_max)
                 
@@ -188,12 +216,22 @@ class AcademicSearchEngine:
                     self.logger.info(
                         f"Found {result.total_found:,} results from {searcher.source_name}"
                     )
+                    result.requested_providers = requested_names or [searcher.source_name]
+                    result.provider_outcomes = outcomes + [ProviderOutcome(
+                        searcher.source_name, "responded", returned_count=len(result.articles),
+                        total_found=result.total_found,
+                    )]
+                    result.year_min, result.year_max, result.limit = year_min, year_max, max_results
+                    result.raw_article_count = result.count
+                    result.deduplicated_article_count = result.count
                     return result
                 else:
                     self.logger.warning(f"No results from {searcher.source_name}")
+                    outcomes.append(self._outcome_from_failure(searcher.source_name, searcher.last_failure))
                     
             except Exception as e:
                 self.logger.error(f"Error with {searcher.source_name}: {e}")
+                outcomes.append(self._outcome_from_exception(searcher.source_name, e))
                 continue
         
         # Return empty result if all sources fail
@@ -201,47 +239,97 @@ class AcademicSearchEngine:
             query=query,
             articles=[],
             total_found=0,
-            sources=["none"]
+            sources=[],
+            requested_providers=requested_names or [s.source_name for s in searchers],
+            provider_outcomes=outcomes,
+            year_min=year_min,
+            year_max=year_max,
+            limit=max_results,
         )
     
-    def _search_all_sources(self, query: str, max_results: int, year_min: Optional[int] = None, year_max: Optional[int] = None, searchers: List[BaseSearcher] = None) -> SearchResult:
+    def _search_all_sources(self, query: str, max_results: int, year_min: Optional[int] = None,
+                            year_max: Optional[int] = None, searchers: List[BaseSearcher] = None,
+                            requested_names: Optional[List[str]] = None) -> SearchResult:
         """Search all sources and merge results."""
         searchers = searchers or self._searchers
         all_articles = []
         total = 0
+        raw_article_count = 0
         sources = []
-        seen_dois = set()
+        seen_keys: Dict[str, Article] = {}
+        outcomes: List[ProviderOutcome] = []
         
         for searcher in searchers:
+            if not searcher.is_available:
+                outcomes.append(ProviderOutcome(searcher.source_name, "unavailable", error_code="not_configured",
+                                                message="provider is not configured"))
+                continue
             try:
+                searcher.clear_last_failure()
                 self.logger.info(f"Searching {searcher.source_name}...")
                 result = searcher.search(query, max_results, year_min, year_max)
-                
-                sources.append(searcher.source_name)
                 total += result.total_found
-                
-                # Deduplicate by DOI
+                raw_article_count += len(result.articles)
+                if result.articles:
+                    sources.append(searcher.source_name)
+                    outcomes.append(ProviderOutcome(searcher.source_name, "responded", len(result.articles) > 0,
+                                                    len(result.articles), result.total_found))
+                else:
+                    outcomes.append(self._outcome_from_failure(searcher.source_name, searcher.last_failure))
+
                 for article in result.articles:
-                    if article.doi and article.doi in seen_dois:
+                    key = self._deduplication_key(article)
+                    if key in seen_keys:
+                        seen_keys[key].add_provider_record(article)
                         continue
-                    if article.doi:
-                        seen_dois.add(article.doi)
+                    seen_keys[key] = article
                     all_articles.append(article)
                     
             except Exception as e:
                 self.logger.error(f"Error with {searcher.source_name}: {e}")
+                outcomes.append(self._outcome_from_exception(searcher.source_name, e))
         
         # Sort by year (newest first)
         all_articles.sort(key=lambda a: int(a.year) if a.year and str(a.year).isdigit() else 0, reverse=True)
-        # Note: We do NOT limit to max_results here because we want the cumulative
-        # results from all sources (e.g. 50 from Scopus + 50 from OpenAlex...)
+        deduplicated_article_count = len(all_articles)
+        all_articles = all_articles[:max_results]
         
         return SearchResult(
             query=query,
             articles=all_articles,
             total_found=total,
-            sources=sources
+            sources=sources,
+            requested_providers=requested_names or [s.source_name for s in searchers],
+            provider_outcomes=outcomes,
+            year_min=year_min,
+            year_max=year_max,
+            limit=max_results,
+            raw_article_count=raw_article_count,
+            deduplicated_article_count=deduplicated_article_count,
         )
+
+    @staticmethod
+    def _deduplication_key(article: Article) -> str:
+        """Prefer DOI; otherwise only merge strong title/year/first-author matches."""
+        if article.doi_normalized:
+            return f"doi:{article.doi_normalized}"
+        title = article.title_normalized
+        if len(title) < 20:
+            return f"unique:{id(article)}"
+        first_author = re.sub(r"[^a-z0-9]", "", (article.authors or "").split(",")[0].lower())
+        return f"title:{title}|year:{article.year or ''}|author:{first_author}"
+
+    @staticmethod
+    def _outcome_from_failure(provider: str, failure: Optional[Dict[str, str]]) -> ProviderOutcome:
+        if not failure:
+            return ProviderOutcome(provider, "empty")
+        status = "rate_limited" if failure.get("code") == "rate_limited" else "failed"
+        return ProviderOutcome(provider, status, error_code=failure.get("code"), message=failure.get("message"))
+
+    @staticmethod
+    def _outcome_from_exception(provider: str, exc: Exception) -> ProviderOutcome:
+        code = "timeout" if "timeout" in type(exc).__name__.lower() else "provider_error"
+        return ProviderOutcome(provider, "failed", error_code=code, message="provider search failed")
     
     # ========== Enrichment Methods ==========
     
@@ -290,7 +378,7 @@ class AcademicSearchEngine:
                 try:
                     abstract = enricher.get_abstract(article)
                     if abstract:
-                        article.abstract = abstract
+                        article.set_enriched_abstract(abstract, enricher.source_name)
                         self.logger.debug(
                             f"Got abstract from {enricher.source_name}"
                         )
@@ -323,7 +411,7 @@ class AcademicSearchEngine:
             try:
                 abstract = enricher.get_abstract(article)
                 if abstract:
-                    article.abstract = abstract
+                    article.set_enriched_abstract(abstract, enricher.source_name)
                     return
             except Exception:
                 continue
@@ -353,12 +441,24 @@ class AcademicSearchEngine:
             try:
                 if isinstance(analyzer, TopicExtractor):
                     analysis["topics"] = analyzer.extract_from_results(result)
+                    result.derived_outputs.append({
+                        "kind": "topics",
+                        "analyzer": analyzer.analyzer_name,
+                        "version": "keyword-extractor-v1",
+                        "output": analysis["topics"],
+                    })
                 elif isinstance(analyzer, LLMAnalyzer):
                     if analyzer.is_available:
-                        analysis["llm"] = analyzer.analyze_batch(
-                            result.articles[:10],  # Limit for cost
-                            result.query
-                        )
+                        analysis["llm"] = analyzer.analyze_batch(result.articles[:10], result.query)
+                        for article, output in zip(result.articles[:10], analysis["llm"]):
+                            article.add_derived_output({
+                                "kind": "llm_analysis",
+                                "analyzer": analyzer.analyzer_name,
+                                "provider": self.config.llm_provider,
+                                "model": self.config.llm_model,
+                                "prompt_version": "llm-analyzer-prompts-v1",
+                                "output": output,
+                            })
                     else:
                         analysis["llm"] = {"status": "not configured"}
                 else:
@@ -589,9 +689,11 @@ def create_engine(elsevier_api_key: Optional[str] = None,
     
     if elsevier_api_key:
         config.api.elsevier_api_key = elsevier_api_key
+        config.enable_elsevier = True
         
     if clarivate_api_key:
         config.api.clarivate_api_key = clarivate_api_key
+        config.enable_clarivate = True
 
     if firecrawl_api_key:
         config.api.firecrawl_api_key = firecrawl_api_key

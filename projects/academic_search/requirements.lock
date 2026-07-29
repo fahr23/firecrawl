@@ -1,0 +1,7 @@
+# Runtime/test input lock for the academic-search image. Update intentionally with
+# a supported Python 3.11 resolver, then run the container test lane.
+fastapi==0.115.12
+httpx==0.28.1
+pytest==8.3.5
+requests==2.32.3
+uvicorn==0.34.0

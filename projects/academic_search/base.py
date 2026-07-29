@@ -42,6 +42,10 @@ class BaseSearcher(ABC):
         """
         self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.last_failure: Optional[Dict[str, str]] = None
+
+    def clear_last_failure(self) -> None:
+        self.last_failure = None
     
     @abstractmethod
     def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
@@ -101,17 +105,22 @@ class BaseSearcher(ABC):
                 return response.json()
             elif response.status_code == 401:
                 self.logger.warning(f"{self.source_name}: Authentication failed")
+                self.last_failure = {"code": "authentication", "message": "authentication failed"}
             elif response.status_code == 429:
                 self.logger.warning(f"{self.source_name}: Rate limited")
+                self.last_failure = {"code": "rate_limited", "message": "provider rate limit reached"}
             else:
                 self.logger.warning(
                     f"{self.source_name}: Request failed with status {response.status_code}"
                 )
+                self.last_failure = {"code": "http_error", "message": "provider request failed"}
                 
         except requests.exceptions.Timeout:
             self.logger.warning(f"{self.source_name}: Request timeout")
+            self.last_failure = {"code": "timeout", "message": "provider request timed out"}
         except requests.exceptions.RequestException as e:
             self.logger.warning(f"{self.source_name}: Request error - {e}")
+            self.last_failure = {"code": "request_error", "message": "provider request failed"}
         
         return None
 

@@ -24,43 +24,19 @@ class BISTScraper(BaseScraper):
         Returns:
             All BIST companies data
         """
-        from pathlib import Path
-        import csv
-        import re
+        from infrastructure.contracts.instrument_identity_map import STATIC_BIST_CATALOG
 
-        logger.info("Loading BIST companies from local CSV fallback")
+        logger.info("Loading versioned BIST company catalogue")
 
-        # Repo root: .../examples/turkish-financial-data-scraper/scrapers -> go up 3 levels
-        repo_root = Path(__file__).resolve().parents[3]
-        csv_path = repo_root / "bist_companies.csv"
-
-        companies: List[Dict[str, Any]] = []
+        companies: List[Dict[str, Any]] = [
+            {"code": code, "name": name, "sector": None}
+            for code, name in STATIC_BIST_CATALOG.items()
+        ]
         try:
-            with csv_path.open("r", encoding="utf-8") as f:
-                reader = csv.reader(f)
-                next(reader, None)  # skip header
-                for row in reader:
-                    if not row or len(row) < 2:
-                        continue
-                    raw_code = row[0].strip()
-                    name = row[1].strip()
+            if not companies:
+                raise RuntimeError("BIST catalogue is empty")
 
-                    m = re.search(r"([A-Z0-9]+)\.IS", raw_code)
-                    if not m:
-                        continue
-                    code = m.group(1)
-
-                    # Enforce DB constraint: code VARCHAR(10)
-                    if len(code) > 10:
-                        continue
-
-                    companies.append({
-                        "code": code,
-                        "name": name,
-                        "sector": None,
-                    })
-
-            logger.info(f"Found {len(companies)} BIST companies from CSV")
+            logger.info(f"Found {len(companies)} BIST companies from catalogue")
 
             if self.db_manager:
                 for company in companies:

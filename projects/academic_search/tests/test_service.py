@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 import requests
 from fastapi.testclient import TestClient
 
-from academic_search.models import Article, SearchResult
+from academic_search.models import Article, ProviderOutcome, SearchResult
 from academic_search.project_store import ProjectStore
 from academic_search.service import create_app, get_search_engine
 
@@ -55,6 +55,8 @@ class FakeEngine:
             ],
             total_found=2,
             sources=["OpenAlex"],
+            requested_providers=["OpenAlex"],
+            provider_outcomes=[ProviderOutcome("OpenAlex", "responded", returned_count=2, total_found=2)],
         )
 
 
@@ -101,6 +103,7 @@ def test_search_returns_only_safe_linked_results_with_derived_category():
     assert payload["results"][0]["url"] == "https://example.org/paper"
     assert payload["results"][0]["category"] == "computer-science"
     assert payload["results"][0]["category_provenance"] == "derived:keyword-rules-v1"
+    assert payload["manifest"]["providers_requested"] == ["OpenAlex"]
     assert engine.calls[0]["providers"] == ["OpenAlex"]
     assert engine.calls[0]["max_results"] == 30
 
@@ -155,6 +158,8 @@ def test_project_keeps_search_defaults_history_and_exportable_evidence():
     assert evidence.status_code == 200
     assert "Which interventions reduce emissions?" in evidence.text
     assert "https://example.org/paper" in evidence.text
+    assert "Deduplication:" in evidence.text
+    assert history[0]["manifest"]["deduplication_version"] == "doi-or-title-author-year-v1"
 
 
 def test_project_search_rejects_an_unknown_project():
@@ -200,6 +205,19 @@ def test_provider_availability_matches_web_of_science_to_clarivate():
     from academic_search.service import _provider_availability
 
     assert _provider_availability(WebOfScienceEngine())["clarivate"] is True
+
+
+def test_provider_coverage_keeps_rate_limit_distinct_from_empty_results():
+    from academic_search.service import _provider_coverage
+
+    coverage = _provider_coverage(
+        ["OpenAlex"], [],
+        [{"provider": "OpenAlex", "status": "rate_limited", "error_code": "rate_limited"}],
+    )
+
+    assert coverage == [{
+        "provider": "OpenAlex", "status": "rate_limited", "error_code": "rate_limited",
+    }]
 
 
 def test_document_parse_forwards_supported_upload_without_persisting_it():

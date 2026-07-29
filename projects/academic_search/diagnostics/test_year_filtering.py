@@ -3,9 +3,13 @@
 Test script for year-based filtering across all search providers.
 """
 
+import os
+
 from academic_search import create_engine, Config
 
 def test_year_filtering():
+    if os.getenv("ACADEMIC_LIVE_TESTS") != "1":
+        raise RuntimeError("Set ACADEMIC_LIVE_TESTS=1 to run live diagnostics.")
     """Test year filtering with all search providers."""
     print("="*70)
     print("Testing Year-Based Filtering")
@@ -13,7 +17,8 @@ def test_year_filtering():
     
     # Create engine with API key
     config = Config()
-    config.api.elsevier_api_key = "7e0c8c4ed4e0fb320d69074f093779d9"
+    config.api.elsevier_api_key = os.getenv("ELSEVIER_API_KEY")
+    config.enable_elsevier = bool(config.api.elsevier_api_key)
     engine = create_engine(config)
     
     test_query = "artificial intelligence"

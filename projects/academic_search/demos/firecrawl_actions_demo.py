@@ -27,10 +27,7 @@ def main():
     
     # If using the cloud version:
     # api_url = "https://api.firecrawl.dev"
-    # api_key = "YOUR_API_KEY"
-    
-    # We use a dummy key for local dev (if auth is disabled) or assuming properly configured
-    api_key = os.getenv("FIRECRAWL_API_KEY", "fc-USER_API_KEY")
+    api_key = os.getenv("FIRECRAWL_API_KEY")
 
     print(f"Initializing Firecrawl client with API URL: {api_url}")
     app = Firecrawl(api_url=api_url, api_key=api_key)

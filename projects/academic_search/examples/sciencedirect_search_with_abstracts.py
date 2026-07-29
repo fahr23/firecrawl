@@ -11,6 +11,7 @@ Since ScienceDirect blocks direct scraping (Cloudflare), we use:
 """
 
 from firecrawl import FirecrawlApp
+import os
 import requests
 import json
 import re
@@ -19,7 +20,7 @@ from dataclasses import dataclass, asdict
 from typing import List, Optional
 from urllib.parse import quote
 
-app = FirecrawlApp(api_url='http://localhost:3002', api_key='fc-USER_API_KEY')
+app = FirecrawlApp(api_url=os.getenv("FIRECRAWL_API_URL", "http://localhost:3002"), api_key=os.getenv("FIRECRAWL_API_KEY"))
 
 
 @dataclass

@@ -20,13 +20,9 @@ For help:
 
 import argparse
 import sys
-import os
 import re
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from api_academic_search import create_engine, Config
+from academic_search import AcademicSearchEngine, Config
 
 
 def main():
@@ -114,14 +110,13 @@ Examples:
         help="Extract and display top topics"
     )
     
-    # API keys
     parser.add_argument(
-        "--elsevier-key",
-        help="Elsevier/Scopus API key (or set ELSEVIER_API_KEY env var)"
+        "--enable-elsevier", action="store_true",
+        help="Enable Elsevier/Scopus only when ELSEVIER_API_KEY is set"
     )
     parser.add_argument(
-        "--clarivate-key",
-        help="Clarivate Web of Science API key (or set CLARIVATE_API_KEY env var)"
+        "--enable-clarivate", action="store_true",
+        help="Enable Clarivate only when CLARIVATE_API_KEY is set"
     )
     
     # Clarivate-specific options
@@ -154,10 +149,6 @@ Examples:
         choices=["openai", "anthropic"],
         help="LLM provider to use"
     )
-    parser.add_argument(
-        "--llm-key",
-        help="LLM API key"
-    )
     
     # Other options
     parser.add_argument(
@@ -181,14 +172,14 @@ Examples:
             query = f"{args.field_tag}=({query})"
     
     # Create engine
-    engine = create_engine(
-        elsevier_api_key=args.elsevier_key,
-        clarivate_api_key=args.clarivate_key,
-        enable_llm=args.llm,
+    config = Config(
+        enable_elsevier=args.enable_elsevier,
+        enable_clarivate=args.enable_clarivate,
+        enable_llm_analysis=args.llm,
         llm_provider=args.llm_provider,
-        llm_api_key=args.llm_key,
-        debug=args.debug
+        debug=args.debug,
     )
+    engine = AcademicSearchEngine(config)
     
     if args.verbose:
         print(f"Available sources: {engine.available_sources}")
@@ -206,7 +197,7 @@ Examples:
     using_clarivate = (
         args.providers and any("web of science" in p.lower() or "clarivate" in p.lower() for p in args.providers)
     ) or (
-        not args.providers and args.clarivate_key  # Clarivate available and no specific providers
+        not args.providers and args.enable_clarivate
     )
     
     # Fetch a buffer (4x) to account for filtering losses
@@ -214,10 +205,9 @@ Examples:
     
     # If using Clarivate with specific features, use direct searcher
     if using_clarivate and (args.sort_by != "relevance" or args.database != "WOS"):
-        from api_academic_search.providers import ClarivateSearcher
-        from api_academic_search.config import Config
+        from academic_search.providers import ClarivateSearcher
         
-        searcher = ClarivateSearcher(Config())
+        searcher = ClarivateSearcher(engine.config)
         results = searcher.search(
             query,
             max_results=search_limit,
@@ -242,10 +232,10 @@ Examples:
         print(f"Retrieved {len(results.articles)} articles (buffer)")
         print()
     
-    # Always enrich to ensure we can verify content
-    if args.verbose or True: # Force verbose logging for this
-        print("Enriching abstracts for accuracy check...")
-    results = engine.enrich_abstracts(results)
+    if args.enrich:
+        if args.verbose:
+            print("Enriching missing abstracts…", file=sys.stderr)
+        results = engine.enrich_abstracts(results)
     
     # Filter by content Relevance
     # (The user specifically asked to "read abstract for search accuracy")
@@ -307,52 +297,11 @@ Examples:
     # Output
     if args.output:
         filepath = engine.export(results, args.output, format=args.format)
-        print(f"Results saved to: {filepath}")
+        if args.verbose:
+            print(f"Results saved to: {filepath}", file=sys.stderr)
     else:
-        # Default: Save to api_academic_search/results/query_timestamp/
-        from datetime import datetime
-        
-        # Get results directory
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        results_root = os.path.join(base_dir, "results")
-        
-        # Create folder name from query and timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_query = re.sub(r'[^\w\s-]', '', args.query).strip().lower()
-        safe_query = re.sub(r'[-\s]+', '_', safe_query)[:50]
-        
-        # Create the specific result directory
-        folder_name = f"{safe_query}_{timestamp}"
-        save_dir = os.path.join(results_root, folder_name)
-        os.makedirs(save_dir, exist_ok=True)
-        
-        print(f"Saving results to directory: {save_dir}")
-        
-        # Export in multiple formats
-        formats = [
-            'json',
-            'csv',
-            'markdown',
-            'bibtex'
-        ]
-        
-        # Map formats to extensions
-        ext_map = {
-            'json': 'json',
-            'csv': 'csv',
-            'markdown': 'md',
-            'bibtex': 'bib'
-        }
-        
-        for fmt in formats:
-            ext = ext_map.get(fmt, fmt)
-            filename = f"{folder_name}.{ext}"
-            filepath = os.path.join(save_dir, filename)
-            try:
-                engine.export(results, filepath, format=fmt)
-                print(f"  - Saved {fmt.upper()}: {filename}")
-            except Exception as e:
-                print(f"  - Failed to save {fmt}: {e}")
+        exporter = engine._exporters[args.format]
+        sys.stdout.write(exporter.export_to_string(results))
     
     # Summary
     if args.verbose:

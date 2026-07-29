@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "academic-search"
+version = "1.1.0"
+description = "Reproducible, multi-provider academic literature search"
+requires-python = ">=3.9"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "requests>=2.31,<3.0",
+  "uvicorn>=0.34,<1.0",
+]
+
+[project.optional-dependencies]
+test = ["httpx>=0.27,<1.0", "pytest>=8.0,<9.0"]
+
+[project.scripts]
+academic-search = "academic_search.search_cli:main"
+
+[tool.setuptools]
+packages = ["academic_search"]
+package-dir = {academic_search = "."}
+
+[tool.setuptools.package-data]
+academic_search = ["web/*.html", "web/*.js", "web/*.css"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

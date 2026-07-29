@@ -12,6 +12,29 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+
+def test_default_youtube_configuration_has_multiple_channel_sources():
+    from config import Config
+
+    config = Config()
+    assert len(config.youtube.channels) >= 4
+    assert len(set(config.youtube.channels)) == len(config.youtube.channels)
+
+
+def test_extra_youtube_channels_are_appended_without_duplicates(monkeypatch):
+    from config import Config
+
+    monkeypatch.setenv("YOUTUBE_CHANNELS", "https://www.youtube.com/@primary/videos")
+    monkeypatch.setenv(
+        "YOUTUBE_EXTRA_CHANNELS",
+        "https://www.youtube.com/@secondary/videos,https://www.youtube.com/@primary/videos",
+    )
+
+    assert Config().youtube.channels == [
+        "https://www.youtube.com/@primary/videos",
+        "https://www.youtube.com/@secondary/videos",
+    ]
+
 from domain.entities.youtube_video import YouTubeVideo
 
 
@@ -254,3 +277,28 @@ class TestYouTubeScraperScrapeAll:
 
         assert result["total"] == 2
         assert result["by_channel"]["https://channel"] == 2
+
+    def test_uses_cached_local_transcript_without_fetching_captions(self):
+        with patch("scrapers.base_scraper.BaseScraper.__init__", return_value=None):
+            from scrapers.youtube_scraper import YouTubeScraper
+            scraper = YouTubeScraper.__new__(YouTubeScraper)
+            scraper.config = MagicMock()
+            scraper.firecrawl = MagicMock()
+            scraper.db_manager = None
+
+        cached = YouTubeVideo(
+            channel="https://www.youtube.com/@local-finance",
+            video_id="cached1",
+            title="Cached",
+            url="https://www.youtube.com/watch?v=cached1",
+            transcript="Akbank için yerel Whisper metni.",
+        )
+        scraper._cached_videos_by_id = {"cached1": cached}
+        metas = [{"video_id": "cached1", "title": "Remote", "url": "remote", "published_at": None, "duration": None}]
+        with patch.object(scraper, "list_channel_videos", return_value=metas), patch.object(
+            scraper, "fetch_transcript", side_effect=AssertionError("network captions must not run")
+        ):
+            result = run(scraper.scrape_all(["https://channel"], days_back=7))
+
+        assert result["videos"] == [cached]
+        assert result["cached"] == 1

@@ -6,7 +6,20 @@ multi-ticker return, and no false positives on unrelated text.
 """
 import pytest
 
-from infrastructure.contracts.instrument_identity_map import detect_instruments
+from infrastructure.contracts.instrument_identity_map import (
+    STATIC_BIST_CATALOG,
+    STATIC_BIST_MAP,
+    detect_instruments,
+)
+
+
+def test_static_bist_catalogue_and_detection_map_cover_the_versioned_universe():
+    """The UI/bootstrap catalogue must not regress to the old 30-symbol subset."""
+    assert len(STATIC_BIST_CATALOG) >= 500
+    assert set(STATIC_BIST_CATALOG) == set(STATIC_BIST_MAP)
+    assert "ASELS" in STATIC_BIST_MAP
+    assert "BINHO" in STATIC_BIST_MAP
+    assert "ABVKS" not in STATIC_BIST_MAP  # Sukuk / asset-leasing, not BIST TÜM equity
 
 
 class TestDetectInstruments:

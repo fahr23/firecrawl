@@ -26,6 +26,15 @@ SOURCE_BIGPARA = "bigpara"
 SOURCE_INVESTING_TR = "investing_tr"
 SOURCE_HABERTURK = "haberturk"
 SOURCE_NTV = "ntv"
+SOURCE_EKONOMIM = "ekonomim"
+SOURCE_DUNYA = "dunya"
+SOURCE_FINANSGUNDEM = "finansgundem"
+SOURCE_PARAAJANSI = "paraajansi"
+SOURCE_AA_EKONOMI = "aa_ekonomi"
+SOURCE_TRT_EKONOMI = "trt_ekonomi"
+SOURCE_BORSAGUNDEM = "borsagundem"
+SOURCE_CNBCE = "cnbce"
+SOURCE_DOVIZCOM = "dovizcom"
 
 VALID_SOURCES = frozenset(
     {
@@ -36,6 +45,15 @@ VALID_SOURCES = frozenset(
         SOURCE_INVESTING_TR,
         SOURCE_HABERTURK,
         SOURCE_NTV,
+        SOURCE_EKONOMIM,
+        SOURCE_DUNYA,
+        SOURCE_FINANSGUNDEM,
+        SOURCE_PARAAJANSI,
+        SOURCE_AA_EKONOMI,
+        SOURCE_TRT_EKONOMI,
+        SOURCE_BORSAGUNDEM,
+        SOURCE_CNBCE,
+        SOURCE_DOVIZCOM,
     }
 )
 

@@ -1,5 +1,9 @@
+import os
+if os.getenv("ACADEMIC_LIVE_TESTS") != "1":
+    raise SystemExit("Set ACADEMIC_LIVE_TESTS=1 to run live diagnostics.")
+
 from firecrawl import FirecrawlApp
-app = FirecrawlApp(api_url='http://localhost:3002', api_key='fc-USER_API_KEY')
+app = FirecrawlApp(api_url=os.getenv("FIRECRAWL_API_URL", "http://localhost:3002"), api_key=os.getenv("FIRECRAWL_API_KEY"))
 
 # Test direct article access
 url = 'https://www.sciencedirect.com/science/article/pii/S0960148124014496'

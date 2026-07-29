@@ -189,8 +189,14 @@ class YouTubeScraper(BaseScraper):
         Skips videos with no transcript (they carry no text to score). Returns
         {success, total, by_channel, videos}.
         """
+        # The use case may seed host-produced Whisper/caption transcripts by
+        # video ID.  They win over a network caption fetch and are also returned
+        # when their locally managed channel is not part of the container config.
+        cached_by_id: Dict[str, YouTubeVideo] = getattr(self, "_cached_videos_by_id", {})
         all_videos: List[YouTubeVideo] = []
         by_channel: Dict[str, int] = {}
+        seen_video_ids: set[str] = set()
+        cache_hits = 0
 
         for channel_url in channel_urls or []:
             channel_videos: List[YouTubeVideo] = []
@@ -198,6 +204,12 @@ class YouTubeScraper(BaseScraper):
                 metas = self.list_channel_videos(channel_url, days_back, limit_per_channel)
                 for meta in metas:
                     vid_id = meta["video_id"]
+                    cached = cached_by_id.get(vid_id)
+                    if cached is not None:
+                        channel_videos.append(cached)
+                        seen_video_ids.add(vid_id)
+                        cache_hits += 1
+                        continue
                     try:
                         transcript_text, lang = self.fetch_transcript(vid_id)
                         if not transcript_text:
@@ -215,6 +227,7 @@ class YouTubeScraper(BaseScraper):
                                 lang=lang,
                             )
                         )
+                        seen_video_ids.add(vid_id)
                     except Exception as e:
                         logger.error(f"Error processing video {vid_id}: {e}", exc_info=True)
             except Exception as e:
@@ -223,9 +236,20 @@ class YouTubeScraper(BaseScraper):
             by_channel[channel_url] = len(channel_videos)
             all_videos.extend(channel_videos)
 
+        # A local-only channel override has no reason to be copied into the API
+        # environment. Its already-persisted transcripts must still be eligible
+        # for analysis and combined-score calculation.
+        for video_id, video in cached_by_id.items():
+            if video_id in seen_video_ids:
+                continue
+            all_videos.append(video)
+            by_channel[video.channel] = by_channel.get(video.channel, 0) + 1
+            cache_hits += 1
+
         return {
             "success": True,
             "total": len(all_videos),
+            "cached": cache_hits,
             "by_channel": by_channel,
             "videos": all_videos,
         }

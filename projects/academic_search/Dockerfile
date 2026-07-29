@@ -8,13 +8,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /workspace/projects
 
 COPY projects/academic_search/requirements.runtime.txt /tmp/academic-requirements.txt
+COPY projects/academic_search/requirements.lock /tmp/academic-requirements.lock
 COPY apps/python-sdk /tmp/firecrawl-python-sdk
 
 RUN python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install -r /tmp/academic-requirements.txt \
+    && python -m pip install -r /tmp/academic-requirements.lock \
     && python -m pip install /tmp/firecrawl-python-sdk
 
 COPY projects/academic_search /workspace/projects/academic_search
+
+RUN python -m pip install /workspace/projects/academic_search
 
 EXPOSE 8010
 

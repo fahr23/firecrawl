@@ -6,9 +6,11 @@ import os
 import re
 
 def main():
+    if os.getenv("ACADEMIC_LIVE_TESTS") != "1":
+        raise SystemExit("Set ACADEMIC_LIVE_TESTS=1 to run live diagnostics.")
     app = Firecrawl(
         api_url="http://localhost:3002", 
-        api_key=os.getenv("FIRECRAWL_API_KEY", "fc-USER_API_KEY")
+        api_key=os.getenv("FIRECRAWL_API_KEY")
     )
 
     print("Testing ScienceDirect search page...")

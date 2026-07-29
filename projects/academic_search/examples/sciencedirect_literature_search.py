@@ -18,9 +18,11 @@ from dataclasses import dataclass, asdict, field
 from typing import List, Optional, Dict
 from collections import Counter
 import argparse
+import os
 
-# Elsevier API Key (ScienceDirect)
-ELSEVIER_API_KEY = "7e0c8c4ed4e0fb320d69074f093779d9"
+# Credentials are supplied only by the environment. This example deliberately
+# remains usable with the free providers when Elsevier is not configured.
+ELSEVIER_API_KEY = os.getenv("ELSEVIER_API_KEY")
 
 
 @dataclass
@@ -43,7 +45,10 @@ class ElsevierAPISearcher:
     SCOPUS_SEARCH_URL = "https://api.elsevier.com/content/search/scopus"
     ABSTRACT_URL = "https://api.elsevier.com/content/abstract/scopus_id"
     
-    def __init__(self, api_key: str = ELSEVIER_API_KEY):
+    def __init__(self, api_key: Optional[str] = None):
+        api_key = api_key or ELSEVIER_API_KEY
+        if not api_key:
+            raise ValueError("ELSEVIER_API_KEY is required for the Elsevier example")
         self.api_key = api_key
         self.headers = {
             'X-ELS-APIKey': api_key,

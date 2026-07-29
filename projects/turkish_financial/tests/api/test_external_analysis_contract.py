@@ -121,6 +121,37 @@ def test_finance_dashboard_assets_describe_the_external_contract_without_advice(
     assert "not investment advice" in page
     assert "/api/external/v1/capabilities" in script
     assert "/api/external/v1/${selectedKind}" in script
+    assert "/api/external/v1/instruments?market=bist" in script
+    assert "/api/external/v1/scores/refresh" in script
+    assert "combined-sentiment" in page
+    assert "youtube-sentiment" in page
+
+
+def test_instruments_catalog_includes_named_starter_instruments_when_database_is_sparse():
+    client = make_client(FakeDB())
+    response = client.get("/api/external/v1/instruments?market=bist")
+    assert response.status_code == 200
+    items = response.json()["items"]
+    thy = next(item for item in items if item["ticker"] == "THYAO")
+    assert thy["company_name"] == "Türk Hava Yolları"
+    assert thy["catalog_source"] == "built_in_catalog"
+
+
+def test_instruments_catalog_keeps_data_tickers_when_company_refresh_is_missing():
+    class DataOnlyDB(FakeDB):
+        def query(self, sql, params=None):
+            if "has_fundamental" in sql and "all_tickers" in sql:
+                return [{
+                    "ticker": "ASELS", "company_name": None, "sector": None,
+                    "has_sentiment": False, "has_fundamental": True,
+                    "has_news_sentiment": True,
+                }]
+            return super().query(sql, params)
+
+    items = make_client(DataOnlyDB()).get("/api/external/v1/instruments?market=bist").json()["items"]
+    asels = next(item for item in items if item["ticker"] == "ASELS")
+    assert asels["company_name"] == "Aselsan"
+    assert asels["available_data"] == ["fundamental", "news_sentiment", "combined_sentiment"]
 
 
 def test_capabilities_only_advertises_the_confirmed_local_parse_route():

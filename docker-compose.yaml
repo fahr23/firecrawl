@@ -165,15 +165,16 @@ services:
       FIRECRAWL_BASE_URL: http://api:3002
       DB_HOST: nuq-postgres
       DB_PORT: 5432
-      DB_NAME: postgres
+      DB_NAME: ${FINANCIAL_DB_NAME:-turkish_financial}
       DB_USER: postgres
       DB_PASSWORD: postgres
       APP_DB_HOST: nuq-postgres
       APP_DB_PORT: 5432
-      APP_DB_NAME: postgres
+      APP_DB_NAME: ${FINANCIAL_DB_NAME:-turkish_financial}
       APP_DB_USER: postgres
       APP_DB_PASSWORD: postgres
       DB_SCHEMA: turkish_financial
+      BIST_CATALOG_PATH: /data/bist_tum.csv
       SENTIMENT_PROVIDER: keyword
       FINANCIAL_CORS_ORIGINS: ${FINANCIAL_CORS_ORIGINS:-*}
       PYTHONUNBUFFERED: "1"
@@ -184,13 +185,16 @@ services:
         condition: service_started
       nuq-postgres:
         condition: service_started
+      turkish-financial-db-init:
+        condition: service_completed_successfully
     networks:
       - backend
     ports:
-      - "${TURKISH_FINANCIAL_PORT:-8000}:8000"
+      - "127.0.0.1:${TURKISH_FINANCIAL_PORT:-8000}:8000"
     restart: unless-stopped
     volumes:
       - ./projects/turkish_financial:/app
+      - ./projects/bist_companies/BIST TÜM.csv:/data/bist_tum.csv:ro
     healthcheck:
       test:
         - CMD
@@ -201,6 +205,33 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+
+  # Creates a dedicated PostgreSQL database for the finance service.  It also
+  # copies the existing finance schema once when upgrading from the old shared
+  # `postgres` database, preserving local data during this topology change.
+  turkish-financial-db-init:
+    image: postgres:17
+    environment:
+      PGHOST: nuq-postgres
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      FINANCIAL_DB_NAME: ${FINANCIAL_DB_NAME:-turkish_financial}
+    depends_on:
+      nuq-postgres:
+        condition: service_started
+    networks:
+      - backend
+    restart: "no"
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        until pg_isready -d postgres; do sleep 1; done
+        if ! psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$$FINANCIAL_DB_NAME'" | grep -q 1; then
+          createdb "$$FINANCIAL_DB_NAME"
+          pg_dump -d postgres -n turkish_financial | psql -d "$$FINANCIAL_DB_NAME"
+        fi
 
   turkish-financial-test:
     build:
@@ -213,15 +244,16 @@ services:
       FIRECRAWL_BASE_URL: http://api:3002
       DB_HOST: nuq-postgres
       DB_PORT: 5432
-      DB_NAME: postgres
+      DB_NAME: ${FINANCIAL_DB_NAME:-turkish_financial}
       DB_USER: postgres
       DB_PASSWORD: postgres
       APP_DB_HOST: nuq-postgres
       APP_DB_PORT: 5432
-      APP_DB_NAME: postgres
+      APP_DB_NAME: ${FINANCIAL_DB_NAME:-turkish_financial}
       APP_DB_USER: postgres
       APP_DB_PASSWORD: postgres
       DB_SCHEMA: turkish_financial
+      BIST_CATALOG_PATH: /data/bist_tum.csv
       SENTIMENT_PROVIDER: keyword
       PYTHONUNBUFFERED: "1"
     networks:
@@ -229,6 +261,7 @@ services:
     volumes:
       - ./projects/turkish_financial:/app
       - ./projects/getData_ff:/getData_ff:ro
+      - ./projects/bist_companies/BIST TÜM.csv:/data/bist_tum.csv:ro
     profiles:
       - tools
 

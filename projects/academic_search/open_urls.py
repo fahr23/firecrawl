@@ -2,7 +2,7 @@
 Script Name: open_urls.py
 Description: 
     This script automates the process of opening academic article URLs found in a markdown report.
-    It is useful when you have a folder containing search results (like 'api_academic_search/results/some_search_folder')
+    It is useful when you have a folder containing exported academic-search results.
     and you want to quickly open all the source URLs in your browser.
     
     DOI URLs (https://doi.org/...) are preferred over other URLs (e.g. Web of Science gateway links),

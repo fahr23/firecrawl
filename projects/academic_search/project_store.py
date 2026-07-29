@@ -58,12 +58,20 @@ class ProjectStore:
                   returned_count INTEGER NOT NULL,
                   sources_responded_json TEXT NOT NULL,
                   provider_coverage_json TEXT NOT NULL,
+                  manifest_json TEXT NOT NULL DEFAULT '{}',
                   results_json TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS search_runs_project_retrieved_idx
                   ON search_runs(project_id, retrieved_at DESC);
                 """
             )
+            columns = {
+                row[1] for row in self._connection.execute("PRAGMA table_info(search_runs)")
+            }
+            if "manifest_json" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE search_runs ADD COLUMN manifest_json TEXT NOT NULL DEFAULT '{}'"
+                )
 
     @staticmethod
     def _project(row: sqlite3.Row) -> Dict[str, Any]:
@@ -131,8 +139,8 @@ class ProjectStore:
                 """INSERT INTO search_runs
                    (id, project_id, query, category, providers_json, year_min, year_max,
                     limit_value, retrieved_at, search_time, total_provider_matches,
-                    returned_count, sources_responded_json, provider_coverage_json, results_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    returned_count, sources_responded_json, provider_coverage_json, manifest_json, results_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id, project_id, payload["query"], payload["category"],
                     json.dumps(payload["providers_requested"]), payload.get("year_min"),
@@ -140,6 +148,7 @@ class ProjectStore:
                     payload.get("search_time"), payload.get("total_provider_matches"),
                     payload["returned"], json.dumps(payload["sources_responded"]),
                     json.dumps(payload["provider_coverage"]),
+                    json.dumps(payload["manifest"], ensure_ascii=False),
                     json.dumps(payload["results"], ensure_ascii=False),
                 ),
             )
@@ -149,13 +158,14 @@ class ProjectStore:
         with self._lock:
             rows = self._connection.execute(
                 """SELECT id, project_id, query, category, providers_json, year_min, year_max,
-                          limit_value, retrieved_at, returned_count, sources_responded_json
+                          limit_value, retrieved_at, returned_count, sources_responded_json, manifest_json
                    FROM search_runs WHERE project_id = ? ORDER BY retrieved_at DESC LIMIT ?""",
                 (project_id, limit),
             ).fetchall()
         return [
             {**dict(row), "providers": json.loads(row["providers_json"]),
-             "sources_responded": json.loads(row["sources_responded_json"])}
+             "sources_responded": json.loads(row["sources_responded_json"]),
+             "manifest": json.loads(row["manifest_json"])}
             for row in rows
         ]
 
@@ -174,6 +184,7 @@ class ProjectStore:
             item["providers_requested"] = json.loads(item.pop("providers_json"))
             item["sources_responded"] = json.loads(item.pop("sources_responded_json"))
             item["provider_coverage"] = json.loads(item.pop("provider_coverage_json"))
+            item["manifest"] = json.loads(item.pop("manifest_json"))
             item["results"] = json.loads(item.pop("results_json"))
             runs.append(item)
         return {"project": project, "search_runs": runs}

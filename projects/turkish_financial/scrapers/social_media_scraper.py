@@ -17,6 +17,7 @@ CollectSocialSentimentUseCase.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -35,9 +36,23 @@ class SocialMediaScraper(BaseScraper):
     # X 'live' search; %23 = '#', %24 = '$'. We render both the hashtag and cashtag
     # variants because Turkish FinTwit uses them interchangeably.
     SEARCH_URL = "https://x.com/search?q={query}&src=typed_query&f=live"
-    QUERY_FORMS = ("%23{t}", "%24{t}")  # #TICKER, $TICKER
+    QUERY_FORMS = (
+        "%23{t}", "%24{t}", "%23BIST%20%23{t}",
+        "{t}%20(borsa%20OR%20hisse)%20lang%3Atr",
+    )
 
     LOCATION_TR = {"country": "TR", "languages": ["tr-TR", "tr"]}
+
+    @staticmethod
+    def _configured_account_queries(ticker: str) -> List[str]:
+        """Add local operator-configured finance accounts without hard-coding handles."""
+        accounts = os.getenv("TWITTER_FINANCE_ACCOUNTS", "").split(",")
+        queries = []
+        for account in accounts:
+            handle = account.strip().lstrip("@")
+            if re.fullmatch(r"[A-Za-z0-9_]{1,15}", handle):
+                queries.append(f"from%3A{handle}%20{ticker}")
+        return queries
 
     @staticmethod
     def _within_window(posted: Optional[datetime], days_back: int) -> bool:
@@ -56,7 +71,7 @@ class SocialMediaScraper(BaseScraper):
         ticker = ticker.strip().upper()
         posts: Dict[str, SocialPost] = {}
 
-        for form in self.QUERY_FORMS:
+        for form in (*self.QUERY_FORMS, *self._configured_account_queries(ticker)):
             url = self.SEARCH_URL.format(query=form.format(t=ticker))
             actions = [
                 {"type": "wait", "milliseconds": 4000},

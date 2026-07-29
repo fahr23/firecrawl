@@ -450,7 +450,7 @@ class AcademicLiteratureSearchV2:
     
     def __init__(self, api_url: str = "http://localhost:3002", api_key: str = None):
         self.api_url = api_url
-        self.api_key = api_key or os.getenv("FIRECRAWL_API_KEY", "fc-USER_API_KEY")
+        self.api_key = api_key or os.getenv("FIRECRAWL_API_KEY")
         self.app = Firecrawl(api_url=api_url, api_key=self.api_key)
         self.papers: List[Paper] = []
         self.topics: List[tuple] = []

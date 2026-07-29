@@ -34,7 +34,7 @@ With LLM analysis:
     >>> analysis = engine.analyze(results)
 """
 
-from .models import Article, SearchResult
+from .models import Article, ProviderOutcome, SearchResult
 from .config import Config, APIConfig
 from .engine import AcademicSearchEngine, create_engine
 from .exporters import JSONExporter, MarkdownExporter, CSVExporter, BibTeXExporter, RISExporter
@@ -61,6 +61,7 @@ __all__ = [
     # Models
     "Article",
     "SearchResult",
+    "ProviderOutcome",
     
     # Search providers
     "ScienceDirectSearcher",

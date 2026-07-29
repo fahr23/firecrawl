@@ -56,6 +56,10 @@ class YouTubeCollectRequest(BaseModel):
     )
     days_back: int = Field(default=7, ge=1, le=90)
     limit_per_channel: int = Field(default=50, ge=1, le=200)
+    stored_only: bool = Field(
+        default=False,
+        description="Analyse cached local Whisper/caption transcripts without contacting YouTube.",
+    )
 
 
 class YouTubeScheduleConfigRequest(BaseModel):
@@ -70,8 +74,12 @@ class YouTubeScheduleConfigRequest(BaseModel):
 
 @router.get("/youtube-sentiment/schedule")
 async def get_youtube_schedule():
-    """Return the current YouTube collection schedule."""
+    """Return the current YouTube collection schedule and configured channels."""
     from api.youtube_scheduler import scheduler
+    # Status is also used by the UI and operations checks.  Seed here so a
+    # read-only request accurately reports configured defaults before the
+    # first collection run.
+    scheduler._seed_channels_from_config()
     return {"contract_version": CONTRACT_VERSION, **scheduler.status()}
 
 
@@ -136,6 +144,7 @@ async def youtube_sentiment_collect(
                 channel_urls=channels,
                 days_back=request.days_back,
                 limit_per_channel=request.limit_per_channel,
+                stored_only=request.stored_only,
             )
         finally:
             scheduler.is_running = False

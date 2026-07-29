@@ -68,6 +68,20 @@ class SocialCollectRequest(BaseModel):
     limit_per_ticker: int = Field(default=30, ge=1, le=200)
 
 
+class LatestScoresRefreshRequest(BaseModel):
+    """Bounded, cache-first dashboard refresh for one ticker."""
+
+    ticker: str = Field(..., min_length=1, max_length=12, pattern=r"^[A-Za-z0-9.]+$")
+    days_back: int = Field(default=1, ge=1, le=7)
+
+
+def _collection_summary(source: str, result) -> dict:
+    """Return a compact, honest per-source result without leaking raw errors."""
+    if isinstance(result, JSONResponse):
+        return {"source": source, "status": "error", "detail": "collection failed"}
+    return {"source": source, "status": "ok"}
+
+
 def _repo(db_manager: DatabaseManager) -> NewsArticleRepository:
     return NewsArticleRepository(db_manager)
 
@@ -313,6 +327,87 @@ async def social_sentiment_collect(
         )
 
 
+@router.post("/scores/refresh")
+async def refresh_latest_scores(
+    request: LatestScoresRefreshRequest,
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Use fresh persisted evidence and collect only missing or stale sources.
+
+    The sources run sequentially so each stored aggregate is available to the next
+    collector.  Failures are returned per source, letting the dashboard refresh
+    scores from whichever sources completed successfully.
+    """
+    ticker = request.ticker.strip().upper()
+    try:
+        cache_ttl_seconds = max(60, int(os.getenv("SOURCE_REFRESH_CACHE_TTL_SECONDS", "900")))
+    except ValueError:
+        cache_ttl_seconds = 900
+    try:
+        cache = db_manager.get_source_refresh_cache(ticker, cache_ttl_seconds)
+    except Exception:  # noqa: BLE001 - collection remains available on cache DB failure
+        logger.exception("Dashboard source-cache lookup failed for %s", ticker)
+        cache = {
+            source: {"fresh": False, "age_seconds": None}
+            for source in ("news", "social", "youtube")
+        }
+    results = []
+
+    if cache["news"]["fresh"]:
+        results.append({"source": "news", "status": "cached", **cache["news"]})
+    else:
+        try:
+            result = await news_sentiment_collect(
+                NewsCollectRequest(tickers=[ticker], days_back=request.days_back), db_manager
+            )
+            results.append(_collection_summary("news", result))
+        except Exception:  # noqa: BLE001 - preserve partial source results
+            logger.exception("Dashboard news refresh failed for %s", ticker)
+            results.append({"source": "news", "status": "error", "detail": "collection failed"})
+
+    if cache["social"]["fresh"]:
+        results.append({"source": "social", "status": "cached", **cache["social"]})
+    else:
+        try:
+            result = await social_sentiment_collect(
+                SocialCollectRequest(tickers=[ticker], days_back=request.days_back), db_manager
+            )
+            results.append(_collection_summary("social", result))
+        except Exception:  # noqa: BLE001 - preserve partial source results
+            logger.exception("Dashboard social refresh failed for %s", ticker)
+            results.append({"source": "social", "status": "error", "detail": "collection failed"})
+
+    if cache["youtube"]["fresh"]:
+        results.append({"source": "youtube", "status": "cached", **cache["youtube"]})
+    else:
+        try:
+            from api.routers.youtube_sentiment import (
+                YouTubeCollectRequest,
+                youtube_sentiment_collect,
+            )
+
+            result = await youtube_sentiment_collect(
+                # The dashboard must stay bounded. Native local transcription is
+                # responsible for fetching any new video; this action scores its
+                # persisted Whisper/caption cache without asking YouTube again.
+                YouTubeCollectRequest(days_back=request.days_back, stored_only=True), db_manager
+            )
+            results.append(_collection_summary("youtube", result))
+        except Exception:  # noqa: BLE001 - preserve partial source results
+            logger.exception("Dashboard YouTube refresh failed for %s", ticker)
+            results.append({"source": "youtube", "status": "error", "detail": "collection failed"})
+
+    status = "ok" if all(item["status"] in {"ok", "cached"} for item in results) else "partial"
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "ticker": ticker,
+        "days_back": request.days_back,
+        "cache_ttl_seconds": cache_ttl_seconds,
+        "status": status,
+        "sources": results,
+    }
+
+
 @router.get("/social-sentiment/{instrument}/history")
 async def social_sentiment_history(
     instrument: str,
@@ -342,6 +437,96 @@ async def social_sentiment_point(
 # ════════════════════════════════════════════════════════════════════════════
 # Combined (0.6·news + 0.4·social)
 # ════════════════════════════════════════════════════════════════════════════
+@router.get("/combined-sentiment/ranking")
+async def combined_sentiment_ranking(
+    market: Market = Query(Market.BIST),
+    sort: str = Query("desc", pattern="^(asc|desc)$"),
+    window_days: int = Query(7, ge=1, le=90),
+    limit: int = Query(25, ge=1, le=100),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Return sample-weighted combined scores across a recent time window."""
+    if market != Market.BIST:
+        return {"contract_version": CONTRACT_VERSION, "market": market.value, "items": []}
+    try:
+        rows = db_manager.query(
+            """SELECT ticker, MAX(period_date) AS period_date,
+                      SUM(combined_score * GREATEST(COALESCE(news_count, 0) +
+                          COALESCE(social_count, 0) + COALESCE(youtube_count, 0), 1)) /
+                        SUM(GREATEST(COALESCE(news_count, 0) + COALESCE(social_count, 0) +
+                          COALESCE(youtube_count, 0), 1)) AS combined_score,
+                      SUM(COALESCE(news_count, 0)) AS news_count,
+                      SUM(COALESCE(social_count, 0)) AS social_count,
+                      SUM(COALESCE(youtube_count, 0)) AS youtube_count,
+                      MAX(computed_at) AS computed_at
+               FROM aggregated_ticker_sentiment
+               WHERE combined_score IS NOT NULL
+                 AND period_date >= CURRENT_DATE - (%s - 1)
+               GROUP BY ticker""",
+            (window_days,),
+        )
+        repository = CombinedSentimentRepository(db_manager)
+        items = []
+        for row in rows:
+            payload = repository._payload(row)
+            counts = {name: int(row.get(f"{name}_count") or 0) for name in ("news", "social", "youtube")}
+            source_types = [name for name, count in counts.items() if count > 0]
+            # Shrink thin/single-source evidence toward zero before ranking it.
+            evidence_quality = round((payload["sample_size"] / (payload["sample_size"] + 5)) * (len(source_types) / 3), 4)
+            payload.update({
+                "raw_score": payload["score"],
+                "adjusted_score": round(payload["score"] * evidence_quality, 4),
+                "evidence_quality": evidence_quality,
+                "source_types": source_types,
+                "source_counts": counts,
+            })
+            items.append({"instrument": row["ticker"], "as_of": row["period_date"].isoformat() if row.get("period_date") else None, "payload": payload})
+        items.sort(key=lambda item: item["payload"]["adjusted_score"], reverse=sort == "desc")
+        return {
+            "contract_version": CONTRACT_VERSION, "market": market.value, "sort": sort,
+            "window_days": window_days,
+            "classification": {"positive_above": 0.05, "negative_below": -0.05},
+            "items": items[:limit],
+        }
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception:  # noqa: BLE001
+        logger.exception("Combined sentiment ranking failed")
+        return _db_error("database query failed")
+
+
+@router.get("/combined-sentiment/{instrument}/evidence")
+async def combined_sentiment_evidence(
+    instrument: str, market: Market = Query(Market.BIST),
+    window_days: int = Query(7, ge=1, le=90),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Stored direct URLs underpinning this ticker's news/YouTube evidence."""
+    if market != Market.BIST:
+        return {"instrument": instrument, "market": market.value, "items": []}
+    ticker = instrument.strip().upper()
+    try:
+        rows = db_manager.query(
+            """SELECT source, headline AS title, url, published_at AS occurred_at
+               FROM news_articles WHERE ticker = %s
+                 AND COALESCE(published_at, scraped_at) >= CURRENT_DATE - (%s - 1)
+               UNION ALL
+               SELECT 'youtube', v.title, v.url, v.published_at
+               FROM youtube_videos v JOIN youtube_video_sentiment s ON s.video_id = v.id
+               WHERE s.ticker = %s AND COALESCE(v.published_at, v.scraped_at) >= CURRENT_DATE - (%s - 1)
+               ORDER BY occurred_at DESC NULLS LAST LIMIT 50""",
+            (ticker, window_days, ticker, window_days),
+        )
+        return {"instrument": ticker, "market": market.value, "window_days": window_days,
+                "items": [{"source": row.get("source"), "title": row.get("title"), "url": row.get("url")}
+                          for row in rows if row.get("url")]}
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception:  # noqa: BLE001
+        logger.exception("Combined sentiment evidence lookup failed")
+        return _db_error("database query failed")
+
+
 @router.get("/combined-sentiment/{instrument}/history")
 async def combined_sentiment_history(
     instrument: str,

@@ -17,15 +17,19 @@ nothing and the endpoints return an honest `unavailable` envelope.
 from __future__ import annotations
 
 import logging
+import csv
+import os
+import re
+from pathlib import Path
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
 
-# Static instrument → company_name ILIKE patterns. Turkish company names in KAP vary
-# (legal suffixes, accents), so each ticker maps to one or more substrings we ILIKE on.
-# Owned by us per §0; extend freely — additive changes keep contract_version 1.0.
-STATIC_BIST_MAP: dict[str, List[str]] = {
+# Hand-maintained aliases supplement the complete catalogue loaded below.  Turkish
+# company names in KAP vary (legal suffixes, accents), so common names retain their
+# shorter and ASCII spellings for robust disclosure and transcript matching.
+_BIST_NAME_ALIASES: dict[str, List[str]] = {
     "THYAO": ["türk hava yolları", "turk hava yollari"],
     "AKBNK": ["akbank"],
     "GARAN": ["garanti"],
@@ -56,6 +60,76 @@ STATIC_BIST_MAP: dict[str, List[str]] = {
     "GUBRF": ["gübre fabrikaları", "gubre fabrikalari"],
     "VESTL": ["vestel"],
     "DOHOL": ["doğan holding", "dogan holding"],
+}
+
+_BIST_DISPLAY_FALLBACK: dict[str, str] = {
+    "THYAO": "Türk Hava Yolları", "AKBNK": "Akbank", "GARAN": "Garanti BBVA",
+    "ISCTR": "Türkiye İş Bankası", "YKBNK": "Yapı ve Kredi Bankası",
+    "HALKB": "Halkbank", "VAKBN": "VakıfBank", "EREGL": "Ereğli Demir ve Çelik",
+    "KCHOL": "Koç Holding", "SAHOL": "Sabancı Holding", "BIMAS": "BİM",
+    "ASELS": "Aselsan", "TUPRS": "Tüpraş", "SISE": "Şişecam", "PETKM": "Petkim",
+    "TCELL": "Turkcell", "TTKOM": "Türk Telekom", "FROTO": "Ford Otosan",
+    "TOASO": "Tofaş", "ARCLK": "Arçelik", "PGSUS": "Pegasus", "KOZAL": "Koza Altın",
+    "KOZAA": "Koza Anadolu", "ENKAI": "Enka İnşaat", "TKFEN": "Tekfen",
+    "SASA": "Sasa Polyester", "HEKTS": "Hektaş", "GUBRF": "Gübre Fabrikaları",
+    "VESTL": "Vestel", "DOHOL": "Doğan Holding",
+}
+
+
+def _catalog_paths() -> List[Path]:
+    """Return catalogue locations for Compose, local development, and tests."""
+    configured = os.getenv("BIST_CATALOG_PATH", "").strip()
+    paths = [Path(configured)] if configured else []
+    # Compose mounts the shared, versioned catalogue here.  The repository-relative
+    # path keeps direct local execution working without an environment variable.
+    paths.extend([
+        Path("/data/bist_tum.csv"),
+        Path(__file__).resolve().parents[3] / "bist_companies" / "BIST TÜM.csv",
+    ])
+    return paths
+
+
+def _load_static_bist_catalog() -> dict[str, str]:
+    """Load every current symbol from the versioned BIST CSV snapshot.
+
+    The CSV's first field can contain more than one Yahoo-style symbol (for example
+    ``A1CAP, ACP.IS``).  Only symbols ending in ``.IS`` are BIST instruments.
+    """
+    for path in _catalog_paths():
+        try:
+            with path.open("r", encoding="utf-8", newline="") as source:
+                catalogue: dict[str, str] = {}
+                for row in csv.DictReader(source):
+                    name = (row.get("Name") or "").strip()
+                    for code in re.findall(r"\b([A-Z0-9]{3,10})(?=\.IS\b)", row.get("Code.IS") or ""):
+                        if name:
+                            catalogue[code] = name
+                if catalogue:
+                    logger.info("Loaded %d BIST instruments from %s", len(catalogue), path)
+                    return catalogue
+        except OSError:
+            continue
+        except (csv.Error, UnicodeError) as exc:
+            logger.warning("BIST catalogue %s could not be read: %s", path, exc)
+
+    logger.warning("BIST catalogue file unavailable; using the minimal built-in fallback")
+    return dict(_BIST_DISPLAY_FALLBACK)
+
+
+# Complete versioned fallback catalogue.  The database is authoritative once seeded;
+# this map makes first startup and text detection cover every symbol in the snapshot.
+STATIC_BIST_CATALOG: dict[str, str] = _load_static_bist_catalog()
+# Preserve shorter UI labels only for symbols in the active BIST TÜM snapshot.
+# Do not accidentally re-add a delisted or non-equity instrument from an old alias.
+for _code, _name in _BIST_DISPLAY_FALLBACK.items():
+    if _code in STATIC_BIST_CATALOG:
+        STATIC_BIST_CATALOG[_code] = _name
+
+# STATIC_BIST_MAP intentionally covers every catalogue ticker.  Names from the
+# catalogue provide a safe default phrase, while aliases add KAP/transcript variants.
+STATIC_BIST_MAP: dict[str, List[str]] = {
+    code: [name, *_BIST_NAME_ALIASES.get(code, [])]
+    for code, name in STATIC_BIST_CATALOG.items()
 }
 
 _BIST = "bist"

@@ -4,6 +4,7 @@ Data models for Academic Search.
 This module defines the core data structures used throughout the package.
 """
 
+from copy import deepcopy
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -21,6 +22,44 @@ class ArticleSource(Enum):
     ARXIV = "arxiv"
     IEEE = "ieee"
     UNKNOWN = "unknown"
+
+
+PROVIDER_OUTCOME_STATUSES = {
+    "requested", "responded", "empty", "unavailable", "rate_limited", "failed",
+}
+
+
+@dataclass
+class ProviderOutcome:
+    """A safe, machine-readable account of one provider attempt.
+
+    ``message`` is intentionally a short classification, never a raw exception or
+    response body, so result manifests can be shared without leaking credentials or
+    provider internals.
+    """
+
+    provider: str
+    status: str
+    requested: bool = True
+    returned_count: int = 0
+    total_found: int = 0
+    error_code: Optional[str] = None
+    message: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.status not in PROVIDER_OUTCOME_STATUSES:
+            raise ValueError(f"Unsupported provider outcome status: {self.status}")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "status": self.status,
+            "requested": self.requested,
+            "returned_count": self.returned_count,
+            "total_found": self.total_found,
+            "error_code": self.error_code,
+            "message": self.message,
+        }
 
 
 @dataclass
@@ -78,6 +117,14 @@ class Article:
     citation_count: Optional[int] = None
     references: List[str] = field(default_factory=list)
     raw_data: Optional[Dict[str, Any]] = field(default=None, repr=False)
+
+    # Provider records are retained independently of mutable display fields.  The
+    # original abstract is never overwritten when enrichment supplies a replacement.
+    original_abstract: Optional[str] = field(default=None, init=False, repr=False)
+    _original_record: Optional[Dict[str, Any]] = field(default=None, init=False, repr=False)
+    _provider_records: List[Dict[str, Any]] = field(default_factory=list, init=False, repr=False)
+    field_provenance: Dict[str, List[Dict[str, str]]] = field(default_factory=dict)
+    derived_outputs: List[Dict[str, Any]] = field(default_factory=list, repr=False)
     
     # Analysis results (populated by analyzers)
     analysis: Optional[Dict[str, Any]] = field(default=None, repr=False)
@@ -94,6 +141,53 @@ class Article:
         # Clean abstract whitespace
         if self.abstract:
             self.abstract = ' '.join(self.abstract.split())
+        self.original_abstract = self.abstract
+        # Never expose the provider response in normal exports; retain a defensive
+        # copy for audit/debug use so later normalization/enrichment cannot mutate it.
+        self._original_record = deepcopy(self.raw_data) if self.raw_data is not None else None
+        self._provider_records.append({"source": self.source, "record": deepcopy(self.raw_data)})
+        for name in ("title", "url", "doi", "abstract", "authors", "journal", "year", "keywords",
+                     "is_open_access", "citation_count", "references"):
+            if getattr(self, name) not in (None, "", []):
+                self.field_provenance.setdefault(name, []).append({
+                    "source": self.source,
+                    "method": "provider_record",
+                })
+
+    def set_enriched_abstract(self, abstract: str, source: str) -> None:
+        """Attach an enriched abstract without losing the provider-supplied value."""
+        normalized = " ".join(abstract.split())
+        if not normalized:
+            return
+        self.abstract = normalized
+        self._enriched = True
+        self.field_provenance.setdefault("abstract", []).append({
+            "source": source,
+            "method": "enrichment",
+        })
+
+    @property
+    def original_record(self) -> Optional[Dict[str, Any]]:
+        """Return a copy of the immutable provider snapshot, never a live record."""
+        return deepcopy(self._original_record)
+
+    @property
+    def provider_records(self) -> List[Dict[str, Any]]:
+        """Return independent provider snapshots retained across deduplication."""
+        return deepcopy(self._provider_records)
+
+    def add_provider_record(self, article: "Article") -> None:
+        """Retain a duplicate provider observation without replacing source fields."""
+        self._provider_records.extend(article.provider_records)
+        for field_name, entries in article.field_provenance.items():
+            current = self.field_provenance.setdefault(field_name, [])
+            for entry in entries:
+                if entry not in current:
+                    current.append(deepcopy(entry))
+
+    def add_derived_output(self, output: Dict[str, Any]) -> None:
+        """Store model/topic output separately from provider metadata."""
+        self.derived_outputs.append(deepcopy(output))
     
     @property
     def has_abstract(self) -> bool:
@@ -157,7 +251,8 @@ class Article:
     @property
     def title_normalized(self) -> str:
         """Get normalized title for deduplication."""
-        return self.title.lower().strip()[:50] if self.title else ""
+        import re
+        return re.sub(r"[^a-z0-9]+", " ", (self.title or "").lower()).strip()
     
     @property
     def doi_normalized(self) -> str:
@@ -172,6 +267,8 @@ class Article:
         # Remove internal fields
         data.pop('_enriched', None)
         data.pop('raw_data', None)
+        data.pop('_original_record', None)
+        data.pop('_provider_records', None)
         return data
     
     def to_bibtex(self) -> str:
@@ -223,6 +320,15 @@ class SearchResult:
     search_time: Optional[float] = None
     topics: List[tuple] = field(default_factory=list)
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    requested_providers: List[str] = field(default_factory=list)
+    provider_outcomes: List[ProviderOutcome] = field(default_factory=list)
+    year_min: Optional[int] = None
+    year_max: Optional[int] = None
+    limit: Optional[int] = None
+    deduplication_version: str = "doi-or-title-author-year-v1"
+    raw_article_count: int = 0
+    deduplicated_article_count: int = 0
+    derived_outputs: List[Dict[str, Any]] = field(default_factory=list)
     
     @property
     def count(self) -> int:
@@ -254,6 +360,26 @@ class SearchResult:
             "topics": [{"topic": t, "score": s} for t, s in self.topics],
             "timestamp": self.timestamp,
             "search_time": self.search_time,
+            "manifest": self.manifest(),
+        }
+
+    def manifest(self) -> Dict[str, Any]:
+        """Return the reproducibility record shared by exports and the project ledger."""
+        return {
+            "query": self.query,
+            "providers_requested": self.requested_providers or self.sources,
+            "provider_outcomes": [outcome.to_dict() for outcome in self.provider_outcomes],
+            "year_min": self.year_min,
+            "year_max": self.year_max,
+            "limit": self.limit,
+            "retrieved_at": self.timestamp,
+            "search_time": self.search_time,
+            "total_provider_matches": self.total_found,
+            "returned_count": self.count,
+            "raw_article_count": self.raw_article_count or self.count,
+            "deduplicated_article_count": self.deduplicated_article_count or self.count,
+            "pagination": {"per_provider_limit": self.limit},
+            "deduplication_version": self.deduplication_version,
         }
     
     def filter_by_year(self, min_year: int, max_year: Optional[int] = None) -> "SearchResult":
@@ -275,6 +401,15 @@ class SearchResult:
             total_found=len(filtered),
             sources=self.sources,
             topics=self.topics,
+            requested_providers=self.requested_providers,
+            provider_outcomes=self.provider_outcomes,
+            year_min=min_year,
+            year_max=max_year,
+            limit=self.limit,
+            deduplication_version=self.deduplication_version,
+            derived_outputs=self.derived_outputs,
+            raw_article_count=self.raw_article_count,
+            deduplicated_article_count=self.deduplicated_article_count,
         )
     
     def filter_with_abstracts(self) -> "SearchResult":
@@ -286,4 +421,13 @@ class SearchResult:
             total_found=len(filtered),
             sources=self.sources,
             topics=self.topics,
+            requested_providers=self.requested_providers,
+            provider_outcomes=self.provider_outcomes,
+            year_min=self.year_min,
+            year_max=self.year_max,
+            limit=self.limit,
+            deduplication_version=self.deduplication_version,
+            derived_outputs=self.derived_outputs,
+            raw_article_count=self.raw_article_count,
+            deduplicated_article_count=self.deduplicated_article_count,
         )

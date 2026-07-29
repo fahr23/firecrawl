@@ -78,8 +78,26 @@ function historyItem(search) {
     "span", "",
     `${search.returned_count} linked result${search.returned_count === 1 ? "" : "s"} · ${search.category} · ${new Date(search.retrieved_at).toLocaleString()}`
   );
-  item.append(title, detail);
+  const repeat = element("button", "secondary", "Repeat search");
+  repeat.type = "button";
+  repeat.addEventListener("click", () => repeatSearch(search));
+  item.append(title, detail, repeat);
   return item;
+}
+
+function repeatSearch(search) {
+  const manifest = search.manifest || {};
+  queryInput.value = search.query || "";
+  categorySelect.value = search.category || "all";
+  document.querySelector("#year-min").value = search.year_min || "";
+  document.querySelector("#limit").value = search.limit_value || manifest.limit || "20";
+  const requested = (search.providers || manifest.providers_requested || [])
+    .map((provider) => String(provider).toLowerCase().replace(" ", "-"));
+  const option = [...providerSelect.options].find((candidate) =>
+    requested.length === 1 && candidate.value === requested[0]
+  );
+  if (option && !option.disabled) providerSelect.value = option.value;
+  runSearch();
 }
 
 async function refreshHistory() {
@@ -117,7 +135,10 @@ async function refreshProjects(preferredId) {
 function renderCoverage(entries) {
   coverage.replaceChildren();
   for (const entry of entries || []) {
-    const item = element("span", `coverage-item ${entry.status}`, `${entry.provider}: ${entry.status === "responded" ? "responded" : "no results / unavailable"}`);
+    const label = entry.error_code
+      ? `${entry.provider}: ${entry.status} (${entry.error_code})`
+      : `${entry.provider}: ${entry.status}`;
+    const item = element("span", `coverage-item ${entry.status}`, label);
     coverage.append(item);
   }
   coverage.hidden = !entries?.length;

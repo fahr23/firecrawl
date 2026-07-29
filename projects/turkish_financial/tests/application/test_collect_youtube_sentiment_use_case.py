@@ -68,8 +68,10 @@ def _video(video_id: str, transcript: str, published: Optional[date] = None) -> 
 class FakeScraper:
     def __init__(self, videos: List[YouTubeVideo]):
         self._videos = videos
+        self.calls = 0
 
     async def scrape_all(self, channel_urls, days_back=7, limit_per_channel=50):
+        self.calls += 1
         return {
             "success": True,
             "total": len(self._videos),
@@ -96,8 +98,9 @@ class FakeAnalyzer:
 
 
 class FakeDB:
-    def __init__(self, existing: Optional[Dict] = None):
+    def __init__(self, existing: Optional[Dict] = None, stored_transcripts: Optional[List[Dict]] = None):
         self._existing = existing or {}
+        self._stored_transcripts = stored_transcripts or []
         self.videos: List[Dict] = []
         self.sentiments: List[Dict] = []
         self.aggregates: List[Dict] = []
@@ -108,6 +111,9 @@ class FakeDB:
         pk = self._video_id_counter
         self._video_id_counter += 1
         return pk
+
+    def list_ready_youtube_transcripts(self, days_back: int):
+        return self._stored_transcripts
 
     def upsert_youtube_video_sentiment(self, video_db_id: int, ticker: str,
                                         data: Dict[str, Any]) -> bool:
@@ -217,6 +223,31 @@ class TestCollectYouTubeSentimentUseCase:
 
         assert result["analyzed"] == 0
         assert result["aggregated_tickers"] == 0
+
+    def test_stored_whisper_transcript_is_scored_without_youtube_network_fetch(self):
+        stored = [{
+            "video_id": "local1",
+            "channel": "https://www.youtube.com/@local-finance",
+            "title": "Akbank değerlendirmesi",
+            "url": "https://www.youtube.com/watch?v=local1",
+            "transcript": "Akbank güçlü büyüme ve karlılık açıkladı.",
+            "published_at": datetime(2026, 6, 10),
+            "duration": 300,
+            "lang": "tr",
+            "transcript_method": "whisper",
+        }]
+        db = FakeDB(stored_transcripts=stored)
+        scraper = FakeScraper([])
+        analyzer = FakeAnalyzer({"Akbank": _sentiment(SentimentType.POSITIVE, 0.8)})
+
+        result = run(CollectYouTubeSentimentUseCase(scraper, analyzer, db).execute(
+            channel_urls=[], days_back=7, stored_only=True,
+        ))
+
+        assert scraper.calls == 0
+        assert result["cached_transcripts"] == 1
+        assert result["analyzed"] == 1
+        assert {row["ticker"] for row in db.aggregates} == {"AKBNK"}
 
     def test_bad_ticker_analysis_does_not_abort_run(self):
         """Analyzer failure on one ticker should not prevent other tickers from being processed."""

@@ -28,22 +28,73 @@
           <h2 id="lookup-title">Company signal</h2>
         </div>
         <form id="lookup-form">
-          <label>Ticker<input id="instrument" name="instrument" value="THYAO" maxlength="12" pattern="[A-Za-z0-9.]{1,12}" required></label>
+          <label>Stock / company
+            <input id="instrument" name="instrument" value="THYAO" list="instrument-options" maxlength="12" pattern="[A-Za-z0-9.]{1,12}" required>
+            <datalist id="instrument-options"></datalist>
+          </label>
           <label>Dataset
             <select id="kind" name="kind">
-              <option value="sentiment">Sentiment</option>
+              <option value="sentiment">KAP disclosure sentiment</option>
+              <option value="combined-sentiment">Combined sentiment</option>
+              <option value="news-sentiment">News-portal sentiment</option>
+              <option value="social-sentiment">Social sentiment</option>
+              <option value="youtube-sentiment">YouTube sentiment</option>
               <option value="fundamental">KAP fundamentals</option>
             </select>
           </label>
           <button type="submit">Load data</button>
         </form>
-        <p id="lookup-status" class="note">Fundamental data may require an on-demand KAP retrieval when no cached record exists.</p>
+        <p id="lookup-status" class="note">Choose the sentiment source explicitly. “KAP disclosure sentiment” is distinct from news, social, YouTube, and combined sentiment. Fundamental data may require an on-demand KAP retrieval when no cached record exists.</p>
+        <p id="catalog-status" class="note"></p>
       </section>
 
       <section id="result" class="result" hidden aria-live="polite">
         <div class="result-heading"><div><p id="result-kicker" class="eyebrow"></p><h2 id="result-title"></h2></div><span id="result-status" class="pill"></span></div>
         <dl id="summary" class="summary"></dl>
         <details><summary>Source response</summary><pre id="raw-response"></pre></details>
+      </section>
+
+      <section class="refresh" aria-labelledby="refresh-title">
+        <div>
+          <p class="eyebrow">Latest source data</p>
+          <h2 id="refresh-title">Refresh scores</h2>
+        </div>
+        <div class="refresh-controls">
+          <label>Lookback<select id="refresh-window"><option value="1" selected>Last day</option><option value="3">Last 3 days</option><option value="7">Last week</option></select></label>
+          <button id="refresh-scores" type="button">Fetch latest source data</button>
+        </div>
+        <p id="refresh-status" class="note">Fetches the newest configured news, social, and YouTube evidence for the selected ticker. This local action can take several minutes.</p>
+      </section>
+
+      <section class="local-transcription" aria-labelledby="local-transcription-title">
+        <div>
+          <p class="eyebrow">This Mac only</p>
+          <h2 id="local-transcription-title">Local video transcription</h2>
+        </div>
+        <div class="local-transcription-controls">
+          <label>YouTube access<select id="local-youtube-browser"><option value="">Public video access</option><option value="chrome">Use Chrome session</option><option value="safari">Use Safari session</option><option value="firefox">Use Firefox session</option></select></label>
+          <button id="run-local-transcription" type="button">Run local video transcription</button>
+          <button id="stop-local-transcription" class="secondary-action" type="button" disabled>Stop safely</button>
+        </div>
+        <p id="local-transcription-status" class="note">Checks captions first, then runs Whisper small only for new videos without captions. The model is not kept in memory between runs.</p>
+        <div class="youtube-sources" aria-labelledby="youtube-sources-title">
+          <div><p class="eyebrow">Next run</p><h3 id="youtube-sources-title">YouTube sources</h3></div>
+          <ul id="local-youtube-sources" class="youtube-source-list" aria-live="polite"></ul>
+          <form id="add-local-youtube-source" class="add-youtube-source">
+            <label>Channel URL<input id="local-youtube-source-url" type="url" placeholder="https://www.youtube.com/@channel" required></label>
+            <button type="submit">Add channel</button>
+            <button id="reset-local-youtube-sources" class="secondary-action" type="button">Use project defaults</button>
+          </form>
+          <p id="local-youtube-sources-status" class="note">Loading configured YouTube channels…</p>
+        </div>
+      </section>
+
+      <section class="ranking" aria-labelledby="ranking-title">
+        <div><p class="eyebrow">Evidence-first ranking</p><h2 id="ranking-title">Combined sentiment by time window</h2></div>
+        <div class="ranking-controls"><label>Window<select id="ranking-window"><option value="3">Last 3 days</option><option value="7" selected>Last week</option><option value="30">Last month</option></select></label><label>Order<select id="ranking-sort"><option value="desc">Positive → negative</option><option value="asc">Negative → positive</option></select></label><button id="load-ranking" type="button">Load ranking</button></div>
+        <div class="score-guide"><article><strong>Raw score</strong><span>Direction from −1 to +1.</span></article><article><strong>Evidence quality</strong><span>Rewards more samples and independent source types.</span></article><article><strong>Adjusted score</strong><span>Ranking score: raw direction reduced when evidence is thin.</span></article></div>
+        <p class="note">Above +0.05 is positive; below −0.05 is negative; the middle band is neutral. A ranking describes stored evidence; it is not investment advice.</p>
+        <ol id="ranking-list" class="ranking-list"></ol>
       </section>
     </main>
   </body>

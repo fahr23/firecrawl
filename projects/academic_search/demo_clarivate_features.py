@@ -10,13 +10,9 @@ This script showcases all the enhanced capabilities added to the ClarivateSearch
 5. Convenience methods for common searches
 """
 
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from api_academic_search.engine import create_engine
-from api_academic_search.providers import ClarivateSearcher
-from api_academic_search.config import Config
+from academic_search.engine import create_engine
+from academic_search.providers import ClarivateSearcher
+from academic_search.config import Config
 import logging
 
 def print_separator(title=""):

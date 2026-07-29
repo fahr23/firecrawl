@@ -6,7 +6,8 @@ This module provides various export formats for academic search results.
 
 import json
 import csv
-from datetime import datetime
+import io
+import re
 from typing import List, Optional
 from pathlib import Path
 
@@ -63,7 +64,7 @@ class JSONExporter(BaseExporter):
                 "total_found": result.total_found,
                 "sources": result.sources,
                 "exported_count": len(result.articles),
-                "export_time": datetime.now().isoformat(),
+                "manifest": result.manifest(),
                 "articles_with_abstracts": sum(
                     1 for a in result.articles if a.abstract
                 )
@@ -86,7 +87,8 @@ class JSONExporter(BaseExporter):
                 "query": result.query,
                 "total_found": result.total_found,
                 "sources": result.sources,
-                "exported_count": len(result.articles)
+                "exported_count": len(result.articles),
+                "manifest": result.manifest(),
             }
         
         return json.dumps(data, indent=self.indent, ensure_ascii=False)
@@ -152,6 +154,18 @@ class CSVExporter(BaseExporter):
         
         self.logger.info(f"Exported {len(result.articles)} articles to {filepath}")
         return filepath
+
+    def export_to_string(self, result: SearchResult) -> str:
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=self.fields, lineterminator="\n")
+        writer.writeheader()
+        for article in result.articles:
+            row = {}
+            for field in self.fields:
+                value = getattr(article, field, '')
+                row[field] = '; '.join(value) if isinstance(value, list) else value
+            writer.writerow(row)
+        return output.getvalue()
 
 
 class MarkdownExporter(BaseExporter):
@@ -219,7 +233,8 @@ class MarkdownExporter(BaseExporter):
         
         with_abstracts = sum(1 for a in result.articles if a.abstract)
         lines.append(f"**With Abstracts:** {with_abstracts}")
-        lines.append(f"**Export Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+        lines.append(f"**Retrieved at:** {result.timestamp}")
+        lines.append(f"**Deduplication:** {result.deduplication_version}")
         lines.append("")
         lines.append("---")
         lines.append("")
@@ -302,11 +317,7 @@ class BibTeXExporter(BaseExporter):
         """
         filepath = self._ensure_extension(filepath)
         
-        entries = []
-        for article in result.articles:
-            entry = article.to_bibtex()
-            if entry:
-                entries.append(entry)
+        entries = self._entries(result)
         
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write("\n\n".join(entries))
@@ -316,12 +327,23 @@ class BibTeXExporter(BaseExporter):
     
     def export_to_string(self, result: SearchResult) -> str:
         """Export results to BibTeX string."""
+        return "\n\n".join(self._entries(result))
+
+    @staticmethod
+    def _entries(result: SearchResult) -> List[str]:
         entries = []
+        key_counts = {}
         for article in result.articles:
             entry = article.to_bibtex()
             if entry:
+                first_author = (article.authors or "unknown").split(",")[0].split()[-1]
+                base_key = re.sub(r"[^a-z0-9]", "", first_author.lower()) or "unknown"
+                base_key = f"{base_key}{article.year or 'nd'}"
+                key_counts[base_key] = key_counts.get(base_key, 0) + 1
+                key = base_key if key_counts[base_key] == 1 else f"{base_key}{chr(96 + key_counts[base_key])}"
+                entry = re.sub(r"^@article\{[^,]+,", f"@article{{{key},", entry)
                 entries.append(entry)
-        return "\n\n".join(entries)
+        return entries
 
 
 class RISExporter(BaseExporter):
@@ -349,12 +371,13 @@ class RISExporter(BaseExporter):
         filepath = self._ensure_extension(filepath)
         
         with open(filepath, 'w', encoding='utf-8') as f:
-            for article in result.articles:
-                f.write(self._format_ris_entry(article))
-                f.write("\n")
+            f.write(self.export_to_string(result))
         
         self.logger.info(f"Exported {len(result.articles)} articles to {filepath}")
         return filepath
+
+    def export_to_string(self, result: SearchResult) -> str:
+        return "\n".join(self._format_ris_entry(article) for article in result.articles) + ("\n" if result.articles else "")
     
     def _format_ris_entry(self, article: Article) -> str:
         """Format article as RIS entry."""

@@ -34,6 +34,7 @@ from infrastructure.repositories.external_analysis_repository import (
 )
 from infrastructure.repositories.fundamental_repository import FundamentalRepository
 from infrastructure.repositories.news_repository import NewsRepository
+from infrastructure.contracts.instrument_identity_map import STATIC_BIST_CATALOG
 
 logger = logging.getLogger(__name__)
 
@@ -153,8 +154,12 @@ async def instruments_catalog(
                 WHERE combined_score IS NOT NULL OR news_score IS NOT NULL
             ),
             all_tickers AS (
+                -- The startup seed keeps this active BIST TÜM catalogue complete.
+                -- Stored historical data is joined below for availability flags, not
+                -- unioned here, which avoids duplicate selector rows per ticker.
                 SELECT code AS ticker, name AS company_name, sector
                 FROM bist_companies
+                WHERE is_active = TRUE
             )
             SELECT
                 t.ticker,
@@ -181,7 +186,10 @@ async def instruments_catalog(
         })
 
     items = []
+    seen = set()
     for r in rows:
+        ticker = r["ticker"].upper()
+        seen.add(ticker)
         available = []
         if r.get("has_sentiment"):
             available.append("sentiment")
@@ -190,12 +198,25 @@ async def instruments_catalog(
         if r.get("has_news_sentiment"):
             available.extend(["news_sentiment", "combined_sentiment"])
         items.append({
-            "ticker": r["ticker"],
-            "company_name": r.get("company_name"),
+            "ticker": ticker,
+            "company_name": r.get("company_name") or STATIC_BIST_CATALOG.get(ticker),
             "sector": r.get("sector"),
             "market": market.value,
             "available_data": available,
+            "catalog_source": "database",
         })
+
+    # A data-poor database should not force users to remember tickers.  These are
+    # explicitly labelled starter records; they do not imply a stored sentiment or
+    # fundamental record exists.
+    for ticker, company_name in STATIC_BIST_CATALOG.items():
+        if ticker not in seen:
+            items.append({
+                "ticker": ticker, "company_name": company_name, "sector": None,
+                "market": market.value, "available_data": [],
+                "catalog_source": "built_in_catalog",
+            })
+    items.sort(key=lambda item: item["ticker"])
 
     return {
         "contract_version": CONTRACT_VERSION,

@@ -185,16 +185,25 @@ def _parse_providers(value: Optional[str]) -> List[str]:
     return [PROVIDERS[item] for item in requested]
 
 
-def _provider_coverage(provider_names: List[str], sources_responded: Iterable[str]) -> List[Dict[str, str]]:
-    """Report what the aggregator observed without inferring unavailable-provider errors."""
+def _provider_coverage(provider_names: List[str], sources_responded: Iterable[str],
+                       outcomes: Optional[Iterable[Dict[str, Any]]] = None) -> List[Dict[str, str]]:
+    """Return explicit provider outcomes without collapsing failures into empties."""
     responded = {source.lower() for source in sources_responded}
-    return [
-        {
+    by_provider = {
+        str(item.get("provider", "")).lower(): item
+        for item in (outcomes or [])
+    }
+    coverage = []
+    for provider in provider_names:
+        outcome = by_provider.get(provider.lower(), {})
+        item = {
             "provider": provider,
-            "status": "responded" if provider.lower() in responded else "no_results_or_unavailable",
+            "status": str(outcome.get("status", "responded" if provider.lower() in responded else "unavailable")),
         }
-        for provider in provider_names
-    ]
+        if outcome.get("error_code"):
+            item["error_code"] = outcome["error_code"]
+        coverage.append(item)
+    return coverage
 
 
 def _project_store_path() -> str:
@@ -221,6 +230,11 @@ def _markdown_evidence(evidence: Dict[str, Any]) -> str:
             f"Filters: category={run['category']}; years={run['year_min'] or 'any'}–{run['year_max'] or 'any'}; limit={run['limit_value']}",
             f"Requested providers: {', '.join(run['providers_requested'])}",
             f"Responding sources: {', '.join(run['sources_responded']) or 'none recorded'}",
+            f"Deduplication: {run.get('manifest', {}).get('deduplication_version', 'not recorded')}",
+            "Provider outcomes: " + ", ".join(
+                f"{item.get('provider')}: {item.get('status')}"
+                for item in run.get("manifest", {}).get("provider_outcomes", [])
+            ),
             "", "### Linked results",
         ])
         for paper in run["results"]:
@@ -255,6 +269,8 @@ def _serialize_article(article: Article) -> Optional[Dict[str, Any]]:
         "category": category,
         "category_label": CATEGORIES[category]["label"],
         "category_provenance": "derived:keyword-rules-v1",
+        "field_provenance": article.field_provenance,
+        "derived_outputs": article.derived_outputs,
     }
 
 
@@ -521,6 +537,7 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             "category_provenance": "derived:keyword-rules-v1",
             "providers_requested": provider_names,
             "sources_responded": result.sources,
+            "provider_outcomes": [outcome.to_dict() for outcome in result.provider_outcomes],
             "retrieved_at": result.timestamp,
             "search_time": result.search_time,
             "total_provider_matches": result.total_found,
@@ -529,7 +546,11 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             "year_min": year_min,
             "year_max": year_max,
             "limit": limit,
-            "provider_coverage": _provider_coverage(provider_names, result.sources),
+            "provider_coverage": _provider_coverage(
+                provider_names, result.sources,
+                [outcome.to_dict() for outcome in result.provider_outcomes],
+            ),
+            "manifest": result.manifest(),
         }
         if project_id:
             store.update_project(project_id, {

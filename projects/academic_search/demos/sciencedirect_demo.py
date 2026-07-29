@@ -12,7 +12,7 @@ import time
 def main():
     # Initialize the client (local instance)
     api_url = "http://localhost:3002"
-    api_key = os.getenv("FIRECRAWL_API_KEY", "fc-USER_API_KEY")
+    api_key = os.getenv("FIRECRAWL_API_KEY")
 
     print(f"Initializing Firecrawl client with API URL: {api_url}")
     app = Firecrawl(api_url=api_url, api_key=api_key)

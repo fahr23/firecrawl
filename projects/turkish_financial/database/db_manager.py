@@ -152,6 +152,10 @@ class DatabaseManager:
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {}.bist_companies
+                    ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE
+            ''').format(sql.Identifier(self.schema)))
             
             # BIST Index Members table
             cursor.execute(sql.SQL('''
@@ -564,11 +568,29 @@ class DatabaseManager:
                     title TEXT,
                     url TEXT,
                     transcript TEXT,
+                    transcript_method VARCHAR(30),
+                    transcript_status VARCHAR(30),
+                    transcript_attempted_at TIMESTAMP,
                     published_at TIMESTAMP,
                     duration INTEGER,
                     lang VARCHAR(10),
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
+            ''').format(sql.Identifier(self.schema)))
+
+            # These fields are additive so existing local databases can adopt the
+            # native macOS transcript runner without a destructive migration.
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {}.youtube_videos
+                    ADD COLUMN IF NOT EXISTS transcript_method VARCHAR(30)
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {}.youtube_videos
+                    ADD COLUMN IF NOT EXISTS transcript_status VARCHAR(30)
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {}.youtube_videos
+                    ADD COLUMN IF NOT EXISTS transcript_attempted_at TIMESTAMP
             ''').format(sql.Identifier(self.schema)))
 
             cursor.execute(sql.SQL('''
@@ -913,6 +935,59 @@ class DatabaseManager:
         finally:
             self.return_connection(conn)
 
+    def seed_bist_catalog(self, catalog: Dict[str, str]) -> int:
+        """Insert the versioned BIST catalogue without overwriting scraped metadata.
+
+        The local CSV is only the bootstrap source. Once rows exist, KAP refreshes
+        may add sectors and member OIDs; this seed fills missing names and symbols
+        only and is safe to run at every service startup.
+        """
+        rows = [
+            (code.strip().upper(), name.strip(), f"{code.strip().upper()}.IS")
+            for code, name in catalog.items()
+            if code and name
+        ]
+        if not rows:
+            return 0
+
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            query = sql.SQL(
+                "INSERT INTO {}.bist_companies (code, name, symbol, is_active) VALUES (%s, %s, %s, TRUE) "
+                "ON CONFLICT (code) DO UPDATE SET "
+                "name = COALESCE(NULLIF({}.bist_companies.name, ''), EXCLUDED.name), "
+                "symbol = COALESCE(NULLIF({}.bist_companies.symbol, ''), EXCLUDED.symbol), "
+                "is_active = TRUE"
+            ).format(
+                sql.Identifier(self.schema),
+                sql.Identifier(self.schema),
+                sql.Identifier(self.schema),
+            )
+            # One connection and transaction keep this inexpensive while avoiding a
+            # dependency on psycopg2 bulk helpers (the project's DB test doubles
+            # intentionally expose only the normal cursor interface).
+            for row in rows:
+                cursor.execute(query, row)
+            # A complete BIST TÜM snapshot represents the active-share universe.
+            # Keep old rows for historic sentiment/fundamental queries, but omit them
+            # from discovery rather than presenting certificates or stale instruments.
+            if len(rows) >= 500:
+                cursor.execute(
+                    sql.SQL("UPDATE {}.bist_companies SET is_active = FALSE WHERE code <> ALL(%s)").format(
+                        sql.Identifier(self.schema)
+                    ),
+                    ([row[0] for row in rows],),
+                )
+            conn.commit()
+            return len(rows)
+        except Exception as e:
+            logger.error(f"seed_bist_catalog failed: {e}")
+            conn.rollback()
+            raise
+        finally:
+            self.return_connection(conn)
+
     def upsert_news(self, data: Dict[str, Any]) -> Optional[int]:
         """
         Upsert one row into kap_news keyed on news_id. Returns the row id.
@@ -976,6 +1051,7 @@ class DatabaseManager:
                 sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
                 for k in row if k != "article_id"
             )
+            set_clause += sql.SQL(", scraped_at = CURRENT_TIMESTAMP")
             q = sql.SQL(
                 "INSERT INTO {schema}.news_articles ({cols}) VALUES ({vals}) "
                 "ON CONFLICT (article_id) DO UPDATE SET {set} RETURNING id"
@@ -1095,6 +1171,7 @@ class DatabaseManager:
                 sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
                 for k in row if k != "post_id"
             )
+            set_clause += sql.SQL(", scraped_at = CURRENT_TIMESTAMP")
             q = sql.SQL(
                 "INSERT INTO {schema}.social_media_posts ({cols}) VALUES ({vals}) "
                 "ON CONFLICT (post_id) DO UPDATE SET {set} RETURNING id"
@@ -1159,7 +1236,101 @@ class DatabaseManager:
         )
         return rows[0] if rows else None
 
+    def get_source_refresh_cache(
+        self, ticker: str, max_age_seconds: int
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return independent database freshness for news, social, and YouTube."""
+        ticker = ticker.strip().upper()
+        rows = self.query(
+            """SELECT source, updated_at,
+                      CASE WHEN updated_at IS NULL THEN NULL
+                           ELSE EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - updated_at))::BIGINT
+                      END AS age_seconds
+               FROM (
+                   SELECT 'news' AS source, MAX(scraped_at) AS updated_at
+                   FROM news_articles WHERE ticker = %s
+                   UNION ALL
+                   SELECT 'social' AS source, MAX(scraped_at) AS updated_at
+                   FROM social_media_posts WHERE ticker = %s
+                   UNION ALL
+                   SELECT 'youtube' AS source, MAX(v.scraped_at) AS updated_at
+                   FROM youtube_videos v
+                   JOIN youtube_video_sentiment s ON s.video_id = v.id
+                   WHERE s.ticker = %s
+               ) source_updates""",
+            (ticker, ticker, ticker),
+        )
+        result = {
+            source: {"fresh": False, "age_seconds": None}
+            for source in ("news", "social", "youtube")
+        }
+        for row in rows:
+            source = row.get("source")
+            age_seconds = row.get("age_seconds")
+            if source not in result:
+                continue
+            age = int(age_seconds) if age_seconds is not None else None
+            result[source] = {
+                "fresh": age is not None and age <= max_age_seconds,
+                "age_seconds": age,
+            }
+        return result
+
     # ── YouTube video persistence ─────────────────────────────────────────────
+
+    def get_youtube_transcript_cache(self, video_id: str) -> Dict[str, Any]:
+        """Return whether a video should be skipped by the native transcript runner.
+
+        A stored transcript is immutable for collection purposes. A failed fetch is
+        retried only after 24 hours, which keeps repeated dashboard/manual runs from
+        hammering YouTube when an IP is rate limited.
+        """
+        rows = self.query(
+            """SELECT video_id,
+                      CASE WHEN COALESCE(LENGTH(BTRIM(transcript)), 0) > 0
+                           THEN TRUE ELSE FALSE END AS ready,
+                      transcript_status,
+                      CASE WHEN transcript_status = 'retry_later'
+                                AND transcript_attempted_at > CURRENT_TIMESTAMP - INTERVAL '24 hours'
+                           THEN TRUE ELSE FALSE END AS retry_later
+               FROM youtube_videos
+               WHERE video_id = %s
+               LIMIT 1""",
+            (video_id.strip(),),
+        )
+        if not rows:
+            return {"exists": False, "ready": False, "retry_later": False}
+
+        row = rows[0]
+        return {
+            "exists": True,
+            "ready": bool(row.get("ready")),
+            "retry_later": bool(row.get("retry_later")),
+            "transcript_status": row.get("transcript_status"),
+        }
+
+    def list_ready_youtube_transcripts(
+        self, days_back: int = 7, limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Return persisted caption/Whisper text ready for local score analysis.
+
+        The native host collector is the source of truth for caption-less videos.
+        Keep this read bounded and based on the video publication date so replaying a
+        score window never needs to download the same audio again.
+        """
+        return self.query(
+            """SELECT video_id, channel, title, url, transcript, published_at,
+                      duration, lang, transcript_method, transcript_status,
+                      transcript_attempted_at, scraped_at
+               FROM youtube_videos
+               WHERE COALESCE(LENGTH(BTRIM(transcript)), 0) > 0
+                 AND transcript_status = 'ready'
+                 AND COALESCE(published_at, scraped_at) >=
+                     CURRENT_TIMESTAMP - (%s * INTERVAL '1 day')
+               ORDER BY COALESCE(published_at, scraped_at) DESC
+               LIMIT %s""",
+            (max(1, min(int(days_back), 90)), max(1, min(int(limit), 1000))),
+        )
 
     def upsert_youtube_video(self, data: Dict[str, Any]) -> Optional[int]:
         """
@@ -1171,6 +1342,7 @@ class DatabaseManager:
         try:
             cursor = conn.cursor()
             cols = ["video_id", "channel", "title", "url", "transcript",
+                    "transcript_method", "transcript_status", "transcript_attempted_at",
                     "published_at", "duration", "lang"]
             row = {c: data.get(c) for c in cols if data.get(c) is not None}
             if not row.get("video_id"):
@@ -1180,6 +1352,7 @@ class DatabaseManager:
                 sql.SQL("{} = EXCLUDED.{}").format(sql.Identifier(k), sql.Identifier(k))
                 for k in row if k != "video_id"
             )
+            set_clause += sql.SQL(", scraped_at = CURRENT_TIMESTAMP")
             q = sql.SQL(
                 "INSERT INTO {schema}.youtube_videos ({cols}) VALUES ({vals}) "
                 "ON CONFLICT (video_id) DO UPDATE SET {set} RETURNING id"

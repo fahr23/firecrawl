@@ -8,12 +8,13 @@ Uses Firecrawl with actions to:
 """
 
 from firecrawl import FirecrawlApp
+import os
 import json
 import re
 import time
 
 # Initialize Firecrawl
-app = FirecrawlApp(api_url="http://localhost:3002", api_key="fc-USER_API_KEY")
+app = FirecrawlApp(api_url=os.getenv("FIRECRAWL_API_URL", "http://localhost:3002"), api_key=os.getenv("FIRECRAWL_API_KEY"))
 
 def test_sciencedirect_search():
     """Test scraping ScienceDirect search page"""
@@ -206,6 +207,8 @@ def test_full_workflow():
 
 
 if __name__ == "__main__":
+    if os.getenv("ACADEMIC_LIVE_TESTS") != "1":
+        raise SystemExit("Set ACADEMIC_LIVE_TESTS=1 to run live diagnostics.")
     results = test_full_workflow()
     
     # Save results

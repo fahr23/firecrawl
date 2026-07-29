@@ -17,6 +17,7 @@ analysis and persistence are orchestrated by CollectNewsSentimentUseCase.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -32,6 +33,15 @@ from domain.entities.news_article import (
     SOURCE_BIGPARA,
     SOURCE_HABERTURK,
     SOURCE_NTV,
+    SOURCE_EKONOMIM,
+    SOURCE_DUNYA,
+    SOURCE_FINANSGUNDEM,
+    SOURCE_PARAAJANSI,
+    SOURCE_AA_EKONOMI,
+    SOURCE_TRT_EKONOMI,
+    SOURCE_BORSAGUNDEM,
+    SOURCE_CNBCE,
+    SOURCE_DOVIZCOM,
     SOURCE_INVESTING_TR,
 )
 from infrastructure.contracts.instrument_identity_map import STATIC_BIST_MAP
@@ -96,6 +106,45 @@ class NewsPortalScraper(BaseScraper):
             "method": "rss",
             "feed_url": "https://www.ntv.com.tr/ekonomi.rss",
         },
+        SOURCE_AA_EKONOMI: {
+            "method": "rss",
+            "feed_url": "https://www.aa.com.tr/tr/teyithatti/rss/news?cat=ekonomi",
+        },
+        SOURCE_TRT_EKONOMI: {
+            "method": "rss",
+            "feed_url": "https://www.trthaber.com/ekonomi_articles.rss",
+        },
+        # Use the proven generic Firecrawl HTML path.  If the site changes or
+        # declines a request, the collector returns no records rather than
+        # inventing a sentiment value.
+        SOURCE_EKONOMIM: {
+            "method": "html",
+            "listing_url": "https://www.ekonomim.com/ekonomi",
+        },
+        SOURCE_DUNYA: {
+            "method": "html",
+            "listing_url": "https://www.dunya.com/finans",
+        },
+        SOURCE_FINANSGUNDEM: {
+            "method": "html",
+            "listing_url": "https://www.finansgundem.com/borsa",
+        },
+        SOURCE_PARAAJANSI: {
+            "method": "html",
+            "listing_url": "https://paraajansi.com.tr/borsa",
+        },
+        SOURCE_BORSAGUNDEM: {
+            "method": "html",
+            "listing_url": "https://www.borsagundem.com/borsa",
+        },
+        SOURCE_CNBCE: {
+            "method": "html",
+            "listing_url": "https://www.cnbce.com/borsa",
+        },
+        SOURCE_DOVIZCOM: {
+            "method": "html",
+            "listing_url": "https://www.doviz.com/guncel-haberler",
+        },
     }
 
     # Investing.com TR per-stock comment pages (dynamic JS). Keyed by ticker so we
@@ -111,6 +160,20 @@ class NewsPortalScraper(BaseScraper):
     }
 
     LOCATION_TR = {"country": "TR", "languages": ["tr-TR", "tr"]}
+
+    @staticmethod
+    def _extra_rss_sources() -> Dict[str, Dict[str, str]]:
+        """Parse optional local RSS sources as ``source_id=https://feed`` pairs."""
+        configured = os.getenv("NEWS_EXTRA_RSS_FEEDS", "")
+        sources: Dict[str, Dict[str, str]] = {}
+        for item in configured.split(","):
+            source, separator, feed_url = item.strip().partition("=")
+            if not separator or not re.fullmatch(r"[a-z0-9_]{2,50}", source):
+                continue
+            if not feed_url.startswith(("https://", "http://")):
+                continue
+            sources[source] = {"method": "rss", "feed_url": feed_url}
+        return sources
 
     # ── ticker tagging ────────────────────────────────────────────────────────
     def _detect_ticker(self, text: str) -> Optional[str]:
@@ -399,12 +462,13 @@ class NewsPortalScraper(BaseScraper):
             {"success", "total", "by_source", "articles": List[NewsArticle]}
         """
         norm_tickers = [t.strip().upper() for t in tickers] if tickers else None
-        selected = sources or list(self.SOURCES.keys())
+        source_configs = {**self.SOURCES, **self._extra_rss_sources()}
+        selected = sources or list(source_configs.keys())
         all_articles: List[NewsArticle] = []
         by_source: Dict[str, int] = {}
 
         for source in selected:
-            cfg = self.SOURCES.get(source)
+            cfg = source_configs.get(source)
             if not cfg:
                 continue
             try:

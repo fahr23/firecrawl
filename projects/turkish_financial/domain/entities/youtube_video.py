@@ -31,6 +31,9 @@ class YouTubeVideo:
     published_at: Optional[datetime] = None
     duration: Optional[int] = None   # seconds
     lang: Optional[str] = None       # e.g. "tr", "en"
+    transcript_method: Optional[str] = None  # caption | whisper
+    transcript_status: Optional[str] = None  # ready | retry_later
+    transcript_attempted_at: Optional[datetime] = None
     scraped_at: datetime = field(default_factory=datetime.utcnow)
 
     def __post_init__(self) -> None:
@@ -95,4 +98,7 @@ class YouTubeVideo:
             "published_at": self.published_at,
             "duration": self.duration,
             "lang": self.lang,
+            "transcript_method": self.transcript_method,
+            "transcript_status": self.transcript_status,
+            "transcript_attempted_at": self.transcript_attempted_at,
         }

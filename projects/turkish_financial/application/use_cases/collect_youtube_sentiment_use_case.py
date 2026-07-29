@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from domain.entities.youtube_video import YouTubeVideo
@@ -43,13 +44,30 @@ class CollectYouTubeSentimentUseCase:
         channel_urls: List[str],
         days_back: int = 7,
         limit_per_channel: int = 50,
+        stored_only: bool = False,
     ) -> Dict[str, Any]:
-        scrape_result = await self._scraper.scrape_all(
-            channel_urls=channel_urls,
-            days_back=days_back,
-            limit_per_channel=limit_per_channel,
-        )
-        videos: List[YouTubeVideo] = scrape_result.get("videos", [])
+        stored_videos = self._stored_transcript_videos(days_back)
+        cached_by_id = {video.video_id: video for video in stored_videos}
+
+        if stored_only:
+            scrape_result: Dict[str, Any] = {"success": True, "total": 0, "by_channel": {}, "videos": []}
+        else:
+            # The real scraper sees this cache and does not request captions for
+            # a video already transcribed on the Mac. Test doubles safely ignore
+            # the attribute and the merge below still preserves stored text.
+            setattr(self._scraper, "_cached_videos_by_id", cached_by_id)
+            scrape_result = await self._scraper.scrape_all(
+                channel_urls=channel_urls,
+                days_back=days_back,
+                limit_per_channel=limit_per_channel,
+            )
+
+        fetched_videos: List[YouTubeVideo] = scrape_result.get("videos", [])
+        # The native transcript always takes precedence over a potentially shorter
+        # remote caption track for the same stable YouTube ID.
+        videos_by_id = {video.video_id: video for video in fetched_videos}
+        videos_by_id.update(cached_by_id)
+        videos = list(videos_by_id.values())
 
         analyzed = 0
         saved = 0
@@ -84,12 +102,52 @@ class CollectYouTubeSentimentUseCase:
 
         return {
             "success": True,
-            "scraped": scrape_result.get("total", len(videos)),
+            "scraped": len(videos),
+            "cached_transcripts": len(stored_videos),
+            "fetched_transcripts": max(0, len(fetched_videos) - int(scrape_result.get("cached", 0))),
             "analyzed": analyzed,
             "saved": saved,
             "aggregated_tickers": aggregated,
             "by_channel": scrape_result.get("by_channel", {}),
         }
+
+    def _stored_transcript_videos(self, days_back: int) -> List[YouTubeVideo]:
+        """Map persisted local text into the normal scoring entity shape."""
+        getter = getattr(self._db, "list_ready_youtube_transcripts", None)
+        if getter is None:
+            return []
+        try:
+            rows = getter(days_back=days_back)
+        except Exception as exc:  # noqa: BLE001 - live fetching can still continue
+            logger.warning("Could not load cached YouTube transcripts: %s", exc)
+            return []
+
+        videos: List[YouTubeVideo] = []
+        for row in rows or []:
+            transcript = str(row.get("transcript") or "").strip()
+            video_id = str(row.get("video_id") or "").strip()
+            if not transcript or not video_id:
+                continue
+            published_at = row.get("published_at")
+            if isinstance(published_at, str):
+                try:
+                    published_at = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                except ValueError:
+                    published_at = None
+            videos.append(YouTubeVideo(
+                channel=str(row.get("channel") or ""),
+                video_id=video_id,
+                title=str(row.get("title") or ""),
+                url=str(row.get("url") or ""),
+                transcript=transcript,
+                published_at=published_at if isinstance(published_at, datetime) else None,
+                duration=row.get("duration"),
+                lang=row.get("lang"),
+                transcript_method=row.get("transcript_method"),
+                transcript_status="ready",
+                transcript_attempted_at=row.get("transcript_attempted_at"),
+            ))
+        return videos
 
     # ── steps ──────────────────────────────────────────────────────────────────
 

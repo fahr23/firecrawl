@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from scrapers.news_portal_scraper import NewsPortalScraper
-from domain.entities.news_article import SOURCE_BLOOMBERG_HT, SOURCE_BIGPARA, SOURCE_INVESTING_TR
+from domain.entities.news_article import SOURCE_BLOOMBERG_HT, SOURCE_BIGPARA, SOURCE_INVESTING_TR, SOURCE_EKONOMIM
 
 
 def run(coro):
@@ -31,6 +31,12 @@ def _make_scraper() -> NewsPortalScraper:
     scraper.db_manager = None
     scraper.firecrawl = None
     return scraper
+
+
+def test_economim_uses_the_standard_firecrawl_html_adapter():
+    config = NewsPortalScraper.SOURCES[SOURCE_EKONOMIM]
+    assert config["method"] == "html"
+    assert config["listing_url"] == "https://www.ekonomim.com/ekonomi"
 
 
 # ── ticker tagging ────────────────────────────────────────────────────────────
@@ -191,6 +197,11 @@ class TestInvestingComments:
 
 # ── orchestration ─────────────────────────────────────────────────────────────
 class TestScrapeAll:
+    def test_includes_verified_additional_turkish_economy_rss_sources(self):
+        s = _make_scraper()
+        assert s.SOURCES["aa_ekonomi"]["feed_url"] == "https://www.aa.com.tr/tr/teyithatti/rss/news?cat=ekonomi"
+        assert s.SOURCES["trt_ekonomi"]["feed_url"] == "https://www.trthaber.com/ekonomi_articles.rss"
+
     def test_aggregates_across_sources(self):
         s = _make_scraper()
         from domain.entities.news_article import NewsArticle

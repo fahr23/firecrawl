@@ -151,10 +151,20 @@ class Config:
         self.proxy = ProxyConfig()
 
         _yt_channels_raw = os.getenv("YOUTUBE_CHANNELS", "")
-        _yt_channels = [c.strip() for c in _yt_channels_raw.split(",") if c.strip()]
+        _yt_extra_channels_raw = os.getenv("YOUTUBE_EXTRA_CHANNELS", "")
+        _yt_channels = [
+            c.strip()
+            for c in f"{_yt_channels_raw},{_yt_extra_channels_raw}".split(",")
+            if c.strip()
+        ]
+        _yt_channels = list(dict.fromkeys(_yt_channels))
         if not _yt_channels:
             _yt_channels = [
                 "https://www.youtube.com/@bistyatirimcipsikolojisi/videos",
+                "https://www.youtube.com/@kanalfinans/videos",
+                "https://www.youtube.com/channel/UCIju0kyYHAqQePXdGFjhLdA/videos",
+                "https://www.youtube.com/@GedikYatirim/videos",
+                "https://www.youtube.com/@ZiraatYatirim/videos",
             ]
         self.youtube = YouTubeConfig(
             channels=_yt_channels,

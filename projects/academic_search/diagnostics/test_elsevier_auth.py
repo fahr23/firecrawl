@@ -1,7 +1,13 @@
+import os
 import requests
 import json
 
-api_key = '7e0c8c4ed4e0fb320d69074f093779d9'
+if os.getenv("ACADEMIC_LIVE_TESTS") != "1":
+    raise SystemExit("Set ACADEMIC_LIVE_TESTS=1 to run live diagnostics.")
+
+api_key = os.getenv("ELSEVIER_API_KEY")
+if not api_key:
+    raise SystemExit("Set ELSEVIER_API_KEY before running this live diagnostic.")
 
 print('='*60)
 print('Testing ScienceDirect API...')
