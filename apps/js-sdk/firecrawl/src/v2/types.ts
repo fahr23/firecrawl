@@ -183,6 +183,10 @@ export type ActionOption =
   | ExecuteJavascriptAction
   | PDFAction;
 
+export interface AuditMetadata {
+  username: string;
+}
+
 export interface ScrapeOptions {
   formats?: FormatOption[];
   headers?: Record<string, string>;
@@ -203,12 +207,17 @@ export interface ScrapeOptions {
   useMock?: string;
   blockAds?: boolean;
   proxy?: "basic" | "stealth" | "enhanced" | "auto" | string;
+  /**
+   * Maximum age, in milliseconds, of indexed content that may be reused.
+   * Set to `0` to bypass index reuse.
+   */
   maxAge?: number;
   minAge?: number;
   storeInCache?: boolean;
   lockdown?: boolean;
   redactPII?: boolean | RedactPIIOptions;
   threatProtection?: ThreatProtectionOptions;
+  auditMetadata?: AuditMetadata;
   profile?: {
     name: string;
     saveChanges?: boolean;
@@ -553,6 +562,7 @@ export interface DocumentMetadata {
   // Common metadata fields
   title?: string;
   description?: string;
+  /** URL reported by the selected scrape engine. */
   url?: string;
   language?: string;
   keywords?: string | string[];
@@ -589,7 +599,9 @@ export interface DocumentMetadata {
   articleSection?: string;
 
   // Response-level metadata
+  /** URL requested for the scrape. */
   sourceURL?: string;
+  /** HTTP status code reported for the scrape response. */
   statusCode?: number;
   scrapeId?: string;
   numPages?: number;
@@ -652,6 +664,7 @@ export interface SearchResultWeb {
   url: string;
   title?: string;
   description?: string;
+  position?: number;
   category?: string;
 }
 
@@ -678,10 +691,11 @@ export interface SearchData {
   web?: Array<SearchResultWeb | Document>;
   news?: Array<SearchResultNews | Document>;
   images?: Array<SearchResultImages | Document>;
+  developer?: Array<SearchResultWeb | Document>;
 }
 
 export interface CategoryOption {
-  type: "github" | "research" | "pdf";
+  type: "github" | "research" | "pdf" | "developer";
 }
 
 export interface SearchRequest {
@@ -689,7 +703,9 @@ export interface SearchRequest {
   sources?: Array<
     "web" | "news" | "images" | { type: "web" | "news" | "images" }
   >;
-  categories?: Array<"github" | "research" | "pdf" | CategoryOption>;
+  categories?: Array<
+    "github" | "research" | "pdf" | "developer" | CategoryOption
+  >;
   includeDomains?: string[];
   excludeDomains?: string[];
   limit?: number;
@@ -796,6 +812,7 @@ export interface MapOptions {
   origin?: string;
   location?: LocationConfig;
   threatProtection?: ThreatProtectionOptions;
+  auditMetadata?: AuditMetadata;
 }
 
 export type FeedbackRating = "good" | "partial" | "bad";

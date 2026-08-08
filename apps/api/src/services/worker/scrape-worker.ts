@@ -47,7 +47,7 @@ import {
   addScrapeJob,
   addScrapeJobs,
 } from "../queue-jobs";
-import psl from "psl";
+import { parseHostname } from "../../lib/url-utils";
 import { getJobPriority } from "../../lib/job-priority";
 import { Document, scrapeOptions, TeamFlags } from "../../controllers/v2/types";
 import { hasFormatOfType } from "../../lib/format-utils";
@@ -66,6 +66,7 @@ import {
   calculateCreditsToBeBilled,
   calculateThreatScanCredits,
 } from "../../lib/scrape-billing";
+import { getCrawlScope } from "../../lib/crawl-scope";
 import { billTeam } from "../billing/credit_billing";
 import { getBillingQueue } from "../queue-service";
 import type { Logger } from "winston";
@@ -74,6 +75,7 @@ import {
   JobCancelledError,
   RacedRedirectError,
   ScrapeJobTimeoutError,
+  SitemapError,
   TransportableError,
   UnknownError,
 } from "../../lib/error";
@@ -104,6 +106,7 @@ import {
   warmExchangeCatalog,
   type ExchangeScrapeMetadata,
 } from "../../lib/exchange";
+import { emitScrapeActivityEvent } from "../../lib/siem-logging";
 
 configDotenv();
 
@@ -508,9 +511,10 @@ async function processJob(job: NuQJob<ScrapeJobSingleUrls>) {
 
           if (!sc.crawlerOptions?.sitemapOnly) {
             const links = await crawler.filterLinks(
-              await crawler.extractLinksFromHTML(
+              await crawler.extractLinksFromContent(
                 rawHtml ?? "",
                 doc.metadata?.url ?? doc.metadata?.sourceURL ?? sc.originUrl!,
+                doc.metadata?.contentType,
               ),
               Infinity,
               sc.crawlerOptions?.maxDepth ?? 10,
@@ -836,9 +840,25 @@ async function processJob(job: NuQJob<ScrapeJobSingleUrls>) {
       }
     }
 
+    emitScrapeActivityEvent(job.id, job.data, {
+      success: true,
+      document: doc,
+      threatDecisions: pipeline.threatDecisions,
+      startedAt: start,
+      completedAt: Date.now(),
+    });
+
     logger.info(`🐂 Job done ${job.id}`);
     return data;
   } catch (error) {
+    emitScrapeActivityEvent(job.id, job.data, {
+      success: false,
+      error,
+      threatDecisions: pipeline?.threatDecisions,
+      startedAt: start,
+      completedAt: Date.now(),
+    });
+
     // Record top-level robots.txt rejections so crawl status can warn
     try {
       if (
@@ -1212,12 +1232,10 @@ async function processKickoffJob(job: NuQJob<ScrapeJobKickoff>) {
 
         const attempts: string[] = crawler.robots.getSitemaps();
 
-        // Append sitemap.xml
+        // sitemap.xml in the directory the crawl is scoped to
         const urlWithSitemap = new URL(urlObj.href);
         urlWithSitemap.pathname =
-          urlWithSitemap.pathname +
-          (urlObj.pathname.endsWith("/") ? "" : "/") +
-          "sitemap.xml";
+          getCrawlScope(urlObj.href).prefix + "sitemap.xml";
         urlWithSitemap.search = "";
         urlWithSitemap.hash = "";
         attempts.push(urlWithSitemap.href);
@@ -1225,12 +1243,17 @@ async function processKickoffJob(job: NuQJob<ScrapeJobKickoff>) {
         // Base sitemap.xml
         attempts.push(new URL("/sitemap.xml", urlObj.href).href);
 
-        // Root domain sitemap.xml
-        const urlRootSitemap = new URL("/sitemap.xml", urlObj.href);
-        urlRootSitemap.hostname = psl.parse(urlObj.hostname).domain;
-        attempts.push(urlRootSitemap.href);
+        // Root domain sitemap.xml. Skipped when the host has no registrable domain
+        // (IP literals, localhost): assigning a null domain would stringify to the
+        // literal hostname "null" and produce https://null/sitemap.xml.
+        const rootDomain = parseHostname(urlObj.hostname).domain;
+        if (rootDomain && rootDomain !== urlObj.hostname) {
+          const urlRootSitemap = new URL("/sitemap.xml", urlObj.href);
+          urlRootSitemap.hostname = rootDomain;
+          attempts.push(urlRootSitemap.href);
+        }
 
-        for (const attempt of attempts) {
+        for (const attempt of new Set(attempts)) {
           await addKickoffSitemapJob(attempt, job, sc, logger);
         }
       }
@@ -1517,7 +1540,11 @@ async function processKickoffSitemapJob(job: NuQJob<ScrapeJobKickoffSitemap>) {
     }
     return { success: true };
   } catch (error) {
-    logger.error("An error occurred!", { error });
+    if (error instanceof SitemapError && error.cause === 404) {
+      logger.debug("Sitemap not found", { sitemapUrl: job.data.sitemapUrl });
+    } else {
+      logger.error("An error occurred!", { error });
+    }
     return { success: false, error };
   } finally {
     await redisEvictConnection.sadd(

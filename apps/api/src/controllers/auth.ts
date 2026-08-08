@@ -10,6 +10,7 @@ import {
   KEYLESS_FREE_TIER_LIMIT_MESSAGE,
   consumeKeylessRequest,
   isKeylessConfigured,
+  keylessExhaustionTelemetry,
   isKeylessIpEligible,
   keylessTeamId,
 } from "../lib/keyless";
@@ -86,24 +87,8 @@ const mockPreviewACUC: (
   api_key_id: 0,
   team_id,
   org_id: "preview",
-  rate_limits: {
-    crawl: 2,
-    scrape: 10,
-    extract: 10,
-    search: 5,
-    map: 5,
-    preview: 5,
-    crawlStatus: 500,
-    extractStatus: 500,
-    extractAgentPreview: 1,
-    scrapeAgentPreview: 5,
-  },
-  plan_priority: {
-    bucketLimit: 25,
-    planModifier: 0.1,
-  },
-  concurrency: is_extract ? 200 : 2,
   flags: null,
+  is_banned: false,
   is_extract,
 });
 
@@ -112,24 +97,8 @@ const mockACUC: () => AuthCreditUsageChunk = () => ({
   api_key_id: 0,
   team_id: "bypass",
   org_id: "bypass",
-  rate_limits: {
-    crawl: 99999999,
-    scrape: 99999999,
-    extract: 99999999,
-    search: 99999999,
-    map: 99999999,
-    preview: 99999999,
-    crawlStatus: 99999999,
-    extractStatus: 99999999,
-    extractAgentPreview: 99999999,
-    scrapeAgentPreview: 99999999,
-  },
-  plan_priority: {
-    bucketLimit: 25,
-    planModifier: 0.1,
-  },
-  concurrency: 99999999,
   flags: null,
+  is_banned: false,
   is_extract: false,
 });
 
@@ -510,9 +479,11 @@ async function handleKeylessAuth(
       ? "search"
       : mode === RateLimiterMode.Research
         ? "research"
-        : mode === RateLimiterMode.BrowserExecute
-          ? "interact"
-          : "scrape";
+        : mode === RateLimiterMode.DeveloperSearch
+          ? "developer"
+          : mode === RateLimiterMode.BrowserExecute
+            ? "interact"
+            : "scrape";
 
   let result: Awaited<ReturnType<typeof consumeKeylessRequest>>;
   try {
@@ -545,15 +516,19 @@ async function handleKeylessAuth(
     logger.warn("Keyless request blocked", {
       ...baseLog,
       blocked: true,
+      event: "keyless_exhausted",
       reason: result.reason,
+      retryAfterSeconds: result.retryAfterSeconds,
+      ...keylessExhaustionTelemetry(ip),
     });
     return {
       success: false,
       error: KEYLESS_FREE_TIER_LIMIT_MESSAGE,
       status: 429,
-      // Out of free quota — emit the OAuth-discovery header so agents can find
-      // the key/signup flow at the moment they actually need a key.
+      // Direct API callers receive discovery metadata; MCP maps this in-band.
       agentAuthDiscovery: true,
+      keylessReason: result.reason,
+      retryAfterSeconds: result.retryAfterSeconds,
     };
   }
 
@@ -646,11 +621,11 @@ async function supaAuthenticateUser(
   }
   if (token == config.PREVIEW_TOKEN) {
     if (mode == RateLimiterMode.CrawlStatus) {
-      rateLimiter = getRateLimiter(RateLimiterMode.CrawlStatus, null);
+      rateLimiter = getRateLimiter(RateLimiterMode.CrawlStatus);
     } else if (mode == RateLimiterMode.ExtractStatus) {
-      rateLimiter = getRateLimiter(RateLimiterMode.ExtractStatus, null);
+      rateLimiter = getRateLimiter(RateLimiterMode.ExtractStatus);
     } else {
-      rateLimiter = getRateLimiter(RateLimiterMode.Preview, null);
+      rateLimiter = getRateLimiter(RateLimiterMode.Preview);
     }
     teamId = `preview_${iptoken}`;
   } else if (token.startsWith("fcmcp_")) {
@@ -789,6 +764,20 @@ async function supaAuthenticateUser(
     );
   }
 
+  // Banned teams are rejected here, where the mcp / OAuth / API-key paths
+  // converge. Ban enforcement used to rely on auth_credit_usage_chunk zeroing
+  // the rate_limits payload, but authenticated limiting now derives from Autumn
+  // and never reads that field, so bans went unenforced. auth_chunk_1 surfaces
+  // teams.banned as is_banned and we deny it explicitly.
+  if (chunk?.is_banned) {
+    return {
+      success: false,
+      error:
+        "Unauthorized: This account has been banned. Contact support@firecrawl.com if you believe this is a mistake.",
+      status: 403,
+    };
+  }
+
   if (chunk?.flags?.ipRestriction) {
     const ipCheck = await checkIpRestriction(
       req.ip ?? req.socket?.remoteAddress,
@@ -826,12 +815,11 @@ async function supaAuthenticateUser(
   try {
     await rateLimiter.consume(team_endpoint_token);
   } catch (rateLimiterRes) {
-    // logger.error(`Rate limit exceeded: ${rateLimiterRes}`, {
-    //   teamId,
-    //   mode,
-    //   rateLimits: chunk?.rate_limits,
-    //   rateLimiterRes,
-    // });
+    logger.error(`Rate limit exceeded: ${rateLimiterRes}`, {
+      teamId,
+      mode,
+      rateLimiterRes,
+    });
 
     const secs = Math.round(rateLimiterRes.msBeforeNext / 1000) || 1;
     const retryDate = new Date(Date.now() + rateLimiterRes.msBeforeNext);

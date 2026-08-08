@@ -43,7 +43,6 @@ import {
   NoCachedDataError,
   LockdownMissError,
   DNSResolutionError,
-  ZDRViolationError,
   PDFPrefetchFailed,
   DocumentPrefetchFailed,
   FEPageLoadFailed,
@@ -83,6 +82,12 @@ import {
 import { htmlTransform } from "./lib/removeUnwantedElements";
 import { postprocessors } from "./postprocessors";
 import { rewriteUrl } from "./lib/rewriteUrl";
+import {
+  DOCUMENT_EXTENSIONS,
+  documentContentTypeFromExtension,
+  documentExtensionFromContentType,
+  documentExtensionFromUrlPath,
+} from "../../lib/document-formats";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -249,19 +254,7 @@ function buildFeatureFlags(
   const lowerPath = urlO.pathname.toLowerCase();
 
   // Check for document types first (they take precedence over PDF)
-  const isDocument =
-    lowerPath.endsWith(".docx") ||
-    lowerPath.endsWith(".odt") ||
-    lowerPath.endsWith(".rtf") ||
-    lowerPath.endsWith(".xlsx") ||
-    lowerPath.endsWith(".xls") ||
-    lowerPath.includes(".docx/") ||
-    lowerPath.includes(".odt/") ||
-    lowerPath.includes(".rtf/") ||
-    lowerPath.includes(".xlsx/") ||
-    lowerPath.includes(".xls/");
-
-  if (isDocument) {
+  if (documentExtensionFromUrlPath(lowerPath) !== null) {
     flags.add("document");
   } else if (lowerPath.endsWith(".pdf") || lowerPath.includes(".pdf/")) {
     // Only add PDF flag if it's not a document
@@ -280,15 +273,6 @@ function buildFeatureFlags(
 // The meta object is usually immutable, except for the logs array, and in edge cases (e.g. a new feature is suddenly required)
 // Having a meta object that is treated as immutable helps the code stay clean and easily tracable,
 // while also retaining the benefits that WebScraper had from its OOP design.
-const DOCUMENT_EXTENSIONS = new Set([
-  ".docx",
-  ".doc",
-  ".odt",
-  ".rtf",
-  ".xlsx",
-  ".xls",
-]);
-
 const HTML_EXTENSIONS = new Set([".html", ".htm", ".xhtml"]);
 
 async function writeUploadedFileToTemp(
@@ -318,20 +302,9 @@ function isPdfUpload(filename: string, contentType?: string): boolean {
 
 function isDocumentUpload(filename: string, contentType?: string): boolean {
   const ext = path.extname(filename).toLowerCase();
-  const normalizedType = contentType?.toLowerCase() ?? "";
   return (
     DOCUMENT_EXTENSIONS.has(ext) ||
-    normalizedType.includes(
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ) ||
-    normalizedType.includes("application/vnd.ms-excel") ||
-    normalizedType.includes(
-      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ) ||
-    normalizedType.includes("application/msword") ||
-    normalizedType.includes("application/vnd.oasis.opendocument.text") ||
-    normalizedType.includes("application/rtf") ||
-    normalizedType.includes("text/rtf")
+    documentExtensionFromContentType(contentType) !== null
   );
 }
 
@@ -423,6 +396,7 @@ async function buildMetaObject(
         proxyUsed: "basic",
         contentType:
           contentType ||
+          documentContentTypeFromExtension(fallbackExtension) ||
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       };
     } else if (isHtmlUpload(filename, contentType)) {
@@ -691,37 +665,20 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
       "engine.features": Array.from(meta.featureFlags).join(","),
     });
 
-    if (meta.internalOptions.zeroDataRetention) {
-      if (meta.featureFlags.has("screenshot")) {
-        throw new ZDRViolationError("screenshot");
-      }
-
-      if (meta.featureFlags.has("screenshot@fullScreen")) {
-        throw new ZDRViolationError("screenshot@fullScreen");
-      }
-
-      if (
-        meta.options.actions &&
-        meta.options.actions.find(x => x.type === "screenshot")
-      ) {
-        throw new ZDRViolationError("screenshot action");
-      }
-
-      if (
-        meta.options.actions &&
-        meta.options.actions.find(x => x.type === "pdf")
-      ) {
-        throw new ZDRViolationError("pdf action");
-      }
-    }
-
     // TODO: handle sitemap data, see WebScraper/index.ts:280
     // TODO: ScrapeEvents
 
     const fallbackList = await buildFallbackList(meta);
 
-    // Check if actions are requested but no engines support them
-    if (meta.featureFlags.has("actions")) {
+    // Check if actions are requested but no engines support them.
+    // Skip when the content was already prefetched (a browser engine already
+    // ran the actions and downloaded the file); the re-run only needs the
+    // document/pdf engine to parse it, which does not support actions.
+    if (
+      meta.featureFlags.has("actions") &&
+      meta.pdfPrefetch === undefined &&
+      meta.documentPrefetch === undefined
+    ) {
       if (
         fallbackList.length === 0 ||
         fallbackList.every(engine => engine.unsupportedFeatures.has("actions"))
@@ -862,6 +819,15 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
                   error: error.error,
                 },
               );
+            } else if (error.error instanceof EngineUnsuccessfulError) {
+              // Deliberately silent. An engine declining the page is a normal
+              // waterfall outcome and is already recorded elsewhere: the
+              // success-factor check logs "deemed unsuccessful" with its reasoning,
+              // and engines that recognise the body as none of their business
+              // (pdf/document finding HTML) are preceded by "Scraping via X...".
+              // Logging again only duplicated that, ~48k lines/hour across all
+              // engines. Recognised here purely so it doesn't fall through to the
+              // catch-all branch and get reported as an unexpected error.
             } else if (
               error.error instanceof AddFeatureError ||
               error.error instanceof RemoveFeatureError ||
@@ -1021,6 +987,7 @@ async function scrapeURLLoop(meta: Meta): Promise<ScrapeUrlResponse> {
 
     let document: Document = {
       markdown: engineResult.markdown,
+      pages: engineResult.pages,
       rawHtml: engineResult.html,
       json: engineResult.json,
       screenshot: engineResult.screenshot,

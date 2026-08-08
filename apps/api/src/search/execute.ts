@@ -13,6 +13,7 @@ import {
   mergeScrapedContent,
   calculateScrapeCredits,
 } from "./scrape";
+import { searchDeveloperCategory, wantsDeveloperCategory } from "./developer";
 import {
   highlightsEnvReady,
   runIndexedSearchHighlights,
@@ -34,6 +35,7 @@ interface SearchOptions {
   lang?: string;
   country?: string;
   location?: string;
+  safe?: boolean;
   sources: Array<{ type: string }>;
   categories?: CategoryOption[];
   includeDomains?: string[];
@@ -104,6 +106,13 @@ export async function executeSearch(
     },
   );
 
+  const developerResults = wantsDeveloperCategory(categories)
+    ? searchDeveloperCategory(
+        { query, limit, teamId, timeout: options.timeout },
+        logger,
+      )
+    : null;
+
   const searchResponse = (await search({
     query: searchQuery,
     logger,
@@ -114,9 +123,17 @@ export async function executeSearch(
     lang: options.lang,
     country: options.country,
     location: options.location,
+    safe: options.safe,
     type: searchTypes,
     enterprise: options.enterprise,
   })) as SearchV2Response;
+
+  if (developerResults) {
+    const developer = await developerResults;
+    if (developer.length > 0) {
+      searchResponse.developer = developer;
+    }
+  }
 
   // Threat protection: remove blocked results entirely — before
   // slicing/counting, before scraping, and before returning. Checks are
@@ -130,6 +147,7 @@ export async function executeSearch(
       ...(searchResponse.web ?? []).map(x => x.url),
       ...(searchResponse.news ?? []).map(x => x.url),
       ...(searchResponse.images ?? []).map(x => x.url),
+      ...(searchResponse.developer ?? []).map(x => x.url),
     ].filter((x): x is string => !!x);
 
     if (urlsToCheck.length > 0) {
@@ -152,6 +170,11 @@ export async function executeSearch(
       }
       if (searchResponse.images) {
         searchResponse.images = searchResponse.images.filter(x =>
+          isAllowed(x.url),
+        );
+      }
+      if (searchResponse.developer) {
+        searchResponse.developer = searchResponse.developer.filter(x =>
           isAllowed(x.url),
         );
       }
@@ -195,6 +218,10 @@ export async function executeSearch(
       searchResponse.news = searchResponse.news.slice(0, limit);
     }
     totalResultsCount += searchResponse.news.length;
+  }
+
+  if (searchResponse.developer && searchResponse.developer.length > 0) {
+    totalResultsCount += searchResponse.developer.length;
   }
 
   const isZDR = options.enterprise?.includes("zdr");

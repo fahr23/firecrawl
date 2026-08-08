@@ -246,9 +246,14 @@ export function authMiddleware(
           if (auth.status === 401 || auth.agentAuthDiscovery) {
             applyAgentAuthDiscoveryHeader(res);
           }
-          return res
-            .status(auth.status)
-            .json({ success: false, error: auth.error });
+          return res.status(auth.status).json({
+            success: false,
+            error: auth.error,
+            ...(auth.keylessReason ? { reason: auth.keylessReason } : {}),
+            ...(auth.retryAfterSeconds
+              ? { retry_after_seconds: auth.retryAfterSeconds }
+              : {}),
+          });
         } else {
           return;
         }

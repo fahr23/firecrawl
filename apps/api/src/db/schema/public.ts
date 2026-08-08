@@ -206,6 +206,8 @@ export const research_github_searches = researchEndpointTable(
   "research_github_searches",
 );
 
+export const code_searches = researchEndpointTable("code_searches");
+
 export const deterministic_json_scripts = pgTable(
   "deterministic_json_scripts",
   {
@@ -699,6 +701,16 @@ export const threat_protection_config = pgTable("threat_protection_config", {
   org_id: uuid("org_id").notNull().unique(),
   mode: varchar("mode").notNull().default("off"),
   config: jsonb("config").notNull().default({}),
+  created_at: ts("created_at").notNull().defaultNow(),
+  updated_at: ts("updated_at").notNull().defaultNow(),
+});
+
+export const siem_logging_config = pgTable("siem_logging_config", {
+  id: uuid("id").notNull().defaultRandom(),
+  org_id: uuid("org_id").notNull().unique(),
+  enabled: boolean("enabled").notNull().default(false),
+  destination: jsonb("destination").notNull().default({}),
+  secret_ciphertext: text("secret_ciphertext").notNull(),
   created_at: ts("created_at").notNull().defaultNow(),
   updated_at: ts("updated_at").notNull().defaultNow(),
 });

@@ -68,10 +68,21 @@ import {
 import { activityController } from "../controllers/v1/activity";
 import {
   getTeamThreatProtectionController,
+  getTeamZscalerCategoriesController,
   putTeamThreatProtectionController,
+  syncTeamZscalerController,
+  testTeamZscalerConnectionController,
 } from "../controllers/v2/team-threat-protection";
+import {
+  getTeamSiemLoggingController,
+  putTeamSiemLoggingController,
+  testTeamSiemLoggingController,
+} from "../controllers/v2/team-siem-logging";
 import { supportProxyController } from "../controllers/v2/support-proxy";
-import { createResearchRouter } from "../controllers/v2/research-proxy";
+import {
+  createDeveloperRouter,
+  createResearchRouter,
+} from "../controllers/v2/research-proxy";
 import {
   scrapeInteractController,
   scrapeStopInteractiveBrowserController,
@@ -440,6 +451,42 @@ v2Router.put(
 );
 
 v2Router.post(
+  "/team/threat-protection/zscaler/test-connection",
+  authMiddleware(RateLimiterMode.Account),
+  wrap(testTeamZscalerConnectionController),
+);
+
+v2Router.get(
+  "/team/threat-protection/zscaler/categories",
+  authMiddleware(RateLimiterMode.Account),
+  wrap(getTeamZscalerCategoriesController),
+);
+
+v2Router.post(
+  "/team/threat-protection/zscaler/sync",
+  authMiddleware(RateLimiterMode.Account),
+  wrap(syncTeamZscalerController),
+);
+
+v2Router.get(
+  "/team/siem",
+  authMiddleware(RateLimiterMode.Account),
+  wrap(getTeamSiemLoggingController),
+);
+
+v2Router.put(
+  "/team/siem",
+  authMiddleware(RateLimiterMode.Account),
+  wrap(putTeamSiemLoggingController),
+);
+
+v2Router.post(
+  "/team/siem/test",
+  authMiddleware(RateLimiterMode.Account),
+  wrap(testTeamSiemLoggingController),
+);
+
+v2Router.post(
   "/monitor",
   authMiddleware(RateLimiterMode.Crawl),
   countryCheck,
@@ -597,5 +644,20 @@ if (config.RESEARCH_PROXY_URL) {
     "/research",
     authMiddleware(RateLimiterMode.Research),
     createResearchRouter({ legacy: true }),
+  );
+
+  // Canonical: developer search is a subset of search, so it lives under it.
+  v2Router.use(
+    "/search/developer",
+    authMiddleware(RateLimiterMode.DeveloperSearch, { allowKeyless: true }),
+    createDeveloperRouter({ root: true }),
+  );
+
+  // Compatibility only: the pre-GA path. Published CLI and MCP builds still
+  // call it. Delete once those ship on /search/developer. Not documented.
+  v2Router.use(
+    "/developer",
+    authMiddleware(RateLimiterMode.DeveloperSearch),
+    createDeveloperRouter(),
   );
 }
