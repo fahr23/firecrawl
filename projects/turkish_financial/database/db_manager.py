@@ -617,6 +617,37 @@ class DatabaseManager:
                 ON {}.youtube_video_sentiment(ticker, analyzed_at DESC)
             ''').format(sql.Identifier(self.schema)))
 
+            # Public daily market observations are stored by ticker and trading
+            # date.  A repeated collection replaces that date's source row instead
+            # of accumulating duplicates.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.isyatirim_market_history (
+                    ticker VARCHAR(20) NOT NULL,
+                    market_date DATE NOT NULL,
+                    data JSONB NOT NULL,
+                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (ticker, market_date)
+                )
+            ''').format(sql.Identifier(self.schema)))
+
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.isyatirim_fundamentals (
+                    ticker VARCHAR(20) PRIMARY KEY,
+                    report_period VARCHAR(20),
+                    data JSONB NOT NULL,
+                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.isyatirim_fundamental_periods (
+                    ticker VARCHAR(20) NOT NULL,
+                    report_period VARCHAR(20) NOT NULL,
+                    data JSONB NOT NULL,
+                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (ticker, report_period)
+                )
+            ''').format(sql.Identifier(self.schema)))
+
             conn.commit()
             logger.info("Database tables created/verified")
             
@@ -1275,6 +1306,127 @@ class DatabaseManager:
                 "age_seconds": age,
             }
         return result
+
+    # ── İş Yatırım public market-history cache ──────────────────────────────
+
+    def upsert_isyatirim_market_history(self, ticker: str, series: List[Dict[str, Any]]) -> bool:
+        """Replace stored source rows by `(ticker, trading_date)`.
+
+        The normalized JSON is retained intact so future UI fields can be added
+        without a destructive migration or another upstream request.
+        """
+        rows = []
+        for item in series:
+            try:
+                market_date = datetime.strptime(str(item["trading_date"]), "%d-%m-%Y").date()
+            except (KeyError, TypeError, ValueError):
+                continue
+            rows.append((ticker.strip().upper(), market_date, Json(item)))
+        if not rows:
+            return False
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.executemany(
+                """INSERT INTO isyatirim_market_history (ticker, market_date, data)
+                   VALUES (%s, %s, %s)
+                   ON CONFLICT (ticker, market_date) DO UPDATE SET
+                       data = EXCLUDED.data, fetched_at = CURRENT_TIMESTAMP""",
+                rows,
+            )
+            conn.commit()
+            return True
+        except Exception as exc:
+            logger.warning("Could not persist İş Yatırım market history for %s: %s", ticker, exc)
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def get_isyatirim_market_history(self, ticker: str, days: int, max_age_seconds: int) -> Dict[str, Any]:
+        """Read a bounded database cache, ordered oldest to newest."""
+        rows = self.query(
+            """SELECT data,
+                      EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - fetched_at))::BIGINT AS age_seconds
+               FROM isyatirim_market_history
+               WHERE ticker = %s
+               ORDER BY market_date DESC
+               LIMIT %s""",
+            (ticker.strip().upper(), days),
+        )
+        series = [row["data"] for row in reversed(rows) if isinstance(row.get("data"), dict)]
+        ages = [int(row["age_seconds"]) for row in rows if row.get("age_seconds") is not None]
+        age = min(ages) if ages else None
+        return {
+            "series": series,
+            "age_seconds": age,
+            "fresh": bool(series) and age is not None and age <= max_age_seconds,
+        }
+
+    def upsert_isyatirim_fundamentals(self, ticker: str, payload: Dict[str, Any]) -> bool:
+        """Store one current İş Yatırım fundamental snapshot per ticker."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            periods = payload.get("reported_periods") or []
+            cursor.execute(
+                """INSERT INTO isyatirim_fundamentals (ticker, report_period, data)
+                   VALUES (%s, %s, %s)
+                   ON CONFLICT (ticker) DO UPDATE SET
+                       report_period = EXCLUDED.report_period,
+                       data = EXCLUDED.data,
+                       fetched_at = CURRENT_TIMESTAMP""",
+                (ticker.strip().upper(), periods[0] if periods else None, Json(payload)),
+            )
+            cursor.executemany(
+                """INSERT INTO isyatirim_fundamental_periods (ticker, report_period, data)
+                   VALUES (%s, %s, %s)
+                   ON CONFLICT (ticker, report_period) DO UPDATE SET
+                       data = EXCLUDED.data, fetched_at = CURRENT_TIMESTAMP""",
+                [
+                    (ticker.strip().upper(), period["report_period"], Json(period))
+                    for period in payload.get("one_year_statement_history", [])
+                    if period.get("report_period")
+                ],
+            )
+            conn.commit()
+            return True
+        except Exception as exc:
+            logger.warning("Could not persist İş Yatırım fundamentals for %s: %s", ticker, exc)
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def get_isyatirim_fundamentals(self, ticker: str, max_age_seconds: int) -> Dict[str, Any]:
+        """Read a fresh current fundamental snapshot from PostgreSQL if present."""
+        rows = self.query(
+            """SELECT data,
+                      EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - fetched_at))::BIGINT AS age_seconds
+               FROM isyatirim_fundamentals WHERE ticker = %s LIMIT 1""",
+            (ticker.strip().upper(),),
+        )
+        if not rows or not isinstance(rows[0].get("data"), dict):
+            return {"fresh": False, "payload": None, "age_seconds": None}
+        age = rows[0].get("age_seconds")
+        age = int(age) if age is not None else None
+        return {
+            "fresh": age is not None and age <= max_age_seconds,
+            "payload": rows[0]["data"],
+            "age_seconds": age,
+        }
+
+    def list_isyatirim_fundamentals(self, query_text: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Search the locally cached current snapshots; no upstream request occurs."""
+        rows = self.query(
+            """SELECT ticker, report_period, data,
+                      EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - fetched_at))::BIGINT AS age_seconds
+               FROM isyatirim_fundamentals
+               WHERE ticker ILIKE %s
+               ORDER BY ticker LIMIT %s""",
+            (f"%{query_text.strip().upper()}%", limit),
+        )
+        return rows
 
     # ── YouTube video persistence ─────────────────────────────────────────────
 

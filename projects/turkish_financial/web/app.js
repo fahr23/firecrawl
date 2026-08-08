@@ -19,6 +19,24 @@ const rankingList = document.querySelector("#ranking-list");
 const refreshWindow = document.querySelector("#refresh-window");
 const refreshScoresButton = document.querySelector("#refresh-scores");
 const refreshStatus = document.querySelector("#refresh-status");
+const isyatirimWindow = document.querySelector("#isyatirim-window");
+const loadIsyatirimButton = document.querySelector("#load-isyatirim");
+const isyatirimStatus = document.querySelector("#isyatirim-status");
+const isyatirimResult = document.querySelector("#isyatirim-result");
+const isyatirimSummary = document.querySelector("#isyatirim-summary");
+const isyatirimRows = document.querySelector("#isyatirim-rows");
+const isyatirimRaw = document.querySelector("#isyatirim-raw");
+const loadIsyatirimFundamentalsButton = document.querySelector("#load-isyatirim-fundamentals");
+const isyatirimFundamentalsStatus = document.querySelector("#isyatirim-fundamentals-status");
+const isyatirimFundamentalsResult = document.querySelector("#isyatirim-fundamentals-result");
+const isyatirimFundamentalsSummary = document.querySelector("#isyatirim-fundamentals-summary");
+const isyatirimFundamentalsRaw = document.querySelector("#isyatirim-fundamentals-raw");
+const collectIsyatirimFundamentalsButton = document.querySelector("#collect-isyatirim-fundamentals");
+const isyatirimCollectionStatus = document.querySelector("#isyatirim-collection-status");
+const isyatirimFundamentalsSearch = document.querySelector("#isyatirim-fundamentals-search");
+const isyatirimFundamentalsQuery = document.querySelector("#isyatirim-fundamentals-query");
+const isyatirimFundamentalsList = document.querySelector("#isyatirim-fundamentals-list");
+const isyatirimFundamentalsListRows = document.querySelector("#isyatirim-fundamentals-list-rows");
 const localYouTubeBrowser = document.querySelector("#local-youtube-browser");
 const localTranscriptionButton = document.querySelector("#run-local-transcription");
 const stopLocalTranscriptionButton = document.querySelector("#stop-local-transcription");
@@ -245,6 +263,170 @@ async function refreshLatestScores() {
   }
 }
 
+function number(value, options = {}) {
+  return typeof value === "number" ? new Intl.NumberFormat("tr-TR", options).format(value) : "—";
+}
+
+function appendIsyatirimFact(name, value, target = isyatirimSummary) {
+  const term = document.createElement("dt");
+  term.textContent = name;
+  const definition = document.createElement("dd");
+  definition.textContent = value;
+  target.append(term, definition);
+}
+
+function showIsyatirimMarketData(response) {
+  const payload = response.payload || {};
+  const latest = payload.latest || {};
+  const metrics = payload.metrics || {};
+  isyatirimResult.hidden = false;
+  isyatirimSummary.replaceChildren();
+  appendIsyatirimFact("As of", latest.trading_date || response.as_of || "—");
+  appendIsyatirimFact("Close (TRY)", number(latest.close_try, { maximumFractionDigits: 4 }));
+  appendIsyatirimFact("Daily change", metrics.daily_change_percent == null ? "—" : `%${number(metrics.daily_change_percent, { maximumFractionDigits: 2 })}`);
+  appendIsyatirimFact("Window change", metrics.window_change_percent == null ? "—" : `%${number(metrics.window_change_percent, { maximumFractionDigits: 2 })}`);
+  appendIsyatirimFact("Average price", number(latest.average_price_try, { maximumFractionDigits: 4 }));
+  appendIsyatirimFact("USD close", number(latest.close_usd, { maximumFractionDigits: 4 }));
+  appendIsyatirimFact("USD/TRY", number(latest.usd_try, { maximumFractionDigits: 4 }));
+  appendIsyatirimFact("Index value", number(latest.index_value, { maximumFractionDigits: 2 }));
+  appendIsyatirimFact("Market value", number(latest.market_cap_try, { notation: "compact", maximumFractionDigits: 2 }));
+  appendIsyatirimFact("Free-float value", number(latest.free_float_market_cap_try, { notation: "compact", maximumFractionDigits: 2 }));
+  isyatirimRows.replaceChildren();
+  for (const row of (payload.series || []).slice(-10).reverse()) {
+    const item = document.createElement("tr");
+    for (const value of [
+      row.trading_date,
+      number(row.close_try, { maximumFractionDigits: 4 }),
+      `${number(row.low_try, { maximumFractionDigits: 4 })} – ${number(row.high_try, { maximumFractionDigits: 4 })}`,
+      number(row.volume_try, { notation: "compact", maximumFractionDigits: 2 }),
+      number(row.market_cap_try, { notation: "compact", maximumFractionDigits: 2 }),
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      item.append(cell);
+    }
+    isyatirimRows.append(item);
+  }
+  isyatirimRaw.textContent = JSON.stringify(response, null, 2);
+}
+
+async function loadIsyatirimMarketData() {
+  const ticker = instrument.value.trim().toUpperCase();
+  if (!ticker) {
+    isyatirimStatus.textContent = "Enter a BIST ticker first.";
+    return;
+  }
+  loadIsyatirimButton.disabled = true;
+  isyatirimStatus.textContent = `Loading public İş Yatırım daily data for ${ticker}…`;
+  try {
+    const response = await fetch(`/api/external/v1/isyatirim/${encodeURIComponent(ticker)}/market-history?market=bist&days=${isyatirimWindow.value}`);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "İş Yatırım data is unavailable.");
+    showIsyatirimMarketData(payload);
+    const cacheStatus = payload.payload?.cache?.status === "database_cache" ? "from the local database cache" : "from İş Yatırım's public JSON";
+    isyatirimStatus.textContent = `${payload.payload?.metrics?.trading_days || 0} trading days loaded ${cacheStatus}. Review the raw fields below; this is not an investment recommendation.`;
+  } catch (error) {
+    isyatirimStatus.textContent = error.message || "İş Yatırım data is unavailable.";
+  } finally {
+    loadIsyatirimButton.disabled = false;
+  }
+}
+
+function showIsyatirimFundamentals(response) {
+  const payload = response.payload || {};
+  const statement = payload.statement_snapshot || {};
+  const valuation = payload.current_valuation || {};
+  isyatirimFundamentalsResult.hidden = false;
+  isyatirimFundamentalsSummary.replaceChildren();
+  appendIsyatirimFact("Reported period", (payload.reported_periods || []).join(" vs ") || "—", isyatirimFundamentalsSummary);
+  appendIsyatirimFact("Statement unit", payload.statement_unit || "—", isyatirimFundamentalsSummary);
+  appendIsyatirimFact("Equity", number(statement.equity_million_try, { maximumFractionDigits: 1 }) + " mn TRY", isyatirimFundamentalsSummary);
+  appendIsyatirimFact("Net income", number(statement.net_income_million_try, { maximumFractionDigits: 1 }) + " mn TRY", isyatirimFundamentalsSummary);
+  appendIsyatirimFact("P/E (F/K)", number(valuation.price_to_earnings, { maximumFractionDigits: 2 }), isyatirimFundamentalsSummary);
+  appendIsyatirimFact("EV / EBITDA", number(valuation.enterprise_value_to_ebitda, { maximumFractionDigits: 2 }), isyatirimFundamentalsSummary);
+  appendIsyatirimFact("P/B (PD/DD)", number(valuation.price_to_book, { maximumFractionDigits: 2 }), isyatirimFundamentalsSummary);
+  appendIsyatirimFact("EV / Sales", number(valuation.enterprise_value_to_sales, { maximumFractionDigits: 2 }), isyatirimFundamentalsSummary);
+  appendIsyatirimFact("Net debt", number(valuation.net_debt_million_try, { maximumFractionDigits: 1 }) + " mn TRY", isyatirimFundamentalsSummary);
+  appendIsyatirimFact("Free float", number(valuation.free_float_percent, { maximumFractionDigits: 2 }) + "%", isyatirimFundamentalsSummary);
+  isyatirimFundamentalsRaw.textContent = JSON.stringify(response, null, 2);
+}
+
+async function loadIsyatirimFundamentals() {
+  const ticker = instrument.value.trim().toUpperCase();
+  if (!ticker) {
+    isyatirimFundamentalsStatus.textContent = "Enter a BIST ticker first.";
+    return;
+  }
+  loadIsyatirimFundamentalsButton.disabled = true;
+  isyatirimFundamentalsStatus.textContent = `Loading İş Yatırım fundamentals for ${ticker}…`;
+  try {
+    const response = await fetch(`/api/external/v1/isyatirim/${encodeURIComponent(ticker)}/fundamentals?market=bist`);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "İş Yatırım fundamentals are unavailable.");
+    showIsyatirimFundamentals(payload);
+    const cacheStatus = payload.payload?.cache?.status === "database_cache" ? "from the local database cache" : "from İş Yatırım's public company card";
+    isyatirimFundamentalsStatus.textContent = `Fundamentals loaded ${cacheStatus}. Values are informational source data, not an investment recommendation.`;
+  } catch (error) {
+    isyatirimFundamentalsStatus.textContent = error.message || "İş Yatırım fundamentals are unavailable.";
+  } finally {
+    loadIsyatirimFundamentalsButton.disabled = false;
+  }
+}
+
+function showCollectionStatus(payload) {
+  const status = payload.status || "idle";
+  const total = payload.total || 0;
+  isyatirimCollectionStatus.textContent = status === "running"
+    ? `Collecting ${payload.completed || 0}/${total}: ${payload.fetched || 0} fetched, ${payload.cached || 0} cached, ${payload.failed || 0} unavailable.`
+    : status === "completed"
+      ? `Completed ${total}: ${payload.fetched || 0} fetched, ${payload.cached || 0} reused from database, ${payload.failed || 0} unavailable.`
+      : "Not running. This can take several minutes on the first collection.";
+  collectIsyatirimFundamentalsButton.disabled = status === "running";
+}
+
+async function loadFundamentalsCollectionStatus() {
+  const response = await fetch("/api/external/v1/isyatirim/fundamentals/collection-status");
+  const payload = await response.json();
+  showCollectionStatus(payload);
+  if (payload.status === "running") window.setTimeout(loadFundamentalsCollectionStatus, 3000);
+}
+
+async function collectAllIsyatirimFundamentals() {
+  collectIsyatirimFundamentalsButton.disabled = true;
+  try {
+    const response = await fetch("/api/external/v1/isyatirim/fundamentals/collect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force: false }) });
+    const payload = await response.json();
+    if (!response.ok && response.status !== 409) throw new Error(payload.detail || "Collection could not start.");
+    showCollectionStatus({ ...payload, status: "running" });
+    window.setTimeout(loadFundamentalsCollectionStatus, 1000);
+  } catch (error) {
+    isyatirimCollectionStatus.textContent = error.message || "Collection could not start.";
+    collectIsyatirimFundamentalsButton.disabled = false;
+  }
+}
+
+async function searchStoredFundamentals(event) {
+  event.preventDefault();
+  const response = await fetch(`/api/external/v1/isyatirim/fundamentals?query=${encodeURIComponent(isyatirimFundamentalsQuery.value)}&limit=50`);
+  const payload = await response.json();
+  if (!response.ok) {
+    isyatirimCollectionStatus.textContent = payload.detail || "Database search failed.";
+    return;
+  }
+  isyatirimFundamentalsListRows.replaceChildren();
+  for (const item of payload.items || []) {
+    const row = document.createElement("tr");
+    for (const value of [item.ticker, item.report_period || "—", number(item.price_to_earnings, { maximumFractionDigits: 2 }), number(item.price_to_book, { maximumFractionDigits: 2 }), number(item.net_income_million_try, { maximumFractionDigits: 1 }) + " mn TRY"]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    isyatirimFundamentalsListRows.append(row);
+  }
+  isyatirimFundamentalsList.hidden = (payload.items || []).length === 0;
+  isyatirimCollectionStatus.textContent = `${payload.total || 0} stored fundamental snapshots found. Select a ticker above to inspect its full one-year JSON.`;
+}
+
 async function loadLocalTranscriptionStatus() {
   try {
     const response = await fetch(localRunnerUrl + "/status");
@@ -402,6 +584,10 @@ loadRankingButton.addEventListener("click", loadRanking);
 rankingSort.addEventListener("change", loadRanking);
 rankingWindow.addEventListener("change", loadRanking);
 refreshScoresButton.addEventListener("click", refreshLatestScores);
+loadIsyatirimButton.addEventListener("click", loadIsyatirimMarketData);
+loadIsyatirimFundamentalsButton.addEventListener("click", loadIsyatirimFundamentals);
+collectIsyatirimFundamentalsButton.addEventListener("click", collectAllIsyatirimFundamentals);
+isyatirimFundamentalsSearch.addEventListener("submit", searchStoredFundamentals);
 localTranscriptionButton.addEventListener("click", runLocalTranscription);
 stopLocalTranscriptionButton.addEventListener("click", stopLocalTranscription);
 addLocalYouTubeSourceForm.addEventListener("submit", addLocalYouTubeSource);
@@ -409,4 +595,5 @@ resetLocalYouTubeSourcesButton.addEventListener("click", resetLocalYouTubeSource
 loadRanking();
 loadLocalTranscriptionStatus();
 loadLocalYouTubeSources();
+loadFundamentalsCollectionStatus();
 window.setInterval(loadLocalTranscriptionStatus, 15000);

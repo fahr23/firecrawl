@@ -109,66 +109,6 @@ button.secondary {
 
 button.secondary:hover { background: var(--tag); }
 
-.document-panel {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.8fr);
-  gap: 24px;
-  margin-top: 24px;
-  padding: 26px;
-  border: 1px solid #bfd6ca;
-  border-radius: 22px;
-  background: rgba(225, 238, 231, 0.54);
-}
-
-.document-panel h2 {
-  margin: 0;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.8rem;
-  font-weight: 500;
-}
-
-.document-panel p:not(.eyebrow):not(.status) {
-  max-width: 650px;
-  color: var(--muted);
-  line-height: 1.6;
-}
-
-.document-form {
-  display: grid;
-  align-content: start;
-  gap: 14px;
-}
-
-.document-form input[type="file"] {
-  min-height: auto;
-  padding: 10px;
-}
-
-.document-result {
-  grid-column: 1 / -1;
-  padding-top: 4px;
-}
-
-.document-result h3 {
-  margin: 0 0 8px;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.35rem;
-  font-weight: 500;
-}
-
-.document-result pre {
-  max-height: 360px;
-  margin: 14px 0 0;
-  padding: 18px;
-  overflow: auto;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  color: var(--ink);
-  font: 0.86rem/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: pre-wrap;
-}
-
 label {
   display: grid;
   gap: 8px;
@@ -408,7 +348,6 @@ textarea { min-height: 110px; padding: 12px 14px; border: 1px solid var(--line);
 
   .search-row,
   .filters,
-  .document-panel,
   .project-panel {
     grid-template-columns: 1fr;
   }

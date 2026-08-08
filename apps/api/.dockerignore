@@ -3,3 +3,10 @@
 **/target/
 .env
 *.csv
+
+# napi build outputs. These are generated inside the image by `pnpm install`;
+# copying host-built copies in clobbers them and breaks tsc.
+native/index.d.ts
+native/index.js
+native/browser.js
+native/*.node

@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import os
-import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
-import requests
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,10 +22,6 @@ from .project_store import ProjectStore
 
 SERVICE_VERSION = "1.0"
 WEB_DIR = Path(__file__).resolve().parent / "web"
-DOCUMENT_MAX_BYTES = 50 * 1024 * 1024
-SUPPORTED_DOCUMENT_SUFFIXES = {
-    ".html", ".htm", ".pdf", ".docx", ".doc", ".odt", ".rtf", ".xlsx", ".xls",
-}
 
 # Categories are derived labels, not provider-supplied scholarly classifications.
 CATEGORIES: Dict[str, Dict[str, Any]] = {
@@ -286,41 +280,6 @@ def _provider_availability(engine: AcademicSearchEngine) -> Dict[str, bool]:
     }
 
 
-def _document_filename_is_supported(filename: str) -> bool:
-    return Path(filename).suffix.lower() in SUPPORTED_DOCUMENT_SUFFIXES
-
-
-def _parse_document_with_firecrawl(filename: str, content: bytes) -> Dict[str, Any]:
-    """Parse a user-supplied document through the configured Firecrawl instance.
-
-    The application accepts raw bytes rather than persisting uploads.  Firecrawl is
-    the document parser; this service keeps the user-facing response focused on
-    source, content, and parser metadata needed for research reproducibility.
-    """
-    base_url = os.getenv("FIRECRAWL_API_URL", "http://api:3002").rstrip("/")
-    try:
-        response = requests.post(
-            f"{base_url}/v2/parse",
-            files={"file": (filename, content)},
-            data={"options": json.dumps({"formats": ["markdown"], "onlyMainContent": True})},
-            timeout=60,
-        )
-    except requests.RequestException as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Firecrawl document parser is unavailable",
-        ) from exc
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = {"error": "Firecrawl returned a non-JSON response"}
-
-    if response.status_code >= 400 or not payload.get("success", False):
-        detail = payload.get("error") or payload.get("message") or "Document parsing failed"
-        raise HTTPException(status_code=502, detail=f"Firecrawl document parser: {detail}")
-    return payload.get("data") or {}
-
-
 @lru_cache(maxsize=1)
 def get_search_engine() -> AcademicSearchEngine:
     return AcademicSearchEngine()
@@ -445,43 +404,6 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
                 headers={"Content-Disposition": f'attachment; filename="{project_id}-search-evidence.md"'},
             )
         return evidence
-
-    @app.post("/api/v1/documents/parse")
-    async def parse_document(
-        request: Request,
-        filename: str = Query(min_length=1, max_length=255),
-    ) -> Dict[str, Any]:
-        """Parse an uploaded scholarly document without storing its original bytes.
-
-        Send the document as the raw request body and its original filename in the
-        `filename` query parameter.  This intentionally supports only the formats
-        accepted by the local Firecrawl `/v2/parse` endpoint.
-        """
-        safe_filename = Path(filename).name
-        if safe_filename != filename or not _document_filename_is_supported(safe_filename):
-            raise HTTPException(
-                status_code=422,
-                detail="Supported document types: HTML, PDF, DOCX, DOC, ODT, RTF, XLSX, XLS",
-            )
-        content = await request.body()
-        if not content:
-            raise HTTPException(status_code=422, detail="Document body is empty")
-        if len(content) > DOCUMENT_MAX_BYTES:
-            raise HTTPException(status_code=413, detail="Document exceeds the 50 MB parser limit")
-
-        parsed = await run_in_threadpool(
-            _parse_document_with_firecrawl, safe_filename, content
-        )
-        metadata = parsed.get("metadata") if isinstance(parsed.get("metadata"), dict) else {}
-        return {
-            "source": "firecrawl:/v2/parse",
-            "filename": safe_filename,
-            "retrieval": "user-upload",
-            "markdown": parsed.get("markdown"),
-            "summary": parsed.get("summary"),
-            "links": parsed.get("links", []),
-            "metadata": metadata,
-        }
 
     @app.get("/api/v1/search")
     async def search(

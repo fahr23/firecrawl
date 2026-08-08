@@ -91,31 +91,6 @@
         </form>
       </section>
 
-      <section class="document-panel" aria-labelledby="document-title">
-        <div>
-          <p class="eyebrow">Document evidence</p>
-          <h2 id="document-title">Read a local research document</h2>
-          <p>
-            Parse a PDF, office document, spreadsheet, or HTML file through the local
-            Firecrawl service. The upload is processed for this request and is not stored
-            by this application.
-          </p>
-        </div>
-        <form id="document-form" class="document-form">
-          <label for="document-file">
-            Document
-            <input id="document-file" type="file" accept=".html,.htm,.pdf,.docx,.doc,.odt,.rtf,.xlsx,.xls" required>
-          </label>
-          <button type="submit">Parse document</button>
-        </form>
-        <p id="document-status" class="status">Supported: HTML, PDF, DOCX, DOC, ODT, RTF, XLSX, XLS. Maximum 50 MB.</p>
-        <article id="document-result" class="document-result" hidden>
-          <h3 id="document-result-title">Parsed document</h3>
-          <p id="document-meta" class="meta"></p>
-          <pre id="document-markdown"></pre>
-        </article>
-      </section>
-
       <section class="results-section" aria-live="polite" aria-busy="false">
         <div class="results-heading">
           <div>

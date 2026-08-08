@@ -1,6 +1,3 @@
-from unittest.mock import Mock, patch
-
-import requests
 from fastapi.testclient import TestClient
 
 from academic_search.models import Article, ProviderOutcome, SearchResult
@@ -75,11 +72,11 @@ def test_ui_and_assets_are_served():
 
     assert page.status_code == 200
     assert "Find papers. Keep the trail." in page.text
-    assert "Parse document" in page.text
+    assert "Read a local research document" not in page.text
     assert "Web of Science" in page.text
     assert script.status_code == 200
     assert "/api/v1/search" in script.text
-    assert "/api/v1/documents/parse" in script.text
+    assert "/api/v1/documents/parse" not in script.text
     assert "/api/v1/health" in script.text
 
 
@@ -218,58 +215,3 @@ def test_provider_coverage_keeps_rate_limit_distinct_from_empty_results():
     assert coverage == [{
         "provider": "OpenAlex", "status": "rate_limited", "error_code": "rate_limited",
     }]
-
-
-def test_document_parse_forwards_supported_upload_without_persisting_it():
-    client, _ = make_client()
-    firecrawl_response = Mock()
-    firecrawl_response.status_code = 200
-    firecrawl_response.json.return_value = {
-        "success": True,
-        "data": {
-            "markdown": "# Findings\n\nA reproducible result.",
-            "links": ["https://doi.org/10.1000/example"],
-            "metadata": {"contentType": "application/pdf", "title": "Fixture"},
-        },
-    }
-
-    with patch("academic_search.service.requests.post", return_value=firecrawl_response) as post:
-        response = client.post(
-            "/api/v1/documents/parse?filename=paper.pdf",
-            content=b"%PDF-fixture",
-            headers={"content-type": "application/pdf"},
-        )
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["filename"] == "paper.pdf"
-    assert body["retrieval"] == "user-upload"
-    assert body["markdown"].startswith("# Findings")
-    assert body["metadata"]["contentType"] == "application/pdf"
-    assert post.call_args.kwargs["files"]["file"][0] == "paper.pdf"
-
-
-def test_document_parse_rejects_empty_or_unsupported_uploads():
-    client, _ = make_client()
-
-    unsupported = client.post("/api/v1/documents/parse?filename=notes.txt", content=b"text")
-    empty = client.post("/api/v1/documents/parse?filename=paper.pdf", content=b"")
-
-    assert unsupported.status_code == 422
-    assert empty.status_code == 422
-
-
-def test_document_parse_reports_an_unavailable_firecrawl_dependency():
-    client, _ = make_client()
-
-    with patch(
-        "academic_search.service.requests.post",
-        side_effect=requests.RequestException("offline"),
-    ):
-        response = client.post(
-            "/api/v1/documents/parse?filename=paper.html",
-            content=b"<h1>fixture</h1>",
-        )
-
-    assert response.status_code == 503
-    assert response.json()["detail"] == "Firecrawl document parser is unavailable"

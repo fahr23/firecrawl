@@ -15,6 +15,8 @@ honest error/unavailable envelope — we never fabricate data (§5).
 """
 import logging
 import os
+import asyncio
+from datetime import datetime, timezone
 from typing import List, Optional
 
 import requests
@@ -35,10 +37,15 @@ from infrastructure.repositories.external_analysis_repository import (
 from infrastructure.repositories.fundamental_repository import FundamentalRepository
 from infrastructure.repositories.news_repository import NewsRepository
 from infrastructure.contracts.instrument_identity_map import STATIC_BIST_CATALOG
+from scrapers.isyatirim_market_data import build_market_history_payload, fetch_market_history
+from scrapers.isyatirim_fundamentals import fetch_fundamentals
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["external-analysis"])
+
+_fundamental_collection_task = None
+_fundamental_collection_state = {"status": "idle", "total": 0, "completed": 0, "fetched": 0, "cached": 0, "failed": 0, "started_at": None, "finished_at": None}
 
 
 class SentimentBatchRequest(BaseModel):
@@ -55,6 +62,10 @@ class FundamentalBatchRequest(BaseModel):
     market: Market
     instruments: List[str] = Field(..., min_length=1)
     as_of: Optional[str] = None
+
+
+class FundamentalsCollectionRequest(BaseModel):
+    force: bool = False
 
 
 def _repo(db_manager: DatabaseManager) -> ExternalAnalysisRepository:
@@ -256,6 +267,198 @@ async def capabilities():
         "contract_version": CONTRACT_VERSION,
         "provider": PROVIDER_ID,
         "firecrawl": _firecrawl_capabilities(),
+    }
+
+
+async def _collect_all_isyatirim_fundamentals(db_manager: DatabaseManager, force: bool) -> None:
+    global _fundamental_collection_state
+    try:
+        rows = db_manager.query("SELECT code FROM bist_companies WHERE is_active = TRUE ORDER BY code", ())
+        tickers = [row["code"].strip().upper() for row in rows if row.get("code")]
+    except Exception:
+        tickers = []
+    tickers = tickers or sorted(STATIC_BIST_CATALOG)
+    _fundamental_collection_state.update({"status": "running", "total": len(tickers), "completed": 0, "fetched": 0, "cached": 0, "failed": 0, "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
+    ttl = max(300, int(os.getenv("ISYATIRIM_FUNDAMENTALS_CACHE_TTL_SECONDS", "21600")))
+    delay = max(0.1, float(os.getenv("ISYATIRIM_FUNDAMENTALS_COLLECTION_DELAY_SECONDS", "0.5")))
+    for ticker in tickers:
+        try:
+            cached = db_manager.get_isyatirim_fundamentals(ticker, ttl)
+            if cached["fresh"] and cached["payload"].get("one_year_statement_history") and not force:
+                _fundamental_collection_state["cached"] += 1
+            else:
+                payload = await asyncio.to_thread(fetch_fundamentals, ticker)
+                db_manager.upsert_isyatirim_fundamentals(ticker, payload)
+                _fundamental_collection_state["fetched"] += 1
+        except Exception as exc:  # noqa: BLE001 - one unavailable company must not stop the collection
+            logger.warning("İş Yatırım bulk fundamentals failed for %s: %s", ticker, exc)
+            _fundamental_collection_state["failed"] += 1
+        _fundamental_collection_state["completed"] += 1
+        await asyncio.sleep(delay)
+    _fundamental_collection_state.update({"status": "completed", "finished_at": datetime.now(timezone.utc).isoformat()})
+
+
+@router.post("/isyatirim/fundamentals/collect")
+async def collect_isyatirim_fundamentals(
+    request: FundamentalsCollectionRequest,
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Start a paced local collection of all active BIST fundamental snapshots."""
+    global _fundamental_collection_task
+    if _fundamental_collection_task is not None and not _fundamental_collection_task.done():
+        return JSONResponse(status_code=409, content={"status": "running", **_fundamental_collection_state})
+    _fundamental_collection_task = asyncio.create_task(_collect_all_isyatirim_fundamentals(db_manager, request.force))
+    return {**_fundamental_collection_state, "status": "started"}
+
+
+@router.get("/isyatirim/fundamentals/collection-status")
+async def isyatirim_fundamentals_collection_status():
+    return {"contract_version": CONTRACT_VERSION, **_fundamental_collection_state}
+
+
+@router.get("/isyatirim/fundamentals")
+async def search_isyatirim_fundamentals(
+    query_text: str = Query("", alias="query", max_length=20),
+    limit: int = Query(50, ge=1, le=200),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Query locally stored current snapshots without contacting İş Yatırım."""
+    try:
+        rows = db_manager.list_isyatirim_fundamentals(query_text, limit)
+    except Exception:
+        logger.exception("İş Yatırım fundamental search failed")
+        return _db_error("database temporarily unavailable")
+    items = []
+    for row in rows:
+        data = row.get("data") if isinstance(row.get("data"), dict) else {}
+        values = data.get("current_valuation", {})
+        items.append({"ticker": row.get("ticker"), "report_period": row.get("report_period"), "age_seconds": row.get("age_seconds"), "price_to_earnings": values.get("price_to_earnings"), "price_to_book": values.get("price_to_book"), "net_income_million_try": data.get("statement_snapshot", {}).get("net_income_million_try")})
+    return {"contract_version": CONTRACT_VERSION, "status": "ok", "total": len(items), "items": items}
+
+
+@router.get("/isyatirim/{instrument}/market-history")
+async def isyatirim_market_history(
+    instrument: str,
+    market: Market = Query(Market.BIST),
+    days: int = Query(30, ge=1, le=365),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Serve normalized public İş Yatırım daily market data for one BIST ticker."""
+    ticker = instrument.strip().upper()
+    if market != Market.BIST:
+        return JSONResponse(status_code=400, content={
+            "contract_version": CONTRACT_VERSION,
+            "instrument": ticker,
+            "market": market.value,
+            "kind": "market_history",
+            "status": "unavailable",
+            "detail": "İş Yatırım market history currently supports market=bist only.",
+        })
+    cache_ttl_seconds = max(60, int(os.getenv("ISYATIRIM_MARKET_CACHE_TTL_SECONDS", "900")))
+    try:
+        cached = db_manager.get_isyatirim_market_history(ticker, days, cache_ttl_seconds)
+    except Exception:  # noqa: BLE001 - a cache outage must not prevent an on-demand fetch
+        logger.exception("İş Yatırım database cache lookup failed for %s", ticker)
+        cached = {"fresh": False, "series": [], "age_seconds": None}
+    cache_status = "database_cache"
+    if cached["fresh"] and len(cached["series"]) >= days:
+        payload = build_market_history_payload(cached["series"], days)
+        freshness_seconds = cached["age_seconds"]
+    else:
+        try:
+            payload = await asyncio.to_thread(fetch_market_history, ticker, days)
+        except (ValueError, LookupError) as exc:
+            return JSONResponse(status_code=404, content={
+                "contract_version": CONTRACT_VERSION, "instrument": ticker,
+                "market": market.value, "kind": "market_history", "status": "unavailable",
+                "detail": str(exc),
+            })
+        except Exception as exc:  # noqa: BLE001 - upstream availability is variable
+            logger.warning("İş Yatırım market history failed for %s: %s", ticker, exc)
+            return JSONResponse(status_code=502, content={
+                "contract_version": CONTRACT_VERSION, "instrument": ticker,
+                "market": market.value, "kind": "market_history", "status": "unavailable",
+                "detail": "İş Yatırım market data is temporarily unavailable.",
+            })
+        try:
+            db_manager.upsert_isyatirim_market_history(ticker, payload["series"])
+        except Exception:  # noqa: BLE001 - the visible fetched result remains valid
+            logger.exception("İş Yatırım database cache write failed for %s", ticker)
+        freshness_seconds = 0
+        cache_status = "fetched"
+    payload["cache"] = {"status": cache_status, "ttl_seconds": cache_ttl_seconds}
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "instrument": ticker,
+        "market": market.value,
+        "kind": "market_history",
+        "as_of": payload["latest"]["trading_date"],
+        "provider": "isyatirim-public-data",
+        "source": "isyatirim-web",
+        "freshness_seconds": freshness_seconds,
+        "status": "ok",
+        "payload": payload,
+    }
+
+
+@router.get("/isyatirim/{instrument}/fundamentals")
+async def isyatirim_fundamentals(
+    instrument: str,
+    market: Market = Query(Market.BIST),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Serve cache-first public İş Yatırım company-card fundamentals for BIST."""
+    ticker = instrument.strip().upper()
+    if market != Market.BIST:
+        return JSONResponse(status_code=400, content={
+            "contract_version": CONTRACT_VERSION, "instrument": ticker,
+            "market": market.value, "kind": "fundamentals", "status": "unavailable",
+            "detail": "İş Yatırım fundamentals currently support market=bist only.",
+        })
+    cache_ttl_seconds = max(300, int(os.getenv("ISYATIRIM_FUNDAMENTALS_CACHE_TTL_SECONDS", "21600")))
+    try:
+        cached = db_manager.get_isyatirim_fundamentals(ticker, cache_ttl_seconds)
+    except Exception:  # noqa: BLE001 - cache failure must not hide source availability
+        logger.exception("İş Yatırım fundamental cache lookup failed for %s", ticker)
+        cached = {"fresh": False, "payload": None, "age_seconds": None}
+    cache_status = "database_cache"
+    if cached["fresh"] and cached["payload"].get("one_year_statement_history"):
+        payload = cached["payload"]
+        freshness_seconds = cached["age_seconds"]
+    else:
+        try:
+            payload = await asyncio.to_thread(fetch_fundamentals, ticker)
+        except (ValueError, LookupError) as exc:
+            return JSONResponse(status_code=404, content={
+                "contract_version": CONTRACT_VERSION, "instrument": ticker,
+                "market": market.value, "kind": "fundamentals", "status": "unavailable",
+                "detail": str(exc),
+            })
+        except Exception as exc:  # noqa: BLE001 - upstream availability is variable
+            logger.warning("İş Yatırım fundamentals failed for %s: %s", ticker, exc)
+            return JSONResponse(status_code=502, content={
+                "contract_version": CONTRACT_VERSION, "instrument": ticker,
+                "market": market.value, "kind": "fundamentals", "status": "unavailable",
+                "detail": "İş Yatırım fundamentals are temporarily unavailable.",
+            })
+        try:
+            db_manager.upsert_isyatirim_fundamentals(ticker, payload)
+        except Exception:  # noqa: BLE001 - fetched source result remains useful
+            logger.exception("İş Yatırım fundamental cache write failed for %s", ticker)
+        freshness_seconds = 0
+        cache_status = "fetched"
+    payload["cache"] = {"status": cache_status, "ttl_seconds": cache_ttl_seconds}
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "instrument": ticker,
+        "market": market.value,
+        "kind": "fundamentals",
+        "as_of": (payload.get("reported_periods") or [None])[0],
+        "provider": "isyatirim-public-data",
+        "source": "isyatirim-web",
+        "freshness_seconds": freshness_seconds,
+        "status": "ok",
+        "payload": payload,
     }
 
 

@@ -48,10 +48,51 @@
         <p id="catalog-status" class="note"></p>
       </section>
 
+      <section class="isyatirim-market" aria-labelledby="isyatirim-title">
+        <div>
+          <p class="eyebrow">Public market data</p>
+          <h2 id="isyatirim-title">İş Yatırım daily data</h2>
+        </div>
+        <div class="isyatirim-controls">
+          <label>History<select id="isyatirim-window"><option value="5">Last 5 trading days</option><option value="30" selected>Last 30 trading days</option><option value="90">Last 90 trading days</option><option value="365">Last year</option></select></label>
+          <button id="load-isyatirim" type="button">Load market data</button>
+        </div>
+        <p id="isyatirim-status" class="note">Loads İş Yatırım’s public daily price, volume, market-value, USD, and index fields for the ticker above. This is factual market data, not a trading signal.</p>
+        <div id="isyatirim-result" class="isyatirim-result" hidden>
+          <dl id="isyatirim-summary" class="summary"></dl>
+          <div class="isyatirim-table-wrap"><table><thead><tr><th>Date</th><th>Close</th><th>Low–high</th><th>Volume</th><th>Market value</th></tr></thead><tbody id="isyatirim-rows"></tbody></table></div>
+          <details><summary>Normalized JSON fields and source response</summary><pre id="isyatirim-raw"></pre></details>
+        </div>
+      </section>
+
       <section id="result" class="result" hidden aria-live="polite">
         <div class="result-heading"><div><p id="result-kicker" class="eyebrow"></p><h2 id="result-title"></h2></div><span id="result-status" class="pill"></span></div>
         <dl id="summary" class="summary"></dl>
         <details><summary>Source response</summary><pre id="raw-response"></pre></details>
+      </section>
+
+      <section class="isyatirim-fundamentals" aria-labelledby="isyatirim-fundamentals-title">
+        <div>
+          <p class="eyebrow">Public company card</p>
+          <h2 id="isyatirim-fundamentals-title">İş Yatırım fundamentals</h2>
+        </div>
+        <div class="isyatirim-controls">
+          <p class="note">Loads source-reported statement snapshot and current valuation ratios for the ticker above. Statement values remain labelled in mn TL.</p>
+          <button id="load-isyatirim-fundamentals" type="button">Load fundamentals</button>
+        </div>
+        <p id="isyatirim-fundamentals-status" class="note">The local database is used for a recent cached snapshot; later fetches replace the same ticker’s current source data.</p>
+        <div id="isyatirim-fundamentals-result" class="isyatirim-result" hidden>
+          <dl id="isyatirim-fundamentals-summary" class="summary"></dl>
+          <details><summary>Normalized fundamental JSON</summary><pre id="isyatirim-fundamentals-raw"></pre></details>
+        </div>
+      </section>
+
+      <section class="isyatirim-collection" aria-labelledby="isyatirim-collection-title">
+        <div><p class="eyebrow">Local database</p><h2 id="isyatirim-collection-title">BIST fundamentals collection</h2></div>
+        <div class="isyatirim-controls"><p class="note">Collects every active BIST ticker sequentially. Each source page provides its latest four quarterly periods (one rolling year); fresh records are skipped.</p><button id="collect-isyatirim-fundamentals" type="button">Collect all BIST fundamentals</button></div>
+        <p id="isyatirim-collection-status" class="note">Not running. This can take several minutes on the first collection.</p>
+        <form id="isyatirim-fundamentals-search" class="isyatirim-search"><label>Search stored ticker<input id="isyatirim-fundamentals-query" placeholder="THYAO" maxlength="12"></label><button type="submit">Search database</button></form>
+        <div class="isyatirim-table-wrap" id="isyatirim-fundamentals-list" hidden><table><thead><tr><th>Ticker</th><th>Period</th><th>P/E</th><th>P/B</th><th>Net income</th></tr></thead><tbody id="isyatirim-fundamentals-list-rows"></tbody></table></div>
       </section>
 
       <section class="refresh" aria-labelledby="refresh-title">

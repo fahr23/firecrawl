@@ -9,14 +9,6 @@ const emptyState = document.querySelector("#empty-state");
 const categoryStrip = document.querySelector("#category-strip");
 const resultsSection = document.querySelector(".results-section");
 const submitButton = form.querySelector("button[type='submit']");
-const documentForm = document.querySelector("#document-form");
-const documentFile = document.querySelector("#document-file");
-const documentStatus = document.querySelector("#document-status");
-const documentResult = document.querySelector("#document-result");
-const documentResultTitle = document.querySelector("#document-result-title");
-const documentMeta = document.querySelector("#document-meta");
-const documentMarkdown = document.querySelector("#document-markdown");
-const documentSubmit = documentForm.querySelector("button[type='submit']");
 const projectSelect = document.querySelector("#project-select");
 const newProjectButton = document.querySelector("#new-project");
 const exportProjectButton = document.querySelector("#export-project");
@@ -225,42 +217,6 @@ async function runSearch() {
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   runSearch();
-});
-
-documentForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const file = documentFile.files[0];
-  if (!file) return;
-  if (file.size > 50 * 1024 * 1024) {
-    documentStatus.textContent = "This document exceeds the 50 MB parser limit.";
-    return;
-  }
-
-  documentSubmit.disabled = true;
-  documentResult.hidden = true;
-  documentStatus.textContent = `Parsing ${file.name} with local Firecrawl…`;
-  try {
-    const response = await fetch(`/api/v1/documents/parse?filename=${encodeURIComponent(file.name)}`, {
-      method: "POST",
-      headers: { "content-type": file.type || "application/octet-stream" },
-      body: await file.arrayBuffer(),
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.detail || "Document parsing failed");
-
-    const metadata = payload.metadata || {};
-    documentResultTitle.textContent = payload.filename;
-    documentMeta.textContent = [metadata.title, metadata.contentType, payload.source]
-      .filter(Boolean)
-      .join(" · ");
-    documentMarkdown.textContent = payload.markdown || payload.summary || "No readable text was returned.";
-    documentResult.hidden = false;
-    documentStatus.textContent = "Document parsed. Review the extracted text alongside the original file.";
-  } catch (error) {
-    documentStatus.textContent = error.message;
-  } finally {
-    documentSubmit.disabled = false;
-  }
 });
 
 projectSelect.addEventListener("change", async () => {
