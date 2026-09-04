@@ -1138,7 +1138,7 @@ export async function scrapeURL(
     }
 
     if (shouldCheckRobots(options, internalOptions)) {
-      await withSpan("scrape.robots_check", async robotsSpan => {
+      const result = await withSpan("scrape.robots_check", async robotsSpan => {
         const urlToCheck = meta.rewrittenUrl || meta.url;
         meta.logger.info("Checking robots.txt", { url: urlToCheck });
 
@@ -1202,14 +1202,20 @@ export async function scrapeURL(
           }
         }
       }).catch(error => {
-        if (error.message === "URL blocked by robots.txt") {
+        if (error instanceof CrawlDenialError) {
           return {
-            success: false,
+            success: false as const,
             error,
           };
         }
         throw error;
       });
+      if (result) {
+        return {
+          ...result,
+          threatDecisions: meta.threatDecisions,
+        };
+      }
     }
 
     // Initialize retry tracker with configured limits
