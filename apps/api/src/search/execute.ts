@@ -126,6 +126,8 @@ export async function executeSearch(
     safe: options.safe,
     type: searchTypes,
     enterprise: options.enterprise,
+    includeDomains: options.includeDomains,
+    excludeDomains: options.excludeDomains,
   })) as SearchV2Response;
 
   if (developerResults) {
