@@ -719,3 +719,26 @@ export class ScrapeRetryLimitError extends TransportableError {
     return x;
   }
 }
+
+export class JsonExtractionContentTooLargeError extends TransportableError {
+  constructor(message?: string) {
+    super(
+      "SCRAPE_JSON_CONTENT_TOO_LARGE",
+      message ??
+        "The scraped page content is too large for JSON extraction, so extraction was aborted.",
+    );
+  }
+
+  serialize() {
+    return super.serialize();
+  }
+
+  static deserialize(
+    _: ErrorCodes,
+    data: ReturnType<typeof this.prototype.serialize>,
+  ) {
+    const x = new JsonExtractionContentTooLargeError(data.message);
+    x.stack = data.stack;
+    return x;
+  }
+}

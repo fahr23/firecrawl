@@ -33,6 +33,7 @@ export type ErrorCodes =
   | "PARSE_UNSUPPORTED_OPTIONS"
   | "CRAWL_DENIAL"
   | "MAP_FAILED"
+  | "SCRAPE_JSON_CONTENT_TOO_LARGE"
   | "BAD_REQUEST_INVALID_JSON"
   | "BAD_REQUEST"
   // Threat protection (enterprise domain risk blocking). Lowercase by design:

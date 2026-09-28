@@ -30,6 +30,7 @@ import {
   LockdownMissError,
   ScrapeJobCancelledError,
   ScrapeRetryLimitError,
+  JsonExtractionContentTooLargeError,
   BrandingNotSupportedError,
   AudioUnsupportedUrlError,
   VideoUnsupportedUrlError,
@@ -74,6 +75,7 @@ const errorMap: Record<ErrorCodes, any> = {
   SCRAPE_MEDIA_ACCESS_DENIED: MediaAccessDeniedError,
   SCRAPE_X_TWITTER_CONFIGURATION_ERROR: XTwitterConfigurationError,
   MAP_FAILED: MapFailedError,
+  SCRAPE_JSON_CONTENT_TOO_LARGE: JsonExtractionContentTooLargeError,
   unsafe_domain_blocked: UnsafeDomainBlockedError,
 
   // Zod errors

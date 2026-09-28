@@ -5,6 +5,7 @@ import { protocolIncluded, checkUrl } from "../../lib/validateUrl";
 import { hasReachableHost } from "../../lib/url-utils";
 import { countries } from "../../lib/validate-country";
 import { includesFormat } from "../../lib/format-utils";
+import { addStrictSchemaIssue } from "../../lib/openai-strict-schema";
 import {
   ExtractorOptions,
   PageOptions,
@@ -355,7 +356,8 @@ const jsonFormatWithOptions = z.strictObject({
     .transform(val => normalizeSchemaForOpenAI(val))
     .refine(val => validateSchemaForOpenAI(val), {
       message: OPENAI_SCHEMA_ERROR_MESSAGE,
-    }),
+    })
+    .superRefine(addStrictSchemaIssue),
   prompt: z.string().max(10000).optional(),
 });
 
@@ -389,7 +391,8 @@ const changeTrackingFormatWithOptions = z.strictObject({
     .transform(val => normalizeSchemaForOpenAI(val))
     .refine(val => validateSchemaForOpenAI(val), {
       message: OPENAI_SCHEMA_ERROR_MESSAGE,
-    }),
+    })
+    .superRefine(addStrictSchemaIssue),
   modes: z.enum(["json", "git-diff"]).array().optional().prefault([]),
   tag: z.string().or(z.null()).prefault(null),
 });
@@ -881,7 +884,8 @@ const extractOptions = z
       .transform(val => normalizeSchemaForOpenAI(val))
       .refine(val => validateSchemaForOpenAI(val), {
         message: OPENAI_SCHEMA_ERROR_MESSAGE,
-      }),
+      })
+      .superRefine(addStrictSchemaIssue),
     limit: z.int().positive().finite().optional(),
     ignoreSitemap: z.boolean().prefault(false),
     includeSubdomains: z.boolean().prefault(true),
