@@ -278,9 +278,10 @@ export async function crawlStatusController(
     next: string | undefined;
   };
 
+  const pageSize = end !== undefined ? end - start + 1 : 100;
   const doneJobs = await scrapeQueue.getCrawlJobsForListing(
     req.params.jobId,
-    end !== undefined ? end - start + 1 : 100,
+    pageSize,
     start,
     logger.child({ zeroDataRetention }),
   );
@@ -323,9 +324,16 @@ export async function crawlStatusController(
 
   outputBulkB = {
     data: scrapes,
+    // Only completed documents are paged, so a finished job's cursor ends after
+    // its last one. `completed` is read before this page, so a full or
+    // size-capped page keeps the cursor for jobs that finished meanwhile.
     next:
-      (outputBulkA.total ?? 0) > start + iteratedOver ||
-      outputBulkA.status !== "completed"
+      outputBulkA.status === "scraping" ||
+      (outputBulkA.completed ?? 0) > start + iteratedOver ||
+      doneJobs.length > iteratedOver ||
+      (outputBulkA.status !== "completed" &&
+        doneJobs.length > 0 &&
+        doneJobs.length === pageSize)
         ? `${req.protocol}://${req.host}/v2/${isBatch ? "batch/scrape" : "crawl"}/${req.params.jobId}?skip=${start + iteratedOver}${req.query.limit ? `&limit=${req.query.limit}` : ""}`
         : undefined,
   };
