@@ -48,6 +48,10 @@ CLAUDE.local.md
 # local SDK venv
 apps/python-sdk/.venv/
 
+# Python type checker cache
+.mypy_cache/
+**/.mypy_cache/
+
 /apps/api/running-docs/
 
 
