@@ -34,6 +34,10 @@ spec:
       containers:
       - name: postgres
         image: ghcr.io/firecrawl/nuq-postgres:latest
+        args:
+        - "postgres"
+        - "-c"
+        - "listen_addresses=*"
         ports:
         - containerPort: 5432
           name: postgres
@@ -55,14 +59,10 @@ spec:
               key: POSTGRES_PASSWORD
         - name: POSTGRES_INITDB_ARGS
           value: "-c listen_addresses='*'"
-        command:
-        - "postgres"
-        - "-c"
-        - "listen_addresses=*"
         resources:
           requests:
-            memory: "512Mi"
-            cpu: "250m"
+            memory: "128Mi"
+            cpu: "50m"
           limits:
             memory: "2Gi"
             cpu: "1000m"

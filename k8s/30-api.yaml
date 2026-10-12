@@ -20,6 +20,7 @@ spec:
       containers:
       - name: api
         image: ghcr.io/firecrawl/firecrawl:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 3002
           name: http
@@ -33,21 +34,21 @@ spec:
         command: ["node", "dist/src/harness.js", "--start-docker"]
         resources:
           requests:
-            memory: "2Gi"
-            cpu: "1000m"
+            memory: "256Mi"
+            cpu: "100m"
           limits:
             memory: "8Gi"
             cpu: "4000m"
         livenessProbe:
           httpGet:
-            path: /health
+            path: /v0/health/liveness
             port: 3002
           initialDelaySeconds: 60
           periodSeconds: 30
           timeoutSeconds: 10
         readinessProbe:
           httpGet:
-            path: /health
+            path: /v0/health/liveness
             port: 3002
           initialDelaySeconds: 30
           periodSeconds: 10

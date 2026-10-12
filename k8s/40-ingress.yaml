@@ -7,7 +7,7 @@ metadata:
     app: firecrawl
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-body-size: "50m"
     nginx.ingress.kubernetes.io/proxy-connect-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
@@ -16,10 +16,26 @@ spec:
   ingressClassName: nginx
   tls:
   - hosts:
-    - firecrawl.local
+    # -------------------------------------------------------------------------
+    # NEW PROJECT DOMAINS: 
+    # To expose a new workspace locally, append its '.localhost' hostname here 
+    # to register it for TLS/Ingress tracking. Using '.localhost' ensures macOS 
+    # automatically routes traffic locally without needing /etc/hosts changes.
+    # -------------------------------------------------------------------------
+    - firecrawl.localhost
+    - api.localhost
+    - turkish.localhost
+    - academic.localhost
     secretName: firecrawl-tls
   rules:
-  - host: firecrawl.local
+  # ---------------------------------------------------------------------------
+  # INGRESS ROUTING RULES:
+  # When adding a new work package or project to the Kubernetes cluster,
+  # append a new rule block below. Map the new '.localhost' hostname to
+  # the backend service name and port you defined in your deployment manifest.
+  # Note: Access all these locally via http://[domain].localhost:32080 
+  # ---------------------------------------------------------------------------
+  - host: firecrawl.localhost
     http:
       paths:
       - path: /
@@ -29,7 +45,7 @@ spec:
             name: firecrawl-api
             port:
               number: 3002
-  - host: api.firecrawl.local
+  - host: api.localhost
     http:
       paths:
       - path: /
@@ -39,6 +55,26 @@ spec:
             name: firecrawl-api
             port:
               number: 8000
+  - host: turkish.localhost
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: turkish-financial-api
+            port:
+              number: 8000
+  - host: academic.localhost
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: academic-search-api
+            port:
+              number: 8010
 ---
 # Optional: NodePort service for testing without ingress
 apiVersion: v1

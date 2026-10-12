@@ -10,8 +10,11 @@ resources:
 - 10-redis.yaml
 - 11-rabbitmq.yaml
 - 12-postgres.yaml
+- 14-db-init-jobs.yaml
 - 20-go-html-to-md.yaml
 - 21-playwright-service.yaml
+- 22-turkish-financial.yaml
+- 23-academic-search.yaml
 - 30-api.yaml
 - 40-ingress.yaml
 - 50-hpa.yaml
@@ -34,3 +37,6 @@ configMapGenerator:
 - name: firecrawl-env-config
   envs:
   - .env
+- name: bist-catalog
+  files:
+  - BIST_TUM.csv=BIST_TUM.csv

@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fdb-data
+  namespace: firecrawl
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fdb-cluster-file
+  namespace: firecrawl
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Mi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: foundationdb
+  namespace: firecrawl
+spec:
+  serviceName: foundationdb
+  replicas: 1
+  selector:
+    matchLabels:
+      app: foundationdb
+  template:
+    metadata:
+      labels:
+        app: foundationdb
+    spec:
+      containers:
+      - name: foundationdb
+        image: foundationdb/foundationdb:7.3.63
+        env:
+        - name: FDB_NETWORKING_MODE
+          value: "container"
+        - name: FDB_COORDINATOR_PORT
+          value: "4500"
+        ports:
+        - containerPort: 4500
+        volumeMounts:
+        - name: fdb-data
+          mountPath: /var/fdb/data
+        - name: fdb-cluster-file
+          mountPath: /var/fdb
+      volumes:
+      - name: fdb-data
+        persistentVolumeClaim:
+          claimName: fdb-data
+      - name: fdb-cluster-file
+        persistentVolumeClaim:
+          claimName: fdb-cluster-file
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: foundationdb
+  namespace: firecrawl
+spec:
+  ports:
+  - port: 4500
+    targetPort: 4500
+  selector:
+    app: foundationdb

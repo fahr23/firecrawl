@@ -20,6 +20,7 @@ spec:
       containers:
       - name: go-html-to-md-service
         image: ghcr.io/firecrawl/go-html-to-md-service:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
           name: http
