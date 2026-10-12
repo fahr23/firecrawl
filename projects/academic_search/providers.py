@@ -1497,3 +1497,196 @@ class ClarivateSearcher(BaseSearcher):
             year_min=min_year,
             sort_by="citations"
         )
+
+
+class PubMedSearcher(BaseSearcher):
+    """
+    Search provider for PubMed (NCBI E-utilities API).
+    Provides medical and life sciences literature.
+    """
+    
+    @property
+    def source_name(self) -> str:
+        return "pubmed"
+        
+    @property
+    def is_available(self) -> bool:
+        return True
+        
+    def search(
+        self,
+        query: str,
+        max_results: int = 25,
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+        sort_by: str = "relevance"
+    ) -> SearchResult:
+        if not self.is_available or not query.strip():
+            return SearchResult(query=query, sources=[self.source_name])
+            
+        start_time = time.time()
+        
+        # Build query
+        search_query = query
+        if year_min and year_max:
+            search_query += f" AND ({year_min}:{year_max}[pdat])"
+        elif year_min:
+            search_query += f" AND ({year_min}:3000[pdat])"
+        elif year_max:
+            search_query += f" AND (1800:{year_max}[pdat])"
+            
+        try:
+            # 1. ESearch
+            search_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+            search_params = {
+                "db": "pubmed",
+                "term": search_query,
+                "retmax": max_results,
+                "retmode": "json",
+                "sort": "relevance"
+            }
+            
+            search_response = requests.get(search_url, params=search_params, timeout=self.config.timeout)
+            search_response.raise_for_status()
+            search_data = search_response.json()
+            
+            id_list = search_data.get("esearchresult", {}).get("idlist", [])
+            
+            if not id_list:
+                return SearchResult(query=query, sources=[self.source_name], search_time=time.time() - start_time)
+                
+            # 2. ESummary
+            summary_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+            summary_params = {
+                "db": "pubmed",
+                "id": ",".join(id_list),
+                "retmode": "json"
+            }
+            
+            summary_response = requests.get(summary_url, params=summary_params, timeout=self.config.timeout)
+            summary_response.raise_for_status()
+            summary_data = summary_response.json()
+            
+            result_list = summary_data.get("result", {})
+            uids = result_list.get("uids", [])
+            
+            articles = []
+            for uid in uids:
+                item = result_list.get(uid, {})
+                title = item.get("title", "")
+                
+                # Authors
+                author_list = item.get("authors", [])
+                authors = ", ".join([a.get("name") for a in author_list]) if author_list else "Unknown"
+                
+                pubdate = item.get("pubdate", "")
+                year = pubdate[:4] if pubdate else None
+                
+                doi = None
+                for article_id in item.get("articleids", []):
+                    if article_id.get("idtype") == "doi":
+                        doi = article_id.get("value")
+                        break
+                        
+                url = f"https://pubmed.ncbi.nlm.nih.gov/{uid}/"
+                
+                article = Article(
+                    title=title,
+                    authors=authors,
+                    year=year,
+                    journal=item.get("source", ""),
+                    url=url,
+                    doi=doi,
+                    source=self.source_name,
+                    raw_data=item
+                )
+                articles.append(article)
+                
+            return SearchResult(
+                query=query,
+                articles=articles,
+                total_found=int(search_data.get("esearchresult", {}).get("count", len(articles))),
+                sources=[self.source_name],
+                search_time=time.time() - start_time
+            )
+            
+        except Exception as e:
+            self.logger.warning(f"PubMed API error: {e}")
+            return SearchResult(query=query, sources=[self.source_name])
+
+
+class CoreSearcher(BaseSearcher):
+    """
+    Search provider for CORE (core.ac.uk) API.
+    Provides access to millions of open access research papers.
+    """
+    
+    @property
+    def source_name(self) -> str:
+        return "core"
+        
+    @property
+    def is_available(self) -> bool:
+        return True
+        
+    def search(
+        self,
+        query: str,
+        max_results: int = 25,
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+        sort_by: str = "relevance"
+    ) -> SearchResult:
+        if not self.is_available or not query.strip():
+            return SearchResult(query=query, sources=[self.source_name])
+            
+        start_time = time.time()
+        
+        core_query = query
+        if year_min and year_max:
+            core_query = f"({query}) AND yearPublished>={year_min} AND yearPublished<={year_max}"
+        elif year_min:
+            core_query = f"({query}) AND yearPublished>={year_min}"
+        elif year_max:
+            core_query = f"({query}) AND yearPublished<={year_max}"
+            
+        url = "https://api.core.ac.uk/v3/search/works"
+        params = {
+            "q": core_query,
+            "limit": min(max_results, 100)
+        }
+        
+        try:
+            response = requests.get(url, params=params, timeout=self.config.timeout)
+            response.raise_for_status()
+            data = response.json()
+            
+            articles = []
+            for item in data.get("results", []):
+                authors = ", ".join([a.get("name", "") for a in item.get("authors", [])]) if item.get("authors") else "Unknown"
+                
+                article = Article(
+                    title=item.get("title", "Unknown Title"),
+                    abstract=item.get("abstract", ""),
+                    authors=authors,
+                    year=str(item.get("yearPublished")) if item.get("yearPublished") else None,
+                    url=item.get("downloadUrl") or (item.get("sourceFulltextUrls", [""])[0] if item.get("sourceFulltextUrls") else ""),
+                    doi=item.get("doi"),
+                    source=self.source_name,
+                    is_open_access=True,
+                    raw_data=item
+                )
+                articles.append(article)
+                
+            return SearchResult(
+                query=query,
+                articles=articles,
+                total_found=data.get("totalHits", len(articles)),
+                sources=[self.source_name],
+                search_time=time.time() - start_time
+            )
+            
+        except Exception as e:
+            self.logger.warning(f"CORE API error: {e}")
+            return SearchResult(query=query, sources=[self.source_name])
+

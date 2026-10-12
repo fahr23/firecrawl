@@ -162,7 +162,19 @@ Examples:
         help="Verbose output"
     )
     
+    is_report = False
+    if len(sys.argv) > 1 and sys.argv[1] == "report":
+        is_report = True
+        sys.argv.pop(1)
+        
     args = parser.parse_args()
+    
+    if is_report:
+        args.format = "markdown"
+        args.topics = True
+        args.analyze = True
+        if not args.output:
+            args.output = "report.md"
     
     # Build query with field tag if specified
     query = args.query

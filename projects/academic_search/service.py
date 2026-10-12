@@ -309,7 +309,7 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
 
     app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
 
-    @app.get("/", include_in_schema=False)
+    @app.get("/ui", include_in_schema=False)
     async def index() -> FileResponse:
         return FileResponse(WEB_DIR / "index.html")
 

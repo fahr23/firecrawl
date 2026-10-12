@@ -16,6 +16,7 @@ from .config import Config
 from .providers import (
     ScienceDirectSearcher, ScopusSearcher, OpenAlexSearcher, SemanticScholarSearcher, ArXivSearcher,
     GoogleScholarSearcher, ClarivateSearcher, FirecrawlResearchSearcher,
+    PubMedSearcher, CoreSearcher,
     CrossRefEnricher, SemanticScholarEnricher, ScopusEnricher
 )
 from .exporters import JSONExporter, MarkdownExporter, CSVExporter, BibTeXExporter, RISExporter
@@ -92,6 +93,8 @@ class AcademicSearchEngine:
         self._searchers.append(OpenAlexSearcher(self.config))
         self._searchers.append(SemanticScholarSearcher(self.config))
         self._searchers.append(ArXivSearcher(self.config))
+        self._searchers.append(PubMedSearcher(self.config))
+        self._searchers.append(CoreSearcher(self.config))
 
         # Optional supplemental discovery. Self-hosted Firecrawl only serves this
         # API when its external RESEARCH_PROXY_URL is configured.

@@ -19,6 +19,7 @@ class ArticleSource(Enum):
     CROSSREF = "crossref"
     SEMANTIC_SCHOLAR = "semantic_scholar"
     PUBMED = "pubmed"
+    CORE = "core"
     ARXIV = "arxiv"
     IEEE = "ieee"
     UNKNOWN = "unknown"

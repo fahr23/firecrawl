@@ -239,6 +239,34 @@ class MarkdownExporter(BaseExporter):
         lines.append("---")
         lines.append("")
         
+        # Derived Outputs (Analysis & Topics)
+        if result.derived_outputs:
+            lines.append("## Analysis & Derived Insights")
+            lines.append("")
+            lines.append("> **Note:** The following insights are AI-derived and may not represent the original authors' intent.")
+            lines.append("")
+            for output in result.derived_outputs:
+                kind = output.get("kind", "Analysis").capitalize()
+                analyzer = output.get("analyzer", "Unknown")
+                lines.append(f"### {kind} (via {analyzer})")
+                lines.append("")
+                content = output.get("output", {})
+                if isinstance(content, list) and len(content) > 0 and isinstance(content[0], tuple):
+                    # Topics format: [("topic1", 10.5), ("topic2", 8.2)]
+                    for topic, score in content:
+                        lines.append(f"- **{topic}** (Score: {score:.1f})")
+                elif isinstance(content, list):
+                    for item in content:
+                        lines.append(f"- {item}")
+                elif isinstance(content, dict):
+                    for k, v in content.items():
+                        lines.append(f"**{k}**: {v}")
+                else:
+                    lines.append(str(content))
+                lines.append("")
+            lines.append("---")
+            lines.append("")
+
         # Table of Contents
         if self.include_toc and result.articles:
             lines.append("## Table of Contents")
