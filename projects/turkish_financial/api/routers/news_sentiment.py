@@ -452,12 +452,13 @@ async def combined_sentiment_ranking(
         rows = db_manager.query(
             """SELECT ticker, MAX(period_date) AS period_date,
                       SUM(combined_score * GREATEST(COALESCE(news_count, 0) +
-                          COALESCE(social_count, 0) + COALESCE(youtube_count, 0), 1)) /
+                          COALESCE(social_count, 0) + COALESCE(youtube_count, 0) + COALESCE(kap_count, 0), 1)) /
                         SUM(GREATEST(COALESCE(news_count, 0) + COALESCE(social_count, 0) +
-                          COALESCE(youtube_count, 0), 1)) AS combined_score,
+                          COALESCE(youtube_count, 0) + COALESCE(kap_count, 0), 1)) AS combined_score,
                       SUM(COALESCE(news_count, 0)) AS news_count,
                       SUM(COALESCE(social_count, 0)) AS social_count,
                       SUM(COALESCE(youtube_count, 0)) AS youtube_count,
+                      SUM(COALESCE(kap_count, 0)) AS kap_count,
                       MAX(computed_at) AS computed_at
                FROM aggregated_ticker_sentiment
                WHERE combined_score IS NOT NULL
@@ -469,10 +470,10 @@ async def combined_sentiment_ranking(
         items = []
         for row in rows:
             payload = repository._payload(row)
-            counts = {name: int(row.get(f"{name}_count") or 0) for name in ("news", "social", "youtube")}
+            counts = {name: int(row.get(f"{name}_count") or 0) for name in ("news", "social", "youtube", "kap")}
             source_types = [name for name, count in counts.items() if count > 0]
             # Shrink thin/single-source evidence toward zero before ranking it.
-            evidence_quality = round((payload["sample_size"] / (payload["sample_size"] + 5)) * (len(source_types) / 3), 4)
+            evidence_quality = round((payload["sample_size"] / (payload["sample_size"] + 5)) * (len(source_types) / 4), 4)
             payload.update({
                 "raw_score": payload["score"],
                 "adjusted_score": round(payload["score"] * evidence_quality, 4),
@@ -501,24 +502,28 @@ async def combined_sentiment_evidence(
     window_days: int = Query(7, ge=1, le=90),
     db_manager: DatabaseManager = Depends(get_db_manager),
 ):
-    """Stored direct URLs underpinning this ticker's news/YouTube evidence."""
+    """Stored direct URLs underpinning this ticker's news/YouTube/KAP evidence."""
     if market != Market.BIST:
         return {"instrument": instrument, "market": market.value, "items": []}
     ticker = instrument.strip().upper()
     try:
         rows = db_manager.query(
-            """SELECT source, headline AS title, url, published_at AS occurred_at
+            """SELECT 'news' AS evidence_type, id::text AS evidence_id, source, headline AS title, url, published_at AS occurred_at
                FROM news_articles WHERE ticker = %s
                  AND COALESCE(published_at, scraped_at) >= CURRENT_DATE - (%s - 1)
                UNION ALL
-               SELECT 'youtube', v.title, v.url, v.published_at
+               SELECT 'youtube' AS evidence_type, v.id::text AS evidence_id, 'youtube' AS source, v.title, v.url, v.published_at AS occurred_at
                FROM youtube_videos v JOIN youtube_video_sentiment s ON s.video_id = v.id
                WHERE s.ticker = %s AND COALESCE(v.published_at, v.scraped_at) >= CURRENT_DATE - (%s - 1)
+               UNION ALL
+               SELECT 'kap' AS evidence_type, d.id::text AS evidence_id, 'KAP' AS source, d.disclosure_type AS title, d.detail_url AS url, d.disclosure_date::timestamp AS occurred_at
+               FROM kap_disclosures d JOIN kap_disclosure_sentiment s ON s.disclosure_id = d.id
+               WHERE d.stock_code = %s AND COALESCE(d.disclosure_date::timestamp, d.scraped_at) >= CURRENT_DATE - (%s - 1)
                ORDER BY occurred_at DESC NULLS LAST LIMIT 50""",
-            (ticker, window_days, ticker, window_days),
+            (ticker, window_days, ticker, window_days, ticker, window_days),
         )
         return {"instrument": ticker, "market": market.value, "window_days": window_days,
-                "items": [{"source": row.get("source"), "title": row.get("title"), "url": row.get("url")}
+                "items": [{"evidence_type": row.get("evidence_type"), "evidence_id": row.get("evidence_id"), "source": row.get("source"), "title": row.get("title"), "url": row.get("url"), "occurred_at": row.get("occurred_at").isoformat() if row.get("occurred_at") else None}
                           for row in rows if row.get("url")]}
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")
@@ -551,3 +556,49 @@ async def combined_sentiment_point(
     db_manager: DatabaseManager = Depends(get_db_manager),
 ):
     return _serve_point(CombinedSentimentRepository(db_manager), instrument, market, as_of)
+
+@router.get("/evidence/{source_type}/{evidence_id}")
+async def evidence_detail(
+    source_type: str,
+    evidence_id: int,
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Fetch raw text and LLM summary for a specific piece of evidence."""
+    try:
+        text, summary = None, None
+        if source_type == "news":
+            rows = db_manager.query(
+                "SELECT n.body, s.key_drivers FROM news_articles n "
+                "LEFT JOIN news_article_sentiment s ON s.article_id = n.id "
+                "WHERE n.id = %s", (evidence_id,)
+            )
+            if rows:
+                text, summary = rows[0].get("body"), rows[0].get("key_drivers")
+        elif source_type == "youtube":
+            rows = db_manager.query(
+                "SELECT v.transcript, NULL AS analysis_notes FROM youtube_videos v "
+                "LEFT JOIN youtube_video_sentiment s ON s.video_id = v.id "
+                "WHERE v.id = %s", (evidence_id,)
+            )
+            if rows:
+                text, summary = rows[0].get("transcript"), rows[0].get("analysis_notes")
+        elif source_type == "kap":
+            rows = db_manager.query(
+                "SELECT COALESCE(d.pdf_text, d.content) AS text, s.analysis_notes FROM kap_disclosures d "
+                "LEFT JOIN kap_disclosure_sentiment s ON s.disclosure_id = d.id "
+                "WHERE d.id = %s", (evidence_id,)
+            )
+            if rows:
+                text, summary = rows[0].get("text"), rows[0].get("analysis_notes")
+        else:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Invalid source_type")
+        
+        return {"id": evidence_id, "source_type": source_type, "text": text, "summary": summary}
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:
+        if e.__class__.__name__ == "HTTPException":
+            raise
+        logger.exception("Evidence detail fetch failed")
+        return _db_error("database query failed")

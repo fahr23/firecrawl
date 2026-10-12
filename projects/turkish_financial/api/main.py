@@ -142,7 +142,13 @@ app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
 # Include routers
 app.include_router(health.router)
 app.include_router(scrapers.router)
-app.include_router(reports.router)
+# Reports
+app.include_router(reports.router, prefix="/api/v1")
+
+# Analytics
+from api.routers import analytics
+app.include_router(analytics.router, prefix="/api/v1")
+
 app.include_router(sentiment.router, prefix="/api/v1/sentiment")
 app.include_router(sentiment.router, prefix="/api/sentiment", tags=["sentiment_legacy"])
 # External Analysis Provider — Data Contract v1.0 (consumed by strategy_management)
@@ -160,6 +166,7 @@ async def root():
         "message": "Turkish Financial Data Scraper API with AI Sentiment Analysis",
         "version": "1.2.0",
         "docs": "/docs",
+        "ui": "/ui",
         "health": "/api/external/v1/health",
         "external_api": "/api/external/v1",
         "sentiment_api": "/api/v1/sentiment/",

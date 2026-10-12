@@ -132,11 +132,25 @@
 
       <section class="ranking" aria-labelledby="ranking-title">
         <div><p class="eyebrow">Evidence-first ranking</p><h2 id="ranking-title">Combined sentiment by time window</h2></div>
-        <div class="ranking-controls"><label>Window<select id="ranking-window"><option value="3">Last 3 days</option><option value="7" selected>Last week</option><option value="30">Last month</option></select></label><label>Order<select id="ranking-sort"><option value="desc">Positive → negative</option><option value="asc">Negative → positive</option></select></label><button id="load-ranking" type="button">Load ranking</button></div>
+        <div class="ranking-controls"><label>Window<select id="ranking-window"><option value="3">Last 3 days</option><option value="7">Last week</option><option value="30" selected>Last month</option></select></label><label>Order<select id="ranking-sort"><option value="desc">Positive → negative</option><option value="asc">Negative → positive</option></select></label><button id="load-ranking" type="button">Load ranking</button></div>
         <div class="score-guide"><article><strong>Raw score</strong><span>Direction from −1 to +1.</span></article><article><strong>Evidence quality</strong><span>Rewards more samples and independent source types.</span></article><article><strong>Adjusted score</strong><span>Ranking score: raw direction reduced when evidence is thin.</span></article></div>
         <p class="note">Above +0.05 is positive; below −0.05 is negative; the middle band is neutral. A ranking describes stored evidence; it is not investment advice.</p>
         <ol id="ranking-list" class="ranking-list"></ol>
       </section>
+      <dialog id="evidence-modal" class="evidence-modal">
+        <div class="evidence-modal-content">
+          <header class="evidence-modal-header">
+            <h2 id="evidence-modal-title">Evidence Details</h2>
+            <button id="evidence-modal-close" type="button" aria-label="Close modal">×</button>
+          </header>
+          <div class="evidence-modal-body">
+            <h3>Summary / Analysis Notes</h3>
+            <div id="evidence-modal-summary" class="evidence-text"></div>
+            <h3>Raw Content</h3>
+            <div id="evidence-modal-raw" class="evidence-text"></div>
+          </div>
+        </div>
+      </dialog>
     </main>
   </body>
 </html>

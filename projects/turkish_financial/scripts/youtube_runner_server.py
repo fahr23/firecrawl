@@ -31,6 +31,9 @@ RUNNER_PORT = 8765
 ALLOWED_ORIGINS = {
     "http://127.0.0.1:8000",
     "http://localhost:8000",
+    "http://localhost:30080",
+    "http://localhost:32080",
+    "http://turkish.localhost:32080",
 }
 ALLOWED_BROWSERS = {"", "brave", "chrome", "chromium", "edge", "firefox", "safari", "vivaldi"}
 WHISPER_BIN = PROJECT_DIR / ".local/whisper.cpp/build/bin/whisper-cli"
@@ -72,7 +75,7 @@ def project_sources() -> list[str]:
     if local_sources is not None:
         return local_sources
     result = subprocess.run(
-        ["docker", "compose", "exec", "-T", "turkish-financial-api", "python", "-m",
+        ["kubectl", "exec", "-i", "-n", "firecrawl", "deployment/turkish-financial-api", "--", "python", "-m",
          "scripts.youtube_transcript_store", "--channels"],
         cwd=WORKSPACE_DIR,
         text=True,

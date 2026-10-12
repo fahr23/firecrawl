@@ -469,3 +469,90 @@ async def query_sentiment(
         logger.error(f"Failed to query sentiment: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/instrument/{symbol}")
+async def get_instrument_report(
+    symbol: str,
+    db_manager: DatabaseManager = Depends(get_db_manager)
+):
+    """
+    Generate a consolidated daily summary report for a specific company.
+    
+    Includes market fundamentals, recent KAP disclosures, and aggregated sentiment.
+    """
+    try:
+        conn = db_manager.get_connection()
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SET search_path TO turkish_financial,public;")
+            
+            # 1. Company info
+            cursor.execute("""
+                SELECT code, name, sector 
+                FROM bist_companies 
+                WHERE code = %s OR name ILIKE %s
+                LIMIT 1
+            """, (symbol.upper(), f"%{symbol}%"))
+            company = cursor.fetchone()
+            
+            if not company:
+                raise HTTPException(status_code=404, detail=f"Company {symbol} not found")
+            
+            company_name = company['name']
+            
+            # 2. Recent KAP Disclosures (last 5) with sentiment
+            cursor.execute("""
+                SELECT 
+                    d.id, d.disclosure_date, d.disclosure_type, d.pdf_url,
+                    s.overall_sentiment, s.sentiment_score
+                FROM kap_disclosures d
+                LEFT JOIN kap_disclosure_sentiment s ON d.id = s.disclosure_id
+                WHERE d.company_name ILIKE %s
+                ORDER BY d.disclosure_date DESC, d.scraped_at DESC
+                LIMIT 5
+            """, (f"%{company_name}%",))
+            recent_disclosures = cursor.fetchall()
+            
+            # Convert dates to ISO format
+            for d in recent_disclosures:
+                if d['disclosure_date']:
+                    d['disclosure_date'] = d['disclosure_date'].isoformat()
+            
+            # Calculate aggregate sentiment
+            scores = [d['sentiment_score'] for d in recent_disclosures if d['sentiment_score'] is not None]
+            avg_score = sum(scores) / len(scores) if scores else None
+            
+            if avg_score is None:
+                overall = "neutral"
+            elif avg_score > 0.3:
+                overall = "positive"
+            elif avg_score < -0.3:
+                overall = "negative"
+            else:
+                overall = "neutral"
+
+            return {
+                "symbol": company['code'],
+                "company_name": company_name,
+                "sector": company['sector'],
+                "report_generated_at": date.today().isoformat(),
+                "recent_disclosures": recent_disclosures,
+                "summary": {
+                    "total_recent_disclosures": len(recent_disclosures),
+                    "average_sentiment_score": avg_score,
+                    "overall_sentiment": overall
+                }
+            }
+            
+        finally:
+            db_manager.return_connection(conn)
+            
+    except HTTPException:
+        raise
+    except DatabaseManager.PoolExhaustedError as e:
+        logger.error(f"Database connection pool exhausted: {e}")
+        raise HTTPException(status_code=503, detail="Database temporarily unavailable")
+    except Exception as e:
+        logger.error(f"Failed to generate instrument report: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+

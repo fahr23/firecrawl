@@ -92,11 +92,13 @@ class NewsScheduler:
     async def run_collect(self) -> Dict[str, Any]:
         """Run the scrape→analyse→persist pipeline. Called by the loop and by POST /collect."""
         if self.is_running:
-            logger.warning("NewsScheduler: collect already running, skipping")
-            return {"skipped": True, "reason": "already_running"}
+            logger.warning("NewsScheduler: collect already running locally, skipping")
+            return {"skipped": True, "reason": "already_running_locally"}
 
         self.is_running = True
         self.last_run = datetime.utcnow()
+        lock_conn = None
+        db = None
         try:
             from database.db_manager import DatabaseManager
             from scrapers.news_portal_scraper import NewsPortalScraper
@@ -104,6 +106,12 @@ class NewsScheduler:
             from api.routers.news_sentiment import _build_sentiment_analyzer
 
             db = DatabaseManager()
+            
+            lock_conn = db.get_advisory_lock(1)
+            if not lock_conn:
+                logger.warning("NewsScheduler: collect already running in another instance, skipping")
+                return {"skipped": True, "reason": "already_running_globally"}
+
             scraper = NewsPortalScraper(db_manager=db)
             analyzer = _build_sentiment_analyzer()
             use_case = CollectNewsSentimentUseCase(scraper, analyzer, db)
@@ -124,6 +132,8 @@ class NewsScheduler:
             return self.last_result
         finally:
             self.is_running = False
+            if db and lock_conn:
+                db.release_advisory_lock(lock_conn, 1)
 
     def shutdown(self) -> None:
         self._stop_loop()

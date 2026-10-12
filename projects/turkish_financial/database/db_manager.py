@@ -284,6 +284,21 @@ class DatabaseManager:
                 CREATE INDEX IF NOT EXISTS idx_sentiment_analyzed_at
                 ON {}.kap_report_sentiment(analyzed_at)
             ''').format(sql.Identifier(self.schema)))
+            
+            # TCMB Macro Data table
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.tcmb_macro_data (
+                    id SERIAL PRIMARY KEY,
+                    indicator_code VARCHAR(50) NOT NULL,
+                    date DATE NOT NULL,
+                    value REAL,
+                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(indicator_code, date)
+                )
+            ''').format(sql.Identifier(self.schema)))
+            
+
+
 
             # --- Fundamental analysis (KAP "Finansal Tablolar") -------------
             # Raw structured financial-statement facts fetched from KAP's
@@ -494,6 +509,8 @@ class DatabaseManager:
                     social_count INTEGER DEFAULT 0,
                     youtube_score REAL,
                     youtube_count INTEGER DEFAULT 0,
+                    kap_score REAL,
+                    kap_count INTEGER DEFAULT 0,
                     combined_score REAL,
                     computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(ticker, period_date)
@@ -504,6 +521,8 @@ class DatabaseManager:
             for col, coldef in [
                 ("youtube_score", "REAL"),
                 ("youtube_count", "INTEGER DEFAULT 0"),
+                ("kap_score", "REAL"),
+                ("kap_count", "INTEGER DEFAULT 0"),
             ]:
                 cursor.execute(sql.SQL(
                     "ALTER TABLE {}.aggregated_ticker_sentiment "
@@ -662,6 +681,10 @@ class DatabaseManager:
         """Raised when connection pool is exhausted"""
         pass
 
+    class PoolExhaustedError(Exception):
+        """Raised when the database connection pool is exhausted after retries"""
+        pass
+
     def get_connection(self):
         """Get a connection from the pool and set search_path
 
@@ -675,29 +698,59 @@ class DatabaseManager:
         for attempt in range(1, retries + 1):
             try:
                 conn = self.pool.getconn()
-                # Set search_path for this connection to use our schema
-                cursor = conn.cursor()
-                cursor.execute(sql.SQL("SET search_path TO {}, public").format(
-                    sql.Identifier(self.schema)
-                ))
-                cursor.close()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(sql.SQL("SET search_path TO {}").format(
+                        sql.Identifier(self.schema)
+                    ))
+                    conn.commit()
+                except Exception as e:
+                    self.pool.putconn(conn)
+                    logger.error(f"Failed to set search_path: {e}")
+                    raise
                 return conn
             except pool.PoolError as e:
-                logger.warning(f"Connection pool exhausted (attempt {attempt}/{retries}): {e}")
                 if attempt == retries:
-                    logger.error("Connection pool exhausted after retries")
-                    raise DatabaseManager.PoolExhaustedError("connection pool exhausted")
+                    logger.error(f"Connection pool exhausted after {retries} retries")
+                    raise DatabaseManager.PoolExhaustedError("connection pool exhausted") from e
+                logger.warning(f"Pool exhausted, retrying in {wait_ms}ms (attempt {attempt}/{retries})")
                 time.sleep(wait_ms / 1000.0)
-            except Exception as e:
-                logger.error(f"Error getting connection: {e}")
-                raise
     
     def return_connection(self, conn):
         """Return a connection to the pool"""
-        try:
+        if conn:
             self.pool.putconn(conn)
+
+    def get_advisory_lock(self, lock_id: int):
+        """Try to acquire a session-level Postgres advisory lock.
+        Returns the connection if successful, None otherwise.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT pg_try_advisory_lock(%s)", (lock_id,))
+            acquired = cursor.fetchone()[0]
+            if acquired:
+                return conn
+            self.return_connection(conn)
+            return None
         except Exception as e:
-            logger.error(f"Error returning connection: {e}")
+            logger.error(f"Failed to acquire advisory lock {lock_id}: {e}")
+            self.return_connection(conn)
+            return None
+
+    def release_advisory_lock(self, conn, lock_id: int):
+        """Release the advisory lock and return the connection to the pool."""
+        if not conn:
+            return
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT pg_advisory_unlock(%s)", (lock_id,))
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to release advisory lock {lock_id}: {e}")
+        finally:
+            self.return_connection(conn)
     
     def insert_data(
         self,
@@ -1154,7 +1207,7 @@ class DatabaseManager:
             cursor = conn.cursor()
             cols = ["ticker", "period_date", "news_score", "news_count",
                     "social_score", "social_count", "youtube_score", "youtube_count",
-                    "combined_score"]
+                    "kap_score", "kap_count", "combined_score"]
             row = {c: data.get(c) for c in cols if data.get(c) is not None}
             if not row.get("ticker") or not row.get("period_date"):
                 return False
@@ -1260,7 +1313,7 @@ class DatabaseManager:
         """Fetch the existing daily aggregate row for (ticker, period_date), or None."""
         rows = self.query(
             "SELECT ticker, period_date, news_score, news_count, social_score, "
-            "social_count, youtube_score, youtube_count, combined_score "
+            "social_count, youtube_score, youtube_count, kap_score, kap_count, combined_score "
             "FROM aggregated_ticker_sentiment "
             "WHERE ticker = %s AND period_date = %s",
             (ticker.strip().upper(), period_date),

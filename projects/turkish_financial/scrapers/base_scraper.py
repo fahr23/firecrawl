@@ -281,7 +281,7 @@ class BaseScraper(ABC):
 
         try:
             logger.info(f"Scraping URL: {url}")
-            result = self._call_scrape(url, params)
+            result = await asyncio.to_thread(self._call_scrape, url, params)
             data = self._normalize_document(result)
 
             logger.info(f"Successfully scraped: {url}")
@@ -390,14 +390,14 @@ class BaseScraper(ABC):
             )
 
             t0 = time.perf_counter()
-            result = self.firecrawl.crawl(
+            result = await asyncio.to_thread(
+                self.firecrawl.crawl,
                 start_url,
                 limit=limit,
                 include_paths=include_patterns,
                 exclude_paths=exclude_patterns,
                 scrape_options=scrape_options,
-                poll_interval=5,
-                **kwargs
+                **kwargs,
             )
             duration_s = round(time.perf_counter() - t0, 2)
 
@@ -460,10 +460,12 @@ class BaseScraper(ABC):
             except Exception:
                 timeout_s = 60
 
-            result = self.firecrawl.extract(
+            result = await asyncio.to_thread(
+                self.firecrawl.extract,
                 urls=[url],
                 schema=schema,
                 prompt=prompt,
+                system_prompt=system_prompt,
                 poll_interval=poll_interval,
                 timeout=timeout_s,
             )
@@ -678,7 +680,7 @@ class BaseScraper(ABC):
                 }
                 if search:
                     params["search"] = search
-                result = self.firecrawl.map_url(url, params=params)
+                result = await asyncio.to_thread(self.firecrawl.map_url, url, params=params)
 
             links = self._normalize_links(result)
             logger.info(f"Map found {len(links)} links for {url}")
@@ -757,21 +759,21 @@ class BaseScraper(ABC):
                 t0 = time.perf_counter()
                 batch_scrape = getattr(self.firecrawl, "batch_scrape", None)
                 if callable(batch_scrape):
-                    result = batch_scrape(urls, **self._build_v2_scrape_kwargs(scrape_options), **kwargs)
+                    result = await asyncio.to_thread(batch_scrape, urls, **self._build_v2_scrape_kwargs(scrape_options), **kwargs)
                     pages = result.data if hasattr(result, "data") else []
                 else:
                     kwargs["scrape_options"] = scrape_options
                     async_batch_scrape = getattr(self.firecrawl, "async_batch_scrape_urls", None)
                     if callable(async_batch_scrape):
-                        result = async_batch_scrape(urls, **kwargs)
-                        status = result.wait_for_completion(poll_interval=poll_interval)
+                        result = await asyncio.to_thread(async_batch_scrape, urls, **kwargs)
+                        status = await asyncio.to_thread(result.wait_for_completion, poll_interval=poll_interval)
                         pages = status.data if hasattr(status, "data") else []
                         result = status
                     else:
                         legacy_batch_scrape = getattr(self.firecrawl, "batch_scrape_urls", None)
                         if not callable(legacy_batch_scrape):
                             raise AttributeError("Firecrawl client does not expose batch_scrape() or batch_scrape_urls()")
-                        result = legacy_batch_scrape(urls, **kwargs)
+                        result = await asyncio.to_thread(legacy_batch_scrape, urls, **kwargs)
                         pages = result.data if hasattr(result, "data") else []
 
                 duration_s = round(time.perf_counter() - t0, 2)
@@ -863,7 +865,8 @@ class BaseScraper(ABC):
             if not callable(search_call):
                 raise AttributeError("Firecrawl client does not expose search()")
 
-            result = search_call(
+            result = await asyncio.to_thread(
+                search_call,
                 query,
                 limit=params["limit"],
                 tbs=params.get("tbs"),

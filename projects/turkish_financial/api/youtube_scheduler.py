@@ -100,13 +100,15 @@ class YouTubeScheduler:
     async def run_collect(self) -> Dict[str, Any]:
         """Run the scrape→analyse→persist pipeline."""
         if self.is_running:
-            logger.warning("YouTubeScheduler: collect already running, skipping")
-            return {"skipped": True, "reason": "already_running"}
+            logger.warning("YouTubeScheduler: collect already running locally, skipping")
+            return {"skipped": True, "reason": "already_running_locally"}
 
         self._seed_channels_from_config()
 
         self.is_running = True
         self.last_run = datetime.utcnow()
+        lock_conn = None
+        db = None
         try:
             from database.db_manager import DatabaseManager
             from scrapers.youtube_scraper import YouTubeScraper
@@ -116,6 +118,12 @@ class YouTubeScheduler:
             from api.routers.news_sentiment import _build_sentiment_analyzer
 
             db = DatabaseManager()
+            
+            lock_conn = db.get_advisory_lock(2)
+            if not lock_conn:
+                logger.warning("YouTubeScheduler: collect already running in another instance, skipping")
+                return {"skipped": True, "reason": "already_running_globally"}
+
             scraper = YouTubeScraper(db_manager=db)
             analyzer = _build_sentiment_analyzer()
             use_case = CollectYouTubeSentimentUseCase(scraper, analyzer, db)
@@ -136,6 +144,8 @@ class YouTubeScheduler:
             return self.last_result
         finally:
             self.is_running = False
+            if db and lock_conn:
+                db.release_advisory_lock(lock_conn, 2)
 
     def shutdown(self) -> None:
         self._stop_loop()

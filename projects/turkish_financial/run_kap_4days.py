@@ -47,7 +47,7 @@ async def run(days: int, output_path: Optional[str]):
 
     print(f"  {INFO} Querying KAP API for last {days} days …")
     t0 = datetime.now()
-    result = await scraper.scrape_and_save_disclosures(days_back=days)
+    result = await scraper.scrape_and_save_disclosures(days_back=days, fetch_pdf_text=True)
     elapsed = round((datetime.now() - t0).total_seconds(), 1)
 
     if not result.get("success"):

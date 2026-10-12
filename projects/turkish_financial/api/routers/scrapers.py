@@ -1309,3 +1309,27 @@ async def scrape_url_with_sentiment(
     except Exception as e:
         logger.error(f"URL sentiment analysis failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+from scrapers.tcmb_scraper import TCMBScraper
+
+@router.post("/tcmb")
+async def scrape_tcmb(
+    indicator: str,
+    start_date: str,
+    end_date: str,
+    db_manager: DatabaseManager = Depends(get_db_manager),
+    config: Config = Depends(get_config)
+):
+    """Scrape TCMB EVDS macro data."""
+    try:
+        scraper = TCMBScraper(db_manager)
+        result = await scraper.scrape(indicator, start_date, end_date)
+        return ScrapeResponse(
+            success=True,
+            message="TCMB data scraped successfully",
+            data=result
+        )
+    except Exception as e:
+        logger.error(f"TCMB scrape failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))

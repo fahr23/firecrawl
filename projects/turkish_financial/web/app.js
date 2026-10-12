@@ -190,10 +190,23 @@ async function loadRanking() {
           const evidence = await response.json();
           const links = evidence.items || [];
           sourcePanel.replaceChildren(...links.map((entry) => {
+            const container = document.createElement("div");
+            container.style.marginBottom = "0.5rem";
             const link = document.createElement("a");
             link.href = entry.url; link.target = "_blank"; link.rel = "noopener noreferrer";
             link.textContent = `${entry.source}: ${entry.title || "source"} ↗`;
-            return link;
+            container.appendChild(link);
+            
+            if (entry.evidence_id && entry.evidence_type) {
+              const btn = document.createElement("button");
+              btn.type = "button";
+              btn.className = "read-evidence-btn";
+              btn.textContent = "Read Summary & Text";
+              btn.onclick = () => openEvidenceModal(entry.evidence_type, entry.evidence_id, `${entry.source}: ${entry.title}`);
+              container.appendChild(btn);
+            }
+            
+            return container;
           }));
           if (!links.length) sourcePanel.textContent = "No stored direct source URL for this window.";
           sourceLinksLoaded = true;
@@ -597,3 +610,33 @@ loadLocalTranscriptionStatus();
 loadLocalYouTubeSources();
 loadFundamentalsCollectionStatus();
 window.setInterval(loadLocalTranscriptionStatus, 15000);
+
+// Evidence Modal Logic
+const evidenceModal = document.getElementById("evidence-modal");
+const evidenceTitle = document.getElementById("evidence-modal-title");
+const evidenceSummary = document.getElementById("evidence-modal-summary");
+const evidenceRaw = document.getElementById("evidence-modal-raw");
+const evidenceClose = document.getElementById("evidence-modal-close");
+
+if (evidenceClose) {
+  evidenceClose.addEventListener("click", () => evidenceModal.close());
+}
+
+async function openEvidenceModal(sourceType, evidenceId, title) {
+  evidenceTitle.textContent = title;
+  evidenceSummary.textContent = "Loading summary...";
+  evidenceRaw.textContent = "Loading raw text...";
+  evidenceModal.showModal();
+
+  try {
+    const res = await fetch(`/api/external/v1/evidence/${encodeURIComponent(sourceType)}/${encodeURIComponent(evidenceId)}`);
+    if (!res.ok) throw new Error("Failed to load");
+    const data = await res.json();
+    
+    evidenceSummary.textContent = data.summary || "No summary available.";
+    evidenceRaw.textContent = data.text || "No raw text available.";
+  } catch (err) {
+    evidenceSummary.textContent = "Error loading data.";
+    evidenceRaw.textContent = err.message;
+  }
+}

@@ -51,7 +51,7 @@ def run(command: list[str], *, input_text: str | None = None) -> subprocess.Comp
 
 def bridge(args: list[str], *, input_text: str | None = None) -> dict[str, Any]:
     result = run(
-        ["docker", "compose", "exec", "-T", "turkish-financial-api", "python",
+        ["kubectl", "exec", "-i", "-n", "firecrawl", "deployment/turkish-financial-api", "--", "python",
          "-m", "scripts.youtube_transcript_store", *args],
         input_text=input_text,
     )
@@ -175,7 +175,7 @@ def transcribe_audio(
 
 
 def requirements_ok(whisper_bin: str, whisper_model: str) -> bool:
-    missing = [name for name in ("docker", "yt-dlp", "ffmpeg") if not shutil.which(name)]
+    missing = [name for name in ("kubectl", "yt-dlp", "ffmpeg") if not shutil.which(name)]
     if not Path(whisper_bin).is_file():
         missing.append(f"whisper-cli ({whisper_bin})")
     if not Path(whisper_model).is_file():
@@ -208,7 +208,7 @@ def main() -> int:
     processed = cached = deferred = failed = 0
     for channel in channels:
         for video in list_channel_videos(channel, args.limit_per_channel, args.days_back, cookie_args):
-            cache = bridge(["--cache", video["video_id"]])
+            cache = bridge([f"--cache={video['video_id']}"])
             if cache.get("ready"):
                 cached += 1
                 continue
