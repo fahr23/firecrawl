@@ -98,7 +98,7 @@ class TestPoint:
 
         assert body["contract_version"] == "1.1"
         assert body["as_of"] == body["published_at"] == body["available_at"] == body["period_end"]
-        assert body["revision_id"] == "isyatirim:THYAO:2026-05-08"
+        assert body["revision_id"] == "bist:THYAO:2026-05-08"
         assert body["field_status"]["open_try"] == "unavailable"
         assert body["field_status"]["close_try"] == "reported"
 

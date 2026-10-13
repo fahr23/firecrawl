@@ -149,6 +149,48 @@ def _firecrawl_capabilities() -> dict:
     }
 
 
+_NON_BIST_MARKET_TABLE: Dict[str, tuple[str, str]] = {
+    "usa": ("yahoo_market_history", "ticker"),
+    "coin": ("coingecko_market_history", "coin_id"),
+}
+
+
+async def _non_bist_instruments_catalog(market: Market, db_manager: DatabaseManager) -> dict:
+    """usa/coin catalog: whatever instruments already have stored market
+    history, since there is no BIST-TÜM-style full-universe source for
+    either market. Never a fabricated listing (§3.4)."""
+    table, column = _NON_BIST_MARKET_TABLE[market.value]
+    try:
+        rows = db_manager.query(
+            f"SELECT DISTINCT {column} AS ticker FROM {table} ORDER BY {column}", ()
+        )
+    except Exception as e:
+        logger.error(f"instruments_catalog ({market.value}) failed: {e}", exc_info=True)
+        return JSONResponse(status_code=503, content={
+            "contract_version": CONTRACT_VERSION,
+            "status": "unavailable",
+            "error_code": "UPSTREAM_DB_ERROR",
+            "detail": str(e),
+        })
+    items = [
+        {
+            "ticker": r["ticker"].upper() if market.value == "usa" else r["ticker"],
+            "company_name": None,
+            "sector": None,
+            "market": market.value,
+            "available_data": ["market"],
+            "catalog_source": "database",
+        }
+        for r in rows
+    ]
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "market": market.value,
+        "total": len(items),
+        "items": items,
+    }
+
+
 # ── instruments catalog — discovery endpoint for clients ─────────────────────
 @router.get("/instruments")
 async def instruments_catalog(
@@ -163,7 +205,15 @@ async def instruments_catalog(
 
     Clients call this first to build a selection list, then call the per-instrument
     endpoints using the returned tickers.
+
+    BIST is backed by the seeded bist_companies/BIST TÜM catalogue. usa/coin have
+    no equivalent full-universe source this provider owns, so their catalog is
+    honestly limited to whatever instruments already have stored market data —
+    never a fabricated "every US stock" / "every coin" listing.
     """
+    if market != Market.BIST:
+        return await _non_bist_instruments_catalog(market, db_manager)
+
     try:
         rows = db_manager.query(
             """
@@ -307,6 +357,14 @@ _COVERAGE_QUERIES: Dict[str, str] = {
         SELECT ticker AS instrument, MIN(market_date) AS earliest, MAX(market_date) AS latest,
                COUNT(*) AS observations
         FROM isyatirim_market_history GROUP BY ticker
+        UNION ALL
+        SELECT ticker AS instrument, MIN(market_date) AS earliest, MAX(market_date) AS latest,
+               COUNT(*) AS observations
+        FROM yahoo_market_history GROUP BY ticker
+        UNION ALL
+        SELECT coin_id AS instrument, MIN(market_date) AS earliest, MAX(market_date) AS latest,
+               COUNT(*) AS observations
+        FROM coingecko_market_history GROUP BY coin_id
     """,
     "ownership": """
         SELECT ticker AS instrument, MIN(snapshot_date) AS earliest, MAX(snapshot_date) AS latest,
@@ -850,6 +908,38 @@ def _market_repo(db_manager: DatabaseManager) -> MarketRepository:
     return MarketRepository(db_manager)
 
 
+async def _on_demand_market_fetch(
+    instrument: str,
+    db_manager: DatabaseManager,
+    repo: MarketRepository,
+    market: str,
+    as_of: Optional[str] = None,
+    contract_version: str = "1.0",
+) -> dict:
+    """Trigger a live fetch for *instrument* on a cache miss and re-query.
+
+    Mirrors `_on_demand_fundamental_fetch`'s pattern: best-effort, the caller
+    still gets the (possibly still-unavailable) envelope if the fetch fails.
+    """
+    market_key = (market or "").strip().lower()
+    try:
+        if market_key == "bist":
+            from scrapers.isyatirim_market_data import fetch_market_history as fetch_bist
+            payload = await asyncio.to_thread(fetch_bist, instrument, 30)
+            db_manager.upsert_isyatirim_market_history(instrument, payload["series"])
+        elif market_key == "usa":
+            from scrapers.yahoo_market_data import fetch_market_history as fetch_usa
+            payload = await asyncio.to_thread(fetch_usa, instrument, 30)
+            db_manager.upsert_yahoo_market_history(instrument, payload["series"])
+        elif market_key == "coin":
+            from scrapers.coingecko_market_data import fetch_market_history as fetch_coin
+            payload = await asyncio.to_thread(fetch_coin, instrument, 30)
+            db_manager.upsert_coingecko_market_history(instrument, payload["series"])
+    except Exception as exc:  # noqa: BLE001 - best-effort, honest unavailable on failure
+        logger.warning("on-demand market fetch for %s/%s failed: %s", market, instrument, exc)
+    return repo.get_point(instrument, market, as_of, contract_version=contract_version)
+
+
 @router.post("/market/batch")
 async def market_batch(
     request: MarketBatchRequest,
@@ -858,13 +948,18 @@ async def market_batch(
     contract_version = _resolve_contract_version(request.contract_version)
     repo = _market_repo(db_manager)
     try:
-        items = [
-            repo.get_point(
+        items = []
+        for instrument in request.instruments:
+            point = repo.get_point(
                 instrument, request.market.value, request.as_of,
                 contract_version=contract_version,
             )
-            for instrument in request.instruments
-        ]
+            if point.get("status") == "unavailable" and request.as_of is None:
+                point = await _on_demand_market_fetch(
+                    instrument, db_manager, repo, request.market.value,
+                    contract_version=contract_version,
+                )
+            items.append(point)
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")
     except Exception as e:  # noqa: BLE001
@@ -919,7 +1014,13 @@ async def market_point(
     resolved_version = _resolve_contract_version(contract_version)
     repo = _market_repo(db_manager)
     try:
-        return repo.get_point(instrument, market.value, as_of, contract_version=resolved_version)
+        result = repo.get_point(instrument, market.value, as_of, contract_version=resolved_version)
+        if result.get("status") == "unavailable" and as_of is None:
+            result = await _on_demand_market_fetch(
+                instrument, db_manager, repo, market.value,
+                contract_version=resolved_version,
+            )
+        return result
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")
     except Exception as e:  # noqa: BLE001

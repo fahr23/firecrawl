@@ -30,7 +30,7 @@ from domain.entities.external_analysis import (
 )
 from infrastructure.contracts.instrument_identity_map import (
     resolve_name_patterns,
-    supports_market,
+    supports_kap_market,
 )
 from infrastructure.repositories.external_analysis_repository import _parse_array
 
@@ -229,10 +229,13 @@ class TestIdentityResolution:
     def test_case_insensitive(self):
         assert resolve_name_patterns("thyao", "bist")
 
-    def test_unsupported_market_returns_empty(self):
+    def test_unsupported_kap_market_returns_empty(self):
+        """KAP company-name resolution is BIST-only — usa/coin have no KAP
+        equivalent, even though supports_market() (general market-data gate)
+        now accepts them for the market kind."""
         assert resolve_name_patterns("AAPL", "usa") == []
-        assert not supports_market("usa")
-        assert supports_market("bist")
+        assert not supports_kap_market("usa")
+        assert supports_kap_market("bist")
 
     def test_unknown_ticker_falls_back_to_self(self):
         assert resolve_name_patterns("ZZZZ", "bist") == ["ZZZZ"]

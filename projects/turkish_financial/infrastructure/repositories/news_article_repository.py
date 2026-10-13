@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from infrastructure.contracts.instrument_identity_map import supports_market
+from infrastructure.contracts.instrument_identity_map import supports_kap_market
 from infrastructure.repositories.external_analysis_repository import (
     _to_iso_utc,
     _freshness_seconds,
@@ -63,7 +63,7 @@ class AggregateSentimentRepository:
         self, instrument: str, market: str, as_of: Optional[str] = None
     ) -> Dict[str, Any]:
         ticker = (instrument or "").strip().upper()
-        if not supports_market(market) or not ticker:
+        if not supports_kap_market(market) or not ticker:
             return self._unavailable(instrument, market)
 
         # _SCORE_COL is a controlled class constant, never user input.
@@ -94,7 +94,7 @@ class AggregateSentimentRepository:
         cursor: Optional[str] = None,
     ) -> Dict[str, Any]:
         ticker = (instrument or "").strip().upper()
-        if not supports_market(market) or not ticker:
+        if not supports_kap_market(market) or not ticker:
             return {"instrument": instrument, "market": market, "items": [], "next_cursor": None}
 
         where = ["ticker = %s", f"{self._SCORE_COL} IS NOT NULL"]

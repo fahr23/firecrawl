@@ -838,6 +838,30 @@ class DatabaseManager:
                 )
             ''').format(sql.Identifier(self.schema)))
 
+            # Multi-market `market` kind: USA (Yahoo Finance) and coin (CoinGecko)
+            # daily history, parallel to isyatirim_market_history above. Each
+            # market's native row shape differs (USA has full OHLCV; coin has no
+            # high/low at all), so each gets its own JSONB-backed table rather
+            # than forcing one shared column set.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.yahoo_market_history (
+                    ticker VARCHAR(20) NOT NULL,
+                    market_date DATE NOT NULL,
+                    data JSONB NOT NULL,
+                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (ticker, market_date)
+                )
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.coingecko_market_history (
+                    coin_id VARCHAR(64) NOT NULL,
+                    market_date DATE NOT NULL,
+                    data JSONB NOT NULL,
+                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (coin_id, market_date)
+                )
+            ''').format(sql.Identifier(self.schema)))
+
             # FA-06 corporate actions with back-adjustment price factors. Keyed on
             # (ticker, ex_date, event_type) so a re-run of the detection job is
             # idempotent; `match_status` distinguishes a verified KAP match from an
@@ -1816,6 +1840,110 @@ class DatabaseManager:
                ORDER BY market_date DESC
                LIMIT %s""",
             (ticker.strip().upper(), days),
+        )
+        series = [row["data"] for row in reversed(rows) if isinstance(row.get("data"), dict)]
+        ages = [int(row["age_seconds"]) for row in rows if row.get("age_seconds") is not None]
+        age = min(ages) if ages else None
+        return {
+            "series": series,
+            "age_seconds": age,
+            "fresh": bool(series) and age is not None and age <= max_age_seconds,
+        }
+
+    def upsert_yahoo_market_history(self, ticker: str, series: List[Dict[str, Any]]) -> bool:
+        """Replace stored USA market rows by `(ticker, trading_date)`.
+
+        `scrapers/yahoo_market_data.py` stores `trading_date` as ISO
+        "YYYY-MM-DD" (unlike İş Yatırım's "DD-MM-YYYY").
+        """
+        rows = []
+        for item in series:
+            try:
+                market_date = datetime.strptime(str(item["trading_date"]), "%Y-%m-%d").date()
+            except (KeyError, TypeError, ValueError):
+                continue
+            rows.append((ticker.strip().upper(), market_date, Json(item)))
+        if not rows:
+            return False
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.executemany(
+                """INSERT INTO yahoo_market_history (ticker, market_date, data)
+                   VALUES (%s, %s, %s)
+                   ON CONFLICT (ticker, market_date) DO UPDATE SET
+                       data = EXCLUDED.data, fetched_at = CURRENT_TIMESTAMP""",
+                rows,
+            )
+            conn.commit()
+            return True
+        except Exception as exc:
+            logger.warning("Could not persist Yahoo market history for %s: %s", ticker, exc)
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def get_yahoo_market_history(self, ticker: str, days: int, max_age_seconds: int) -> Dict[str, Any]:
+        """Read a bounded database cache, ordered oldest to newest."""
+        rows = self.query(
+            """SELECT data,
+                      EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - fetched_at))::BIGINT AS age_seconds
+               FROM yahoo_market_history
+               WHERE ticker = %s
+               ORDER BY market_date DESC
+               LIMIT %s""",
+            (ticker.strip().upper(), days),
+        )
+        series = [row["data"] for row in reversed(rows) if isinstance(row.get("data"), dict)]
+        ages = [int(row["age_seconds"]) for row in rows if row.get("age_seconds") is not None]
+        age = min(ages) if ages else None
+        return {
+            "series": series,
+            "age_seconds": age,
+            "fresh": bool(series) and age is not None and age <= max_age_seconds,
+        }
+
+    def upsert_coingecko_market_history(self, coin_id: str, series: List[Dict[str, Any]]) -> bool:
+        """Replace stored coin market rows by `(coin_id, trading_date)`."""
+        rows = []
+        for item in series:
+            try:
+                market_date = datetime.strptime(str(item["trading_date"]), "%Y-%m-%d").date()
+            except (KeyError, TypeError, ValueError):
+                continue
+            rows.append((coin_id.strip().lower(), market_date, Json(item)))
+        if not rows:
+            return False
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.executemany(
+                """INSERT INTO coingecko_market_history (coin_id, market_date, data)
+                   VALUES (%s, %s, %s)
+                   ON CONFLICT (coin_id, market_date) DO UPDATE SET
+                       data = EXCLUDED.data, fetched_at = CURRENT_TIMESTAMP""",
+                rows,
+            )
+            conn.commit()
+            return True
+        except Exception as exc:
+            logger.warning("Could not persist CoinGecko market history for %s: %s", coin_id, exc)
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def get_coingecko_market_history(self, coin_id: str, days: int, max_age_seconds: int) -> Dict[str, Any]:
+        """Read a bounded database cache, ordered oldest to newest."""
+        rows = self.query(
+            """SELECT data,
+                      EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - fetched_at))::BIGINT AS age_seconds
+               FROM coingecko_market_history
+               WHERE coin_id = %s
+               ORDER BY market_date DESC
+               LIMIT %s""",
+            (coin_id.strip().lower(), days),
         )
         series = [row["data"] for row in reversed(rows) if isinstance(row.get("data"), dict)]
         ages = [int(row["age_seconds"]) for row in rows if row.get("age_seconds") is not None]

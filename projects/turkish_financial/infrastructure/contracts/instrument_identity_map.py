@@ -11,8 +11,17 @@ Resolution order (best → fallback):
   2. the `bist_companies` table (code → name), when available
   3. the static map below — the explicit fallback the contract allows us to own
 
-This provider only carries **BIST** KAP disclosures; `usa` / `coin` markets resolve to
-nothing and the endpoints return an honest `unavailable` envelope.
+KAP disclosures (sentiment, fundamental, events, corporate_actions,
+classification, dividends, earnings_calendar) are **BIST-only** — there is no
+KAP equivalent for `usa`/`coin`, so `resolve_member_oid` / `static_name_patterns`
+/ `resolve_name_patterns` stay gated to BIST via `supports_market`.
+
+Market-data kinds (`market`) are multi-market: `usa` resolves a ticker through
+Yahoo Finance's public chart endpoint (no KAP/company-name lookup needed —
+symbols are already unambiguous), `coin` resolves a CoinGecko coin id the same
+way. `supports_market` now returns True for all three; callers that need
+BIST-only KAP resolution call the KAP-specific functions below, which keep
+their own narrower gate.
 """
 from __future__ import annotations
 
@@ -133,6 +142,9 @@ STATIC_BIST_MAP: dict[str, List[str]] = {
 }
 
 _BIST = "bist"
+_USA = "usa"
+_COIN = "coin"
+_SUPPORTED_MARKETS = frozenset({_BIST, _USA, _COIN})
 
 
 # Ticker → KAP `mkkMemberOid`. The financialTable API addresses companies by this
@@ -190,11 +202,12 @@ def resolve_member_oid(instrument: str, market: str = _BIST, db_manager=None) ->
     """
     Resolve an instrument to its KAP `mkkMemberOid`.
 
-    Order: `bist_companies.mkk_member_oid` (authoritative when populated) → static
+    BIST-only (KAP has no usa/coin equivalent): order is
+    `bist_companies.mkk_member_oid` (authoritative when populated) → static
     seed map. Returns None for unsupported markets or unknown tickers (caller then
     skips the company / emits an honest `unavailable`).
     """
-    if not supports_market(market):
+    if (market or "").strip().lower() != _BIST:
         return None
     code = _normalize_instrument(instrument)
     if not code:
@@ -218,13 +231,27 @@ def resolve_member_oid(instrument: str, market: str = _BIST, db_manager=None) ->
 
 
 def supports_market(market: str) -> bool:
-    """This provider only carries BIST KAP disclosures."""
+    """True for every market this provider addresses at all (bist/usa/coin).
+
+    This is the general "can this instrument/market combo be resolved to a
+    symbol" check used by market-data kinds. It does NOT mean KAP data is
+    available — KAP-specific resolution (`resolve_member_oid`,
+    `static_name_patterns`, `resolve_name_patterns`) stays BIST-only via its
+    own narrower check, since there is no KAP equivalent for usa/coin.
+    """
+    return (market or "").strip().lower() in _SUPPORTED_MARKETS
+
+
+def supports_kap_market(market: str) -> bool:
+    """True only for BIST — the one market with KAP disclosure data."""
     return (market or "").strip().lower() == _BIST
 
 
 def static_name_patterns(instrument: str, market: str) -> Optional[List[str]]:
-    """Return static company_name ILIKE patterns for the instrument, or None."""
-    if not supports_market(market):
+    """Return static company_name ILIKE patterns for the instrument, or None.
+
+    BIST-only (KAP company_name matching has no usa/coin equivalent)."""
+    if not supports_kap_market(market):
         return None
     return STATIC_BIST_MAP.get(_normalize_instrument(instrument))
 
@@ -237,12 +264,13 @@ def resolve_name_patterns(
     """
     Resolve an instrument to a list of company_name ILIKE patterns.
 
-    Tries the `bist_companies` table first (authoritative when populated), then falls
-    back to the static map, then to the bare instrument itself (so a company_name that
-    literally contains the ticker still matches). Returns an empty list for unsupported
-    markets or genuinely unknown instruments.
+    BIST-only (KAP company_name matching has no usa/coin equivalent). Tries
+    the `bist_companies` table first (authoritative when populated), then
+    falls back to the static map, then to the bare instrument itself (so a
+    company_name that literally contains the ticker still matches). Returns
+    an empty list for unsupported markets or genuinely unknown instruments.
     """
-    if not supports_market(market):
+    if not supports_kap_market(market):
         return []
 
     code = _normalize_instrument(instrument)

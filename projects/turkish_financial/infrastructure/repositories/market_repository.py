@@ -1,22 +1,26 @@
 """
-Market repository — FA-05 §4 "market" kind (contract 1.1 §3.2).
+Market repository — FA-05 §4 "market" kind (contract 1.1 §3.2), multi-market.
 
-Reads the existing `isyatirim_market_history` table (ticker, market_date, data
-JSONB — already populated by `scrapers/isyatirim_market_data.py` and kept via
-`DatabaseManager.upsert_isyatirim_market_history`) and normalises rows into the
-common envelope. No new storage: FA-05 is a contract-shaped read over data this
-provider already persists idempotently per `(ticker, market_date)`.
+Reads one of three source tables depending on `market`, each already
+populated idempotently by its own scraper adapter:
 
-`market_date` IS the trading date, so for daily market observations
-`as_of == published_at == available_at == period_end` — the whole point of a
-trading-session value is that the market already knew it by the close of that
-session. Only the BIST market is served; other markets return `unavailable`.
+  - bist:  `isyatirim_market_history` (scrapers/isyatirim_market_data.py)
+  - usa:   `yahoo_market_history`     (scrapers/yahoo_market_data.py)
+  - coin:  `coingecko_market_history` (scrapers/coingecko_market_data.py)
+
+Each market's native row shape differs (BIST has no `open`; coin has no
+`high`/`low` at all — CoinGecko's free daily endpoint doesn't serve them), so
+payload field names and `field_status` are computed per market rather than
+forced into one shared column set. `market_date` IS the trading date for all
+three, so `as_of == published_at == available_at == period_end` — the whole
+point of a daily market observation is that the market already knew it by
+the close of that session.
 """
 from __future__ import annotations
 
 import logging
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 
 from infrastructure.contracts.instrument_identity_map import supports_market
 from infrastructure.repositories.external_analysis_repository import (
@@ -27,37 +31,70 @@ from infrastructure.repositories.external_analysis_repository import (
 logger = logging.getLogger(__name__)
 
 KIND = "market"
-PROVIDER_ID = "isyatirim-public-data"
 
-# Payload fields read straight from the stored JSONB row (scrapers/isyatirim_market_data.py
-# `_row()`), renamed where the contract (FA-05 / provider-wait-list §2) uses a different
-# name. `open_try` has no upstream source and is intentionally absent — never fabricated.
-_FIELD_MAP: tuple[tuple[str, str], ...] = (
-    ("close_try", "close_try"),
-    ("high_try", "high_try"),
-    ("low_try", "low_try"),
-    ("vwap_try", "average_price_try"),
-    ("volume_try", "volume_try"),
-    ("shares_outstanding", "shares_outstanding"),
-    ("market_cap_try", "market_cap_try"),
+
+class _MarketConfig(NamedTuple):
+    table: str
+    instrument_column: str  # "ticker" (bist/usa) or "coin_id" (coin)
+    date_format: str  # strptime format the adapter stores trading_date in
+    provider_id: str
+    source: str
+    field_map: tuple[tuple[str, str], ...]  # (payload_field, source_field)
+    always_unavailable: tuple[str, ...]  # fields this market's source never has
+    normalize_instrument: Any  # str -> str
+
+
+_BIST_FIELDS = (
+    ("close_try", "close_try"), ("high_try", "high_try"), ("low_try", "low_try"),
+    ("vwap_try", "average_price_try"), ("volume_try", "volume_try"),
+    ("shares_outstanding", "shares_outstanding"), ("market_cap_try", "market_cap_try"),
     ("free_float_market_cap_try", "free_float_market_cap_try"),
-    ("usd_try", "usd_try"),
-    ("close_usd", "close_usd"),
+    ("usd_try", "usd_try"), ("close_usd", "close_usd"),
+)
+_USA_FIELDS = (
+    ("open", "open"), ("high", "high"), ("low", "low"),
+    ("close", "close"), ("volume", "volume"),
+)
+_COIN_FIELDS = (
+    ("close", "close"), ("market_cap", "market_cap"), ("volume", "volume"),
 )
 
+_MARKET_CONFIG: Dict[str, _MarketConfig] = {
+    "bist": _MarketConfig(
+        table="isyatirim_market_history", instrument_column="ticker",
+        date_format="%d-%m-%Y", provider_id="isyatirim-public-data",
+        source="isyatirim-web", field_map=_BIST_FIELDS,
+        always_unavailable=("open_try",),
+        normalize_instrument=lambda s: s.strip().upper(),
+    ),
+    "usa": _MarketConfig(
+        table="yahoo_market_history", instrument_column="ticker",
+        date_format="%Y-%m-%d", provider_id="yahoo-finance-public",
+        source="yahoo-finance-chart", field_map=_USA_FIELDS,
+        always_unavailable=(),
+        normalize_instrument=lambda s: s.strip().upper(),
+    ),
+    "coin": _MarketConfig(
+        table="coingecko_market_history", instrument_column="coin_id",
+        date_format="%Y-%m-%d", provider_id="coingecko-public",
+        source="coingecko-market-chart", field_map=_COIN_FIELDS,
+        always_unavailable=("high", "low", "open"),
+        normalize_instrument=lambda s: s.strip().lower(),
+    ),
+}
 
-def _parse_trading_date(raw: Any) -> Optional[date]:
-    """The stored row's `trading_date` is the source's own "DD-MM-YYYY" string."""
+
+def _parse_trading_date(raw: Any, date_format: str) -> Optional[date]:
     if isinstance(raw, date):
         return raw
     try:
-        return datetime.strptime(str(raw), "%d-%m-%Y").date()
+        return datetime.strptime(str(raw), date_format).date()
     except (TypeError, ValueError):
         return None
 
 
 class MarketRepository:
-    """Fetches/normalises İş Yatırım daily market observations (FA-05)."""
+    """Fetches/normalises daily market observations across bist/usa/coin (FA-05)."""
 
     def __init__(self, db_manager):
         self._db = db_manager
@@ -70,11 +107,12 @@ class MarketRepository:
         as_of: Optional[str] = None,
         contract_version: str = "1.0",
     ) -> Dict[str, Any]:
+        config = self._config(market)
         code = self._resolve(instrument, market)
-        if code is None:
+        if config is None or code is None:
             return self._unavailable(instrument, market, contract_version)
 
-        where = ["ticker = %s"]
+        where = [f"{config.instrument_column} = %s"]
         params: List[Any] = [code]
         if as_of:
             where.append("market_date <= %s")
@@ -82,7 +120,7 @@ class MarketRepository:
 
         query = f"""
             SELECT data, market_date
-            FROM isyatirim_market_history
+            FROM {config.table}
             WHERE {' AND '.join(where)}
             ORDER BY market_date DESC
             LIMIT 1
@@ -90,7 +128,7 @@ class MarketRepository:
         rows = self._db.query(query, tuple(params))
         if not rows or not isinstance(rows[0].get("data"), dict):
             return self._unavailable(instrument, market, contract_version)
-        return self._envelope(instrument, market, rows[0], contract_version)
+        return self._envelope(instrument, market, config, rows[0], contract_version)
 
     def get_history(
         self,
@@ -102,11 +140,12 @@ class MarketRepository:
         cursor: Optional[str] = None,
         contract_version: str = "1.0",
     ) -> Dict[str, Any]:
+        config = self._config(market)
         code = self._resolve(instrument, market)
-        if code is None:
+        if config is None or code is None:
             return {"instrument": instrument, "market": market, "items": [], "next_cursor": None}
 
-        where = ["ticker = %s"]
+        where = [f"{config.instrument_column} = %s"]
         params: List[Any] = [code]
         if date_from:
             where.append("market_date >= %s")
@@ -121,7 +160,7 @@ class MarketRepository:
         fetch = max(1, min(limit, 1000))
         query = f"""
             SELECT data, market_date
-            FROM isyatirim_market_history
+            FROM {config.table}
             WHERE {' AND '.join(where)}
             ORDER BY market_date DESC
             LIMIT %s
@@ -135,7 +174,7 @@ class MarketRepository:
             next_cursor = _to_iso_utc(rows[-1].get("market_date"))
 
         items = [
-            self._history_item(r, contract_version)
+            self._history_item(config, r, contract_version)
             for r in rows
             if isinstance(r.get("data"), dict)
         ]
@@ -147,43 +186,51 @@ class MarketRepository:
         }
 
     # ── shaping helpers ───────────────────────────────────────────────────────
+    def _config(self, market: str) -> Optional[_MarketConfig]:
+        return _MARKET_CONFIG.get((market or "").strip().lower())
+
     def _resolve(self, instrument: str, market: str) -> Optional[str]:
         if not supports_market(market):
             return None
-        code = (instrument or "").strip().upper()
-        return code or None
+        config = self._config(market)
+        if config is None or not instrument:
+            return None
+        return config.normalize_instrument(instrument) or None
 
-    def _as_of(self, row: Dict[str, Any]) -> Optional[date]:
+    def _as_of(self, config: _MarketConfig, row: Dict[str, Any]) -> Optional[date]:
         market_date = row.get("market_date")
         if market_date is not None:
-            return market_date if isinstance(market_date, date) else _parse_trading_date(market_date)
-        return _parse_trading_date(row.get("data", {}).get("trading_date"))
+            return market_date if isinstance(market_date, date) else _parse_trading_date(market_date, config.date_format)
+        return _parse_trading_date((row.get("data") or {}).get("trading_date"), config.date_format)
 
-    def _payload(self, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _payload(self, config: _MarketConfig, data: Dict[str, Any]) -> Dict[str, Any]:
         payload: Dict[str, Any] = {}
-        for payload_field, source_field in _FIELD_MAP:
+        for payload_field, source_field in config.field_map:
             value = data.get(source_field)
             if value is not None:
                 payload[payload_field] = value
         return payload
 
-    def _field_status(self, data: Dict[str, Any]) -> Dict[str, str]:
+    def _field_status(self, config: _MarketConfig, data: Dict[str, Any]) -> Dict[str, str]:
         status = {
             payload_field: ("reported" if data.get(source_field) is not None else "unavailable")
-            for payload_field, source_field in _FIELD_MAP
+            for payload_field, source_field in config.field_map
         }
-        # Never sourced from İş Yatırım's daily row — honest absence, not a guess.
-        status["open_try"] = "unavailable"
+        # Fields this market's source never provides at all — honest absence,
+        # not a guess (e.g. coin has no OHLC high/low on the free daily tier).
+        for field in config.always_unavailable:
+            status[field] = "unavailable"
         return status
 
     def _envelope(
         self,
         instrument: str,
         market: str,
+        config: _MarketConfig,
         row: Dict[str, Any],
         contract_version: str = "1.0",
     ) -> Dict[str, Any]:
-        trading_date = self._as_of(row)
+        trading_date = self._as_of(config, row)
         as_of_iso = _to_iso_utc(trading_date)
         envelope = {
             "contract_version": contract_version,
@@ -191,11 +238,11 @@ class MarketRepository:
             "market": market,
             "kind": KIND,
             "as_of": as_of_iso,
-            "provider": PROVIDER_ID,
-            "source": "isyatirim-web",
+            "provider": config.provider_id,
+            "source": config.source,
             "freshness_seconds": _freshness_seconds(trading_date),
             "status": "ok",
-            "payload": self._payload(row["data"]),
+            "payload": self._payload(config, row["data"]),
         }
         if contract_version != "1.0":
             envelope.update({
@@ -203,15 +250,17 @@ class MarketRepository:
                 "available_at": as_of_iso,
                 "period_end": as_of_iso,
                 "fetched_at": as_of_iso,
-                "revision_id": f"isyatirim:{instrument}:{trading_date.isoformat()}" if trading_date else None,
-                "field_status": self._field_status(row["data"]),
+                "revision_id": f"{market}:{instrument}:{trading_date.isoformat()}" if trading_date else None,
+                "field_status": self._field_status(config, row["data"]),
             })
         return envelope
 
-    def _history_item(self, row: Dict[str, Any], contract_version: str = "1.0") -> Dict[str, Any]:
-        trading_date = self._as_of(row)
+    def _history_item(
+        self, config: _MarketConfig, row: Dict[str, Any], contract_version: str = "1.0"
+    ) -> Dict[str, Any]:
+        trading_date = self._as_of(config, row)
         as_of_iso = _to_iso_utc(trading_date)
-        item = {"as_of": as_of_iso, "payload": self._payload(row["data"])}
+        item = {"as_of": as_of_iso, "payload": self._payload(config, row["data"])}
         if contract_version != "1.0":
             item.update({
                 "published_at": as_of_iso,
@@ -219,21 +268,22 @@ class MarketRepository:
                 "period_end": as_of_iso,
                 "fetched_at": as_of_iso,
                 "status": "ok",
-                "field_status": self._field_status(row["data"]),
+                "field_status": self._field_status(config, row["data"]),
             })
         return item
 
     def _unavailable(
         self, instrument: str, market: str, contract_version: str = "1.0"
     ) -> Dict[str, Any]:
+        config = self._config(market)
         return {
             "contract_version": contract_version,
             "instrument": instrument,
             "market": market,
             "kind": KIND,
             "as_of": None,
-            "provider": PROVIDER_ID,
-            "source": "isyatirim-web",
+            "provider": config.provider_id if config else "turkish-financial-api",
+            "source": config.source if config else "unknown",
             "freshness_seconds": 0,
             "status": "unavailable",
             "payload": None,

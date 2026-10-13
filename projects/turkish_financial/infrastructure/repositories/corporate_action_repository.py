@@ -31,7 +31,7 @@ from domain.services.corporate_action_detector import (
     match_detected_change,
 )
 from domain.services.corporate_action_pricing import compute_price_factor
-from infrastructure.contracts.instrument_identity_map import supports_market
+from infrastructure.contracts.instrument_identity_map import supports_kap_market
 from infrastructure.repositories.external_analysis_repository import _to_iso_utc
 
 logger = logging.getLogger(__name__)
@@ -168,7 +168,7 @@ class CorporateActionRepository:
 
     # ── shaping helpers ───────────────────────────────────────────────────────
     def _resolve(self, instrument: str, market: str) -> Optional[str]:
-        if not supports_market(market):
+        if not supports_kap_market(market):
             return None
         code = (instrument or "").strip().upper()
         return code or None

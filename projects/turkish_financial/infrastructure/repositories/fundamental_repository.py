@@ -17,7 +17,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from infrastructure.contracts.instrument_identity_map import supports_market
+from infrastructure.contracts.instrument_identity_map import supports_kap_market
 from infrastructure.repositories.external_analysis_repository import (
     PROVIDER_ID,
     _to_iso_utc,
@@ -286,7 +286,7 @@ class FundamentalRepository:
     # ── shaping helpers ───────────────────────────────────────────────────────
     def _resolve(self, instrument: str, market: str) -> Optional[str]:
         """BIST-only; the instrument *is* the stock_code we store under."""
-        if not supports_market(market):
+        if not supports_kap_market(market):
             return None
         code = (instrument or "").strip().upper()
         return code or None
