@@ -1321,13 +1321,14 @@ async def scrape_tcmb(
     db_manager: DatabaseManager = Depends(get_db_manager),
     config: Config = Depends(get_config)
 ):
-    """Scrape TCMB EVDS macro data."""
+    """Scrape TCMB EVDS macro data. Fails closed (returns unavailable, no rows
+    written) when TCMB_EVDS_API_KEY is not configured."""
     try:
-        scraper = TCMBScraper(db_manager)
+        scraper = TCMBScraper(db_manager, api_key=config.tcmb.evds_api_key)
         result = await scraper.scrape(indicator, start_date, end_date)
         return ScrapeResponse(
-            success=True,
-            message="TCMB data scraped successfully",
+            success=result.get("success", False),
+            message="TCMB data scraped successfully" if result.get("success") else result.get("detail", "TCMB data unavailable"),
             data=result
         )
     except Exception as e:

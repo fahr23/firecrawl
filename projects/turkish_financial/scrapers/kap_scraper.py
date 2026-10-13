@@ -1404,6 +1404,30 @@ class KAPScraper(BaseScraper):
             return normalize_facts(raw_current), normalize_facts(raw_prior)
         return {}, {}
 
+    def _lookup_published_at(self, disclosure_index: Optional[str]) -> Optional[Any]:
+        """
+        Best-effort FA-02 `published_at`: the financial-table member list carries no
+        publish timestamp of its own, so we try matching `disclosure_index` against
+        `kap_disclosures.disclosure_id` (populated by the separate disclosure-feed
+        scraper) and use its `disclosure_date` when found.
+
+        The two scrapers may key disclosures in different id spaces, so a miss here
+        is expected and NOT an error — `published_at` stays null (honest absence,
+        §3.4) rather than guessing. Verify/extend this join once a live KAP member
+        response confirms whether the id spaces actually coincide.
+        """
+        if not disclosure_index or self.db_manager is None:
+            return None
+        try:
+            rows = self.db_manager.query(
+                "SELECT disclosure_date FROM kap_disclosures WHERE disclosure_id = %s LIMIT 1",
+                (str(disclosure_index),),
+            )
+        except Exception as e:
+            logger.debug(f"published_at lookup failed for disclosure {disclosure_index}: {e}")
+            return None
+        return rows[0].get("disclosure_date") if rows else None
+
     def process_financial_statement(
         self,
         *,
@@ -1417,6 +1441,8 @@ class KAPScraper(BaseScraper):
         disclosure_index: Optional[str] = None,
         prior_statement: Any = None,
         market: Optional[Dict[str, Any]] = None,
+        consolidation: str = "consolidated",
+        period_end: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Parse → analyze → persist one instrument/period financial statement.
@@ -1424,7 +1450,9 @@ class KAPScraper(BaseScraper):
         Pure orchestration over the parser, the FundamentalAnalyzer, and the
         FundamentalRepository, so it is testable without any network access. Persists
         both the canonical facts and the computed ratios when a db_manager is set.
-        Returns ``{stock_code, period, facts, payload, saved}``.
+        Each disclosure_index is its own FA-02 revision: a restatement with a new
+        disclosure_index is a new row, the first-published one stays. Returns
+        ``{stock_code, period, facts, payload, saved}``.
         """
         # Lazy imports: keep the scraper importable without pydantic (see tests/conftest).
         from scrapers.kap_financial_parser import normalize_facts
@@ -1438,6 +1466,8 @@ class KAPScraper(BaseScraper):
         saved = False
         if self.db_manager is not None:
             try:
+                published_at = self._lookup_published_at(disclosure_index)
+                revision_id = f"kap:{disclosure_index}" if disclosure_index else None
                 repo = FundamentalRepository(self.db_manager)
                 repo.upsert_statement(
                     stock_code=stock_code,
@@ -1448,6 +1478,10 @@ class KAPScraper(BaseScraper):
                     currency=currency,
                     reporting_standard=reporting_standard,
                     disclosure_index=disclosure_index,
+                    consolidation=consolidation,
+                    revision_id=revision_id,
+                    published_at=published_at,
+                    period_end=period_end,
                 )
                 repo.upsert_fundamentals(
                     stock_code=stock_code,
@@ -1458,6 +1492,10 @@ class KAPScraper(BaseScraper):
                     currency=currency,
                     reporting_standard=reporting_standard,
                     source_disclosure_index=disclosure_index,
+                    consolidation=consolidation,
+                    revision_id=revision_id,
+                    published_at=published_at,
+                    period_end=period_end,
                 )
                 saved = True
             except Exception as e:
@@ -1474,12 +1512,24 @@ class KAPScraper(BaseScraper):
     def _select_member(
         self, members: List[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
-        """Pick the most relevant statement: latest annual if present, else latest period."""
+        """Pick the most relevant statement: latest annual if present, else latest period.
+
+        Kept for callers that still want a single representative member (e.g. price
+        multiples that need one current statement); `scrape_financial_statements`
+        itself now persists every member via `_select_all_members` (FA-02).
+        """
         if not members:
             return None
         annual = [m for m in members if m.get("period") == self._ANNUAL_PERIOD]
         pool = annual or members
         return max(pool, key=lambda m: (m.get("year") or 0, m.get("period") or 0))
+
+    def _select_all_members(
+        self, members: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """FA-02: keep every period (1, 2, 3, annual) a company published, not just
+        the latest annual — multi-period fundamentals need the full series."""
+        return list(members)
 
     async def scrape_financial_statements(
         self,
@@ -1493,9 +1543,11 @@ class KAPScraper(BaseScraper):
         Fetch KAP "Finansal Tablolar" via the financialTable API and save fundamentals.
 
         For each instrument we resolve its `mkkMemberOid`, list the year's financial-table
-        members, pick the latest annual statement, download its .xlsx, parse the current
-        and comparative period columns, derive the §3 fundamental metrics, and persist
-        them. The comparative column gives the prior period used for YoY growth.
+        members, and persist EVERY member (periods 1, 2, 3, and annual — FA-02 point-in-time
+        fundamentals need the full series, not just the latest annual). For each member we
+        download its statement, parse the current and comparative period columns, derive
+        the §3 fundamental metrics, and persist them. The comparative column gives the prior
+        period used for YoY growth.
 
         Args:
             instruments: BIST tickers; defaults to those resolvable to an mkkMemberOid.
@@ -1508,7 +1560,7 @@ class KAPScraper(BaseScraper):
                 sweeping many companies. Applied only between instruments (not before the
                 first, nor after the last).
 
-        Returns a per-instrument summary; instruments we could not resolve / fetch /
+        Returns a per-instrument summary; instruments/periods we could not resolve / fetch /
         parse are reported under ``failed`` (we never fabricate data).
         """
         from infrastructure.contracts.instrument_identity_map import (
@@ -1534,40 +1586,45 @@ class KAPScraper(BaseScraper):
                 continue
 
             members = await self.list_company_excel_members(oid, year, term)
-            member = self._select_member(members)
-            if not member:
+            all_members = self._select_all_members(members)
+            if not all_members:
                 failed.append({"stock_code": code, "reason": "no_financial_table"})
                 continue
 
-            disclosure_index = member.get("disclosureIndex")
-            current_labels, prior_labels = await self.fetch_financial_statement_facts(
-                disclosure_index, pd_oid=member.get("pdOid")
-            )
-            if not current_labels:
-                failed.append({"stock_code": code, "reason": "no_parsable_facts"})
-                continue
+            for member in all_members:
+                disclosure_index = member.get("disclosureIndex")
+                current_labels, prior_labels = await self.fetch_financial_statement_facts(
+                    disclosure_index, pd_oid=member.get("pdOid")
+                )
+                if not current_labels:
+                    failed.append({
+                        "stock_code": code,
+                        "disclosure_index": disclosure_index,
+                        "reason": "no_parsable_facts",
+                    })
+                    continue
 
-            period_code = member.get("period") or self._ANNUAL_PERIOD
-            is_annual = period_code == self._ANNUAL_PERIOD
-            member_year = member.get("year") or year
-            period = str(member_year) if is_annual else f"{member_year}-Q{period_code}"
+                period_code = member.get("period") or self._ANNUAL_PERIOD
+                is_annual = period_code == self._ANNUAL_PERIOD
+                member_year = member.get("year") or year
+                period = str(member_year) if is_annual else f"{member_year}-Q{period_code}"
 
-            result = self.process_financial_statement(
-                stock_code=code,
-                period=period,
-                raw_statement=current_labels,
-                prior_statement=prior_labels or None,
-                company_name=member.get("title"),
-                fiscal_period="annual" if is_annual else "interim",
-                currency="TRY",
-                reporting_standard="TFRS",
-                disclosure_index=str(disclosure_index) if disclosure_index is not None else None,
-                market=market_data.get(code),
-            )
-            (processed if result["facts"] else failed).append(
-                result if result["facts"]
-                else {"stock_code": code, "reason": "no_parsable_facts"}
-            )
+                result = self.process_financial_statement(
+                    stock_code=code,
+                    period=period,
+                    raw_statement=current_labels,
+                    prior_statement=prior_labels or None,
+                    company_name=member.get("title"),
+                    fiscal_period="annual" if is_annual else "interim",
+                    currency="TRY",
+                    reporting_standard="TFRS",
+                    disclosure_index=str(disclosure_index) if disclosure_index is not None else None,
+                    market=market_data.get(code),
+                )
+                (processed if result["facts"] else failed).append(
+                    result if result["facts"]
+                    else {"stock_code": code, "disclosure_index": disclosure_index, "reason": "no_parsable_facts"}
+                )
 
         return {
             "success": True,

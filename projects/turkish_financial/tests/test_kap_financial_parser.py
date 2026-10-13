@@ -132,6 +132,26 @@ class TestNormalizeFacts:
         assert "revenue" not in facts
         assert facts == {} or all(isinstance(v, float) for v in facts.values())
 
+    def test_fa_03_turkish_labels(self):
+        """FA-03 §3 new statement line items via the Turkish .xlsx label path."""
+        raw = {
+            "Ticari Alacaklar": "120",
+            "Ticari Borçlar": "90",
+            "Kontrol Gücü Olmayan Paylar": "15",
+            "Geçmiş Yıllar Kârları": "300",
+            "Ödenen Faiz": "35",
+            "Ödenen Vergi": "20",
+            "Ana Ortaklığa Ait Dönem Kârı": "148",
+        }
+        facts = parser.normalize_facts(raw)
+        assert facts["trade_receivables"] == 120.0
+        assert facts["trade_payables"] == 90.0
+        assert facts["minority_interest"] == 15.0
+        assert facts["retained_earnings"] == 300.0
+        assert facts["interest_paid"] == 35.0
+        assert facts["taxes_paid"] == 20.0
+        assert facts["net_income_parent"] == 148.0
+
 
 class TestXlsxParsing:
     SHARED = [
@@ -291,6 +311,48 @@ class TestMultiSheetXlsx:
         assert facts["total_equity"] == 2000.0
         assert facts["revenue"] == 3000.0
         assert facts["net_income"] == 600.0
+
+
+class TestMarkdownParsingFA03:
+    """FA-03 §3 new statement line items via the English XBRL markdown path."""
+
+    def _row(self, turkish, english, current, prior):
+        return f"| | | {turkish} | {english} | | | | | {current} | {prior} |"
+
+    def test_english_xbrl_labels_map_to_new_canonical_keys(self):
+        markdown = "\n".join([
+            self._row("Ticari Alacaklar", "Trade receivables", "120", "100"),
+            self._row("Ticari Borçlar", "Trade payables", "90", "80"),
+            self._row(
+                "Kontrol Gücü Olmayan Paylar", "Non-controlling interests", "15", "10"
+            ),
+            self._row("Geçmiş Yıllar Kârları", "Retained earnings", "300", "250"),
+            self._row("Ödenen Faiz", "Interest paid", "35", "30"),
+            self._row(
+                "Ödenen Vergi", "Income taxes paid (refunded)", "20", "18"
+            ),
+            self._row(
+                "Ana Ortaklığa Ait Dönem Kârı",
+                "Profit (loss) attributable to owners of parent",
+                "148",
+                "120",
+            ),
+        ])
+        current, prior = parser.parse_financial_table_markdown(markdown)
+
+        assert current["trade_receivables"] == 120.0
+        assert prior["trade_receivables"] == 100.0
+        assert current["trade_payables"] == 90.0
+        assert current["minority_interest"] == 15.0
+        assert current["retained_earnings"] == 300.0
+        assert current["interest_paid"] == 35.0
+        assert current["taxes_paid"] == 20.0
+        assert current["net_income_parent"] == 148.0
+
+    def test_unmapped_english_label_is_dropped_not_misassigned(self):
+        markdown = self._row("Diğer Alacaklar", "Other receivables", "50", "40")
+        current, prior = parser.parse_financial_table_markdown(markdown)
+        assert current == {} or "trade_receivables" not in current
 
 
 class TestDerivePeriod:

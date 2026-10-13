@@ -39,6 +39,43 @@ def approx(a, b):
     return a is not None and math.isclose(a, b, rel_tol=1e-3, abs_tol=1e-4)
 
 
+class TestStatementLineItemPassthrough:
+    """FA-03 §3 — raw statement facts pass straight through into the payload."""
+
+    def test_present_facts_are_passed_through(self):
+        facts = {
+            **CURRENT,
+            "trade_receivables": 120.0,
+            "trade_payables": 90.0,
+            "minority_interest": 15.0,
+            "retained_earnings": 300.0,
+            "interest_paid": 35.0,
+            "taxes_paid": 20.0,
+            "net_income_parent": 148.0,
+        }
+        payload = FundamentalAnalyzer().analyze(facts)
+
+        assert payload["trade_receivables"] == 120.0
+        assert payload["trade_payables"] == 90.0
+        assert payload["minority_interest"] == 15.0
+        assert payload["retained_earnings"] == 300.0
+        assert payload["interest_paid"] == 35.0
+        assert payload["taxes_paid"] == 20.0
+        assert payload["net_income_parent"] == 148.0
+
+    def test_financial_debt_split_renamed_in_payload(self):
+        # parser/canonical key is short_term_debt/long_term_debt; the contract
+        # payload field is short_term_financial_debt/long_term_financial_debt.
+        payload = FundamentalAnalyzer().analyze(CURRENT)
+        assert payload["short_term_financial_debt"] == 100.0
+        assert payload["long_term_financial_debt"] == 300.0
+
+    def test_missing_fact_is_honestly_absent_not_zero(self):
+        payload = FundamentalAnalyzer().analyze(CURRENT)
+        # CURRENT never set trade_receivables — must be absent, never a fabricated 0.
+        assert "trade_receivables" not in payload
+
+
 class TestStatementRatios:
     def setup_method(self):
         self.p = FundamentalAnalyzer().analyze(CURRENT)

@@ -19,12 +19,14 @@ References:
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 
 CONTRACT_VERSION = "1.0"
+CONTRACT_VERSION_1_1 = "1.1"
+SUPPORTED_CONTRACT_VERSIONS = (CONTRACT_VERSION, CONTRACT_VERSION_1_1)
 
 
 # ── enums ───────────────────────────────────────────────────────────────────
@@ -61,6 +63,15 @@ class RiskLevel(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+
+
+class FieldStatus(str, Enum):
+    """Contract 1.1 §3.2 — per-payload-field provenance (FA-01)."""
+
+    REPORTED = "reported"
+    DERIVED = "derived"
+    ESTIMATED = "estimated"
+    UNAVAILABLE = "unavailable"
 
 
 # ── payloads ─────────────────────────────────────────────────────────────────
@@ -122,10 +133,58 @@ class FundamentalPayload(BaseModel):
     restated: Optional[bool] = None
     data_completeness: Optional[float] = None
 
+    # — FA-03 statement line items (contract 1.1 §3.2; additive, all optional) —
+    consolidation: Optional[str] = None  # "consolidated" | "solo"
+    statement_template: Optional[str] = None  # industrial | bank | insurance | leasing | factoring
+    flow_basis: Optional[str] = None  # "ytd" (KAP default) | "quarter"
+
+    # income statement
+    cost_of_sales: Optional[float] = None
+    gross_profit: Optional[float] = None
+    operating_profit: Optional[float] = None
+    ebit: Optional[float] = None
+    depreciation_amortization: Optional[float] = None
+    interest_expense: Optional[float] = None
+    net_finance_expense: Optional[float] = None
+    tax_expense: Optional[float] = None
+    pretax_profit: Optional[float] = None
+    net_income_parent: Optional[float] = None
+
+    # balance sheet
+    total_assets: Optional[float] = None
+    current_assets: Optional[float] = None
+    cash_and_equivalents: Optional[float] = None
+    trade_receivables: Optional[float] = None
+    inventories: Optional[float] = None
+    current_liabilities: Optional[float] = None
+    trade_payables: Optional[float] = None
+    short_term_financial_debt: Optional[float] = None
+    long_term_financial_debt: Optional[float] = None
+    total_liabilities: Optional[float] = None
+    total_equity: Optional[float] = None
+    equity_parent: Optional[float] = None
+    minority_interest: Optional[float] = None
+    retained_earnings: Optional[float] = None
+
+    # cash flow
+    operating_cash_flow: Optional[float] = None
+    capex: Optional[float] = None
+    dividends_paid: Optional[float] = None
+    interest_paid: Optional[float] = None
+    taxes_paid: Optional[float] = None
+
+    # shares (period end)
+    shares_outstanding: Optional[float] = None
+
 
 # ── envelope ─────────────────────────────────────────────────────────────────
 class ProviderEnvelope(BaseModel):
-    """§1 — every point endpoint returns one of these."""
+    """§1 — every point endpoint returns one of these.
+
+    Fields below `status` and above `payload` are additive, contract-1.1-only
+    (FA-01 §3.2): a `1.0` response omits them entirely. `field_status` keys
+    mirror `payload` keys and are 1.1-only as well.
+    """
 
     contract_version: str = CONTRACT_VERSION
     instrument: str
@@ -136,7 +195,16 @@ class ProviderEnvelope(BaseModel):
     source: str = "external-db"
     freshness_seconds: int = Field(..., ge=0)
     status: ProviderStatus
+
+    # — contract 1.1 additive fields (§3.2) —
+    published_at: Optional[str] = None
+    available_at: Optional[str] = None
+    period_end: Optional[str] = None
+    fetched_at: Optional[str] = None
+    revision_id: Optional[str] = None
+
     payload: Optional[dict] = None  # SentimentPayload | FundamentalPayload | null
+    field_status: Optional[Dict[str, FieldStatus]] = None
 
 
 class BatchEnvelope(BaseModel):
@@ -149,6 +217,15 @@ class BatchEnvelope(BaseModel):
 class HistoryItem(BaseModel):
     as_of: Optional[str] = None
     payload: Optional[dict] = None
+
+    # — contract 1.1 additive fields (§3.2 / §3.5), same rule as ProviderEnvelope —
+    published_at: Optional[str] = None
+    available_at: Optional[str] = None
+    period_end: Optional[str] = None
+    fetched_at: Optional[str] = None
+    revision_id: Optional[str] = None
+    status: Optional[ProviderStatus] = None
+    field_status: Optional[Dict[str, FieldStatus]] = None
 
 
 class HistoryEnvelope(BaseModel):

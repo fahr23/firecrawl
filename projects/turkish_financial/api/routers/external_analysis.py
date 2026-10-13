@@ -28,6 +28,7 @@ from api.dependencies import get_db_manager
 from database.db_manager import DatabaseManager
 from domain.entities.external_analysis import (
     CONTRACT_VERSION,
+    SUPPORTED_CONTRACT_VERSIONS,
     Market,
 )
 from infrastructure.repositories.external_analysis_repository import (
@@ -62,6 +63,7 @@ class FundamentalBatchRequest(BaseModel):
     market: Market
     instruments: List[str] = Field(..., min_length=1)
     as_of: Optional[str] = None
+    contract_version: str = CONTRACT_VERSION
 
 
 class FundamentalsCollectionRequest(BaseModel):
@@ -78,6 +80,11 @@ def _fund_repo(db_manager: DatabaseManager) -> FundamentalRepository:
 
 def _news_repo(db_manager: DatabaseManager) -> NewsRepository:
     return NewsRepository(db_manager)
+
+
+def _resolve_contract_version(requested: str) -> str:
+    """FA-01 §3: unrecognised versions degrade to the compatible default (1.0)."""
+    return requested if requested in SUPPORTED_CONTRACT_VERSIONS else CONTRACT_VERSION
 
 
 def _db_error(detail: str) -> JSONResponse:
@@ -564,6 +571,7 @@ async def _on_demand_fundamental_fetch(
     repo,
     market: str,
     as_of: Optional[str] = None,
+    contract_version: str = "1.0",
 ) -> dict:
     """Trigger a live KAP scrape for *instrument* and re-query the repo.
 
@@ -605,7 +613,7 @@ async def _on_demand_fundamental_fetch(
         logger.warning(
             "on-demand KAP fetch for %s failed: %s", instrument, exc
         )
-    return repo.get_point(instrument, market, as_of)
+    return repo.get_point(instrument, market, as_of, contract_version=contract_version)
 
 
 # ── batch (§6.2) ──────────────────────────────────────────────────────────────
@@ -614,14 +622,19 @@ async def fundamental_batch(
     request: FundamentalBatchRequest,
     db_manager: DatabaseManager = Depends(get_db_manager),
 ):
+    contract_version = _resolve_contract_version(request.contract_version)
     repo = _fund_repo(db_manager)
     items = []
     try:
         for instrument in request.instruments:
-            point = repo.get_point(instrument, request.market.value, request.as_of)
+            point = repo.get_point(
+                instrument, request.market.value, request.as_of,
+                contract_version=contract_version,
+            )
             if point.get("status") == "unavailable" and request.as_of is None:
                 point = await _on_demand_fundamental_fetch(
-                    instrument, db_manager, repo, request.market.value
+                    instrument, db_manager, repo, request.market.value,
+                    contract_version=contract_version,
                 )
             items.append(point)
     except DatabaseManager.PoolExhaustedError:
@@ -630,7 +643,7 @@ async def fundamental_batch(
         logger.error(f"Batch fundamental failed: {e}", exc_info=True)
         return _db_error(str(e))
 
-    return {"contract_version": CONTRACT_VERSION, "items": items}
+    return {"contract_version": contract_version, "items": items}
 
 
 # ── history (§6.3) — static suffix before {instrument} point ──────────────────
@@ -642,12 +655,15 @@ async def fundamental_history(
     date_to: Optional[str] = Query(None, alias="to"),
     limit: int = Query(100, ge=1, le=1000),
     cursor: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
     db_manager: DatabaseManager = Depends(get_db_manager),
 ):
+    resolved_version = _resolve_contract_version(contract_version)
     repo = _fund_repo(db_manager)
     try:
         data = repo.get_history(
-            instrument, market.value, date_from, date_to, limit, cursor
+            instrument, market.value, date_from, date_to, limit, cursor,
+            contract_version=resolved_version,
         )
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")
@@ -656,7 +672,7 @@ async def fundamental_history(
         return _db_error(str(e))
 
     return {
-        "contract_version": CONTRACT_VERSION,
+        "contract_version": resolved_version,
         "instrument": data["instrument"],
         "market": data["market"],
         "kind": "fundamental",
@@ -671,13 +687,18 @@ async def fundamental_point(
     instrument: str,
     market: Market = Query(...),
     as_of: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
     db_manager: DatabaseManager = Depends(get_db_manager),
 ):
+    resolved_version = _resolve_contract_version(contract_version)
     repo = _fund_repo(db_manager)
     try:
-        result = repo.get_point(instrument, market.value, as_of)
+        result = repo.get_point(instrument, market.value, as_of, contract_version=resolved_version)
         if result.get("status") == "unavailable" and as_of is None:
-            result = await _on_demand_fundamental_fetch(instrument, db_manager, repo, market.value)
+            result = await _on_demand_fundamental_fetch(
+                instrument, db_manager, repo, market.value,
+                contract_version=resolved_version,
+            )
         return result
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")

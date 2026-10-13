@@ -44,6 +44,42 @@ _COMPLETENESS_FIELDS: tuple[str, ...] = (
     "eps_growth_yoy",
 )
 
+# FA-03 §3 — raw statement line items passed straight through from canonical facts
+# (no computation, honest absence when the parser didn't find the line). Maps
+# payload field -> canonical fact key where the names differ.
+_STATEMENT_PASSTHROUGH: tuple[tuple[str, str], ...] = (
+    ("cost_of_sales", "cost_of_sales"),
+    ("gross_profit", "gross_profit"),
+    ("operating_profit", "operating_profit"),
+    ("ebit", "ebit"),
+    ("depreciation_amortization", "depreciation_amortization"),
+    ("interest_expense", "interest_expense"),
+    ("net_finance_expense", "net_finance_expense"),
+    ("tax_expense", "tax_expense"),
+    ("pretax_profit", "pretax_profit"),
+    ("net_income_parent", "net_income_parent"),
+    ("total_assets", "total_assets"),
+    ("current_assets", "current_assets"),
+    ("cash_and_equivalents", "cash_and_equivalents"),
+    ("trade_receivables", "trade_receivables"),
+    ("inventories", "inventories"),
+    ("current_liabilities", "current_liabilities"),
+    ("trade_payables", "trade_payables"),
+    ("short_term_financial_debt", "short_term_debt"),
+    ("long_term_financial_debt", "long_term_debt"),
+    ("total_liabilities", "total_liabilities"),
+    ("total_equity", "total_equity"),
+    ("equity_parent", "equity_parent"),
+    ("minority_interest", "minority_interest"),
+    ("retained_earnings", "retained_earnings"),
+    ("operating_cash_flow", "operating_cash_flow"),
+    ("capex", "capex"),
+    ("dividends_paid", "dividends_paid"),
+    ("interest_paid", "interest_paid"),
+    ("taxes_paid", "taxes_paid"),
+    ("shares_outstanding", "shares_outstanding"),
+)
+
 
 def _num(facts: Mapping[str, Any], key: str) -> Optional[float]:
     value = facts.get(key)
@@ -216,6 +252,13 @@ class FundamentalAnalyzer:
                 payload["peg_ratio"] = _safe_div(payload["pe_ratio"], eps_growth * 100.0)
 
         payload["data_completeness"] = self._completeness(payload)
+
+        # FA-03 §3 — raw statement line items, straight passthrough (no computation).
+        for payload_field, fact_key in _STATEMENT_PASSTHROUGH:
+            value = _num(facts, fact_key)
+            if value is not None:
+                payload[payload_field] = value
+
         return payload
 
     # ── helpers ───────────────────────────────────────────────────────────────

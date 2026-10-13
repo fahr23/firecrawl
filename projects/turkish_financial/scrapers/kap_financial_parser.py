@@ -41,9 +41,11 @@ CANONICAL_KEYS: tuple[str, ...] = (
     "ebit",
     "depreciation_amortization",
     "interest_expense",
+    "net_finance_expense",
     "tax_expense",
     "pretax_profit",
     "net_income",
+    "net_income_parent",
     # balance sheet
     "total_assets",
     "current_assets",
@@ -55,10 +57,18 @@ CANONICAL_KEYS: tuple[str, ...] = (
     "cash_and_equivalents",
     "short_term_debt",
     "long_term_debt",
+    # FA-03 §3 additions: balance sheet
+    "trade_receivables",
+    "trade_payables",
+    "minority_interest",
+    "retained_earnings",
     # cash flow
     "operating_cash_flow",
     "capex",
     "dividends_paid",
+    # FA-03 §3 additions: cash flow
+    "interest_paid",
+    "taxes_paid",
     # share / market data (usually supplied out-of-band, kept here for completeness)
     "shares_outstanding",
 )
@@ -73,22 +83,31 @@ _LABEL_PATTERNS: List[tuple[str, List[str]]] = [
     ("operating_profit", ["esas faaliyet kari", "faaliyet kari", "esas faaliyet kar"]),
     ("revenue", ["hasilat", "satis gelirleri", "faiz, ucret, prim"]),
     ("depreciation_amortization", ["amortisman", "itfa ve tukenme", "amortisman ve itfa"]),
+    ("net_finance_expense", ["finansman giderleri", "net finansman gideri"]),
     ("interest_expense", ["finansman gideri", "faiz gideri", "esas faaliyetlerden finansman gideri"]),
     ("tax_expense", ["vergi gideri", "donem vergi gideri", "surdurulen faaliyetler vergi"]),
     ("pretax_profit", ["surdurulen faaliyetler vergi oncesi kar", "vergi oncesi kar"]),
+    ("net_income_parent", [
+        "ana ortakliga ait donem kari", "ana ortakliga ait donem net kari",
+        "ana ortakliga ait net donem kari",
+    ]),
     ("net_income", [
         "donem kari (zarari)", "donem net kar", "donem kari", "net donem kari",
         "ana ortakliga ait", "donem kar zarari", "net kar",
     ]),
     ("current_assets", ["donen varliklar"]),
+    ("trade_receivables", ["ticari alacaklar"]),
     ("inventories", ["stoklar"]),
     ("cash_and_equivalents", ["nakit ve nakit benzerleri", "nakit ve nakit benzeri"]),
     ("total_assets", ["toplam varliklar", "varliklar toplami", "aktif toplami"]),
     ("current_liabilities", ["kisa vadeli yukumlulukler"]),
+    ("trade_payables", ["ticari borclar"]),
     ("short_term_debt", ["kisa vadeli borclanmalar", "kisa vadeli finansal borclar"]),
     ("long_term_debt", ["uzun vadeli borclanmalar", "uzun vadeli finansal borclar"]),
     ("total_liabilities", ["toplam yukumlulukler", "yukumlulukler toplami"]),
+    ("minority_interest", ["kontrol gucu olmayan paylar", "azinlik paylari"]),
     ("equity_parent", ["ana ortakliga ait ozkaynaklar"]),
+    ("retained_earnings", ["gecmis yillar karlari", "gecmis yillar kar/zararlari"]),
     ("total_equity", ["ozkaynaklar", "toplam ozkaynaklar", "ozkaynaklar toplami"]),
     ("operating_cash_flow", [
         "isletme faaliyetlerinden", "esas faaliyetlerden kaynaklanan nakit",
@@ -96,6 +115,8 @@ _LABEL_PATTERNS: List[tuple[str, List[str]]] = [
     ]),
     ("capex", ["maddi duran varlik alimlari", "yatirim harcamalari", "maddi ve maddi olmayan duran varlik alimlari"]),
     ("dividends_paid", ["odenen temettu", "odenen kar paylari", "temettu odemeleri"]),
+    ("interest_paid", ["odenen faiz"]),
+    ("taxes_paid", ["odenen vergi", "odenen gelir vergisi"]),
     ("shares_outstanding", ["odenmis sermaye", "cikarilmis sermaye", "pay adedi"]),
 ]
 
@@ -446,6 +467,17 @@ _ENGLISH_LABEL_MAP: dict[str, str] = {
     "dividends paid": "dividends_paid",
     "long-term borrowings": "long_term_debt",
     "non-current borrowings": "long_term_debt",
+    # FA-03 §3 additions
+    "profit (loss) attributable to owners of parent": "net_income_parent",
+    "finance income/(expenses), net": "net_finance_expense",
+    "tax (expense)/income, continuing operations": "tax_expense",
+    "profit (loss) from continuing operations before tax": "pretax_profit",
+    "trade receivables": "trade_receivables",
+    "trade payables": "trade_payables",
+    "non-controlling interests": "minority_interest",
+    "retained earnings": "retained_earnings",
+    "interest paid": "interest_paid",
+    "income taxes paid (refunded)": "taxes_paid",
 }
 
 _MD_CLEAN_RE = re.compile(r"<br>.*$|[*_`]")

@@ -326,6 +326,40 @@ class DatabaseManager:
                 ON {}.kap_financial_statements(stock_code)
             ''').format(sql.Identifier(self.schema)))
 
+            # --- FA-02 point-in-time columns (idempotent ALTERs) -------------
+            # Every KAP financial-table member (not just the latest annual) is now
+            # kept, and a restatement gets a NEW revision row rather than overwriting
+            # the first-published one. revision_id defaults to a synthetic
+            # "legacy:<id>" for rows written before this migration so the unique key
+            # swap below never collides with pre-existing data.
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {0}.kap_financial_statements
+                    ADD COLUMN IF NOT EXISTS consolidation VARCHAR(20) NOT NULL DEFAULT 'consolidated',
+                    ADD COLUMN IF NOT EXISTS revision_id VARCHAR(100),
+                    ADD COLUMN IF NOT EXISTS published_at TIMESTAMP,
+                    ADD COLUMN IF NOT EXISTS available_at TIMESTAMP,
+                    ADD COLUMN IF NOT EXISTS period_end DATE,
+                    ADD COLUMN IF NOT EXISTS statement_template VARCHAR(20) NOT NULL DEFAULT 'industrial',
+                    ADD COLUMN IF NOT EXISTS flow_basis VARCHAR(10) NOT NULL DEFAULT 'ytd'
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                UPDATE {0}.kap_financial_statements
+                SET revision_id = 'legacy:' || id::text
+                WHERE revision_id IS NULL
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {0}.kap_financial_statements
+                    ALTER COLUMN revision_id SET NOT NULL
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {0}.kap_financial_statements
+                    DROP CONSTRAINT IF EXISTS kap_financial_statements_stock_code_period_key
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_fin_stmt_pit_key
+                ON {0}.kap_financial_statements(stock_code, period, consolidation, revision_id)
+            ''').format(sql.Identifier(self.schema)))
+
             # Computed fundamental ratios per instrument/period. Column set mirrors
             # the External Analysis Provider FundamentalPayload (contract v1.0 §3) so
             # the contract endpoints can map rows to envelopes 1:1.
@@ -389,6 +423,73 @@ class DatabaseManager:
             cursor.execute(sql.SQL('''
                 CREATE INDEX IF NOT EXISTS idx_fundamentals_effective_at
                 ON {}.kap_fundamentals(effective_at)
+            ''').format(sql.Identifier(self.schema)))
+
+            # --- FA-02/FA-03 point-in-time + statement line items (idempotent ALTERs) ---
+            # Mirrors the kap_financial_statements migration above: every KAP member is
+            # kept as its own revision, and FundamentalPayload's new line items (contract
+            # 1.1 §3.2 / FA-03) are stored alongside the existing computed ratios so the
+            # repository can serve both from one row.
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {0}.kap_fundamentals
+                    ADD COLUMN IF NOT EXISTS consolidation VARCHAR(20) NOT NULL DEFAULT 'consolidated',
+                    ADD COLUMN IF NOT EXISTS revision_id VARCHAR(100),
+                    ADD COLUMN IF NOT EXISTS published_at TIMESTAMP,
+                    ADD COLUMN IF NOT EXISTS available_at TIMESTAMP,
+                    ADD COLUMN IF NOT EXISTS period_end DATE,
+                    ADD COLUMN IF NOT EXISTS statement_template VARCHAR(20) NOT NULL DEFAULT 'industrial',
+                    ADD COLUMN IF NOT EXISTS flow_basis VARCHAR(10) NOT NULL DEFAULT 'ytd',
+
+                    ADD COLUMN IF NOT EXISTS cost_of_sales REAL,
+                    ADD COLUMN IF NOT EXISTS gross_profit REAL,
+                    ADD COLUMN IF NOT EXISTS operating_profit REAL,
+                    ADD COLUMN IF NOT EXISTS ebit REAL,
+                    ADD COLUMN IF NOT EXISTS depreciation_amortization REAL,
+                    ADD COLUMN IF NOT EXISTS interest_expense REAL,
+                    ADD COLUMN IF NOT EXISTS net_finance_expense REAL,
+                    ADD COLUMN IF NOT EXISTS tax_expense REAL,
+                    ADD COLUMN IF NOT EXISTS pretax_profit REAL,
+                    ADD COLUMN IF NOT EXISTS net_income_parent REAL,
+
+                    ADD COLUMN IF NOT EXISTS total_assets REAL,
+                    ADD COLUMN IF NOT EXISTS current_assets REAL,
+                    ADD COLUMN IF NOT EXISTS cash_and_equivalents REAL,
+                    ADD COLUMN IF NOT EXISTS trade_receivables REAL,
+                    ADD COLUMN IF NOT EXISTS inventories REAL,
+                    ADD COLUMN IF NOT EXISTS current_liabilities REAL,
+                    ADD COLUMN IF NOT EXISTS trade_payables REAL,
+                    ADD COLUMN IF NOT EXISTS short_term_financial_debt REAL,
+                    ADD COLUMN IF NOT EXISTS long_term_financial_debt REAL,
+                    ADD COLUMN IF NOT EXISTS total_liabilities REAL,
+                    ADD COLUMN IF NOT EXISTS total_equity REAL,
+                    ADD COLUMN IF NOT EXISTS equity_parent REAL,
+                    ADD COLUMN IF NOT EXISTS minority_interest REAL,
+                    ADD COLUMN IF NOT EXISTS retained_earnings REAL,
+
+                    ADD COLUMN IF NOT EXISTS operating_cash_flow REAL,
+                    ADD COLUMN IF NOT EXISTS capex REAL,
+                    ADD COLUMN IF NOT EXISTS dividends_paid REAL,
+                    ADD COLUMN IF NOT EXISTS interest_paid REAL,
+                    ADD COLUMN IF NOT EXISTS taxes_paid REAL,
+
+                    ADD COLUMN IF NOT EXISTS shares_outstanding REAL
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                UPDATE {0}.kap_fundamentals
+                SET revision_id = 'legacy:' || id::text
+                WHERE revision_id IS NULL
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {0}.kap_fundamentals
+                    ALTER COLUMN revision_id SET NOT NULL
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {0}.kap_fundamentals
+                    DROP CONSTRAINT IF EXISTS kap_fundamentals_stock_code_period_key
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_fundamentals_pit_key
+                ON {0}.kap_fundamentals(stock_code, period, consolidation, revision_id)
             ''').format(sql.Identifier(self.schema)))
 
             # --- kap_disclosures extra columns (idempotent ALTERs) ----------

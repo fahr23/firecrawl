@@ -106,6 +106,11 @@ class ProxyConfig(BaseModel):
         return self.proxy_url
 
 
+class TCMBConfig(BaseModel):
+    """TCMB EVDS (macro data) configuration"""
+    evds_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("TCMB_EVDS_API_KEY") or None)
+
+
 class YouTubeConfig(BaseModel):
     """YouTube channel scraper configuration."""
     channels: list[str] = Field(default_factory=list)
@@ -149,6 +154,8 @@ class Config:
         )
         
         self.proxy = ProxyConfig()
+
+        self.tcmb = TCMBConfig(evds_api_key=os.getenv("TCMB_EVDS_API_KEY") or None)
 
         _yt_channels_raw = os.getenv("YOUTUBE_CHANNELS", "")
         _yt_extra_channels_raw = os.getenv("YOUTUBE_EXTRA_CHANNELS", "")
