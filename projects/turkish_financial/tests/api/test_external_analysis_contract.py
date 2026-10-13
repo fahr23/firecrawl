@@ -410,3 +410,32 @@ class TestHealth:
         assert body["status"] == "ok"
         assert body["contract_version"] == "1.0"
         assert body["provider"] == "kap-scraper"
+
+    def test_checks_report_db_and_upstream_independently(self):
+        """FA-17: health reports upstream reachability without it affecting
+        `status`, since Firecrawl is deliberately scaled to zero outside the
+        collector window (see deploy/turkish-financial)."""
+        client = make_client(FakeDB())
+        with patch.object(
+            external_analysis, "_firecrawl_capabilities",
+            lambda: {"status": "unavailable", "operations": [], "document_parse": False},
+        ):
+            body = client.get("/api/external/v1/health").json()
+        assert body["status"] == "ok"  # DB-only; unaffected by Firecrawl being down
+        assert body["checks"]["database"] == "ok"
+        assert body["checks"]["upstream_firecrawl"] == "unavailable"
+
+    def test_db_down_degrades_status(self):
+        class RaisingDB(FakeDB):
+            def get_connection(self):
+                raise RuntimeError("pool exhausted")
+
+        client = make_client(RaisingDB())
+        with patch.object(
+            external_analysis, "_firecrawl_capabilities",
+            lambda: {"status": "ok", "operations": [], "document_parse": False},
+        ):
+            body = client.get("/api/external/v1/health").json()
+        assert body["status"] == "degraded"
+        assert body["checks"]["database"] == "unavailable"
+        assert body["checks"]["upstream_firecrawl"] == "ok"

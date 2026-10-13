@@ -1,0 +1,128 @@
+# The Turkish Financial API: always on, serves stored data to clients
+# (e.g. backtofuture) at http://turkish-financial-api.<namespace>.svc:8000.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: turkish-financial-api
+  labels:
+    app: turkish-financial-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: turkish-financial-api
+  template:
+    metadata:
+      labels:
+        app: turkish-financial-api
+    spec:
+      initContainers:
+      - name: wait-for-postgres
+        image: busybox:1.36
+        imagePullPolicy: IfNotPresent
+        command: ['sh', '-c', 'until nc -z postgres 5432; do echo waiting for postgres; sleep 2; done']
+        resources:
+          requests:
+            memory: "8Mi"
+            cpu: "5m"
+          limits:
+            memory: "32Mi"
+            cpu: "50m"
+      containers:
+      - name: turkish-financial-api
+        image: turkish-financial-api
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: FIRECRAWL_BASE_URL
+          value: "http://firecrawl-api:3002"
+        - name: PLAYWRIGHT_SERVICE_URL
+          value: "http://playwright-service:3000/scrape"
+        - name: APP_DB_HOST
+          value: "postgres"
+        - name: APP_DB_PORT
+          value: "5432"
+        - name: APP_DB_NAME
+          value: "turkish_financial"
+        - name: APP_DB_USER
+          value: "postgres"
+        - name: APP_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: turkish-financial-secrets
+              key: POSTGRES_PASSWORD
+        # Legacy DB_* names still read by older modules.
+        - name: DB_HOST
+          value: "postgres"
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: "turkish_financial"
+        - name: DB_USER
+          value: "postgres"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: turkish-financial-secrets
+              key: POSTGRES_PASSWORD
+        - name: DB_SCHEMA
+          value: "turkish_financial"
+        # Optional: FA-00 fails closed (returns `unavailable`, writes nothing) when
+        # this key is absent from the secret, rather than needing a placeholder value.
+        - name: TCMB_EVDS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: turkish-financial-secrets
+              key: TCMB_EVDS_API_KEY
+              optional: true
+        - name: BIST_CATALOG_PATH
+          value: "/data/bist_tum.csv"
+        - name: SENTIMENT_PROVIDER
+          value: "keyword"
+        - name: YOUTUBE_CHANNELS
+          value: "https://www.youtube.com/@bistyatirimcipsikolojisi/videos,https://www.youtube.com/@kanalfinans/videos,https://www.youtube.com/channel/UCIju0kyYHAqQePXdGFjhLdA/videos,https://www.youtube.com/@GedikYatirim/videos,https://www.youtube.com/@ZiraatYatirim/videos,https://www.youtube.com/@MeseleEkonomi/videos,https://www.youtube.com/@EkoTurkTV/videos,https://www.youtube.com/@infoyatirim/videos,https://www.youtube.com/@TacirlerYatirimMenkulDegerler/videos,https://www.youtube.com/@A1Capital/videos"
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        resources:
+          requests:
+            memory: "160Mi"
+            cpu: "25m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /api/external/v1/health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 60
+        volumeMounts:
+        - name: bist-catalog
+          mountPath: /data/bist_tum.csv
+          subPath: BIST_TUM.csv
+      volumes:
+      - name: bist-catalog
+        configMap:
+          name: bist-catalog
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: turkish-financial-api
+  labels:
+    app: turkish-financial-api
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  selector:
+    app: turkish-financial-api

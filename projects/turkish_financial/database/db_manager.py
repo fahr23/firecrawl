@@ -750,6 +750,21 @@ class DatabaseManager:
                 )
             ''').format(sql.Identifier(self.schema)))
 
+            # FA-09 daily ownership snapshots. The public company card only ever
+            # exposes the CURRENT foreign-ownership / free-float percentage (no
+            # upstream history endpoint), so this table is how the history accrues:
+            # one row per ticker per day a collection actually ran.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.isyatirim_ownership_history (
+                    ticker VARCHAR(20) NOT NULL,
+                    snapshot_date DATE NOT NULL,
+                    foreign_ownership_pct REAL,
+                    free_float_pct REAL,
+                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (ticker, snapshot_date)
+                )
+            ''').format(sql.Identifier(self.schema)))
+
             cursor.execute(sql.SQL('''
                 CREATE TABLE IF NOT EXISTS {}.isyatirim_fundamentals (
                     ticker VARCHAR(20) PRIMARY KEY,
@@ -1516,6 +1531,38 @@ class DatabaseManager:
             "age_seconds": age,
             "fresh": bool(series) and age is not None and age <= max_age_seconds,
         }
+
+    # ── İş Yatırım daily ownership snapshots (FA-09) ────────────────────────
+
+    def upsert_isyatirim_ownership_snapshot(
+        self,
+        ticker: str,
+        snapshot_date: Any,
+        foreign_ownership_pct: Optional[float],
+        free_float_pct: Optional[float],
+    ) -> bool:
+        """Record one daily ownership snapshot (idempotent per ticker/day)."""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO isyatirim_ownership_history
+                       (ticker, snapshot_date, foreign_ownership_pct, free_float_pct)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT (ticker, snapshot_date) DO UPDATE SET
+                       foreign_ownership_pct = EXCLUDED.foreign_ownership_pct,
+                       free_float_pct = EXCLUDED.free_float_pct,
+                       fetched_at = CURRENT_TIMESTAMP""",
+                (ticker.strip().upper(), snapshot_date, foreign_ownership_pct, free_float_pct),
+            )
+            conn.commit()
+            return True
+        except Exception as exc:
+            logger.warning("Could not persist ownership snapshot for %s: %s", ticker, exc)
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
 
     def upsert_isyatirim_fundamentals(self, ticker: str, payload: Dict[str, Any]) -> bool:
         """Store one current İş Yatırım fundamental snapshot per ticker."""

@@ -17,7 +17,7 @@ import logging
 import os
 import asyncio
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 from fastapi import APIRouter, Depends, Query
@@ -36,6 +36,8 @@ from infrastructure.repositories.external_analysis_repository import (
     ExternalAnalysisRepository,
 )
 from infrastructure.repositories.fundamental_repository import FundamentalRepository
+from infrastructure.repositories.market_repository import MarketRepository
+from infrastructure.repositories.ownership_repository import OwnershipRepository
 from infrastructure.repositories.news_repository import NewsRepository
 from infrastructure.contracts.instrument_identity_map import STATIC_BIST_CATALOG
 from scrapers.isyatirim_market_data import build_market_history_payload, fetch_market_history
@@ -247,6 +249,15 @@ async def instruments_catalog(
 # ── health (§6.8) — declared first, no path params ───────────────────────────
 @router.get("/health")
 async def health(db_manager: DatabaseManager = Depends(get_db_manager)):
+    """FA-17: reports DB *and* upstream (local Firecrawl) reachability.
+
+    `status` keeps its existing DB-only meaning for readiness-probe
+    compatibility (Firecrawl is scaled to zero outside the collector window by
+    design — see deploy/turkish-financial — so treating it as a readiness
+    dependency would make the probe flap). `checks` carries both results so a
+    caller that wants the fuller picture can read it without affecting
+    `status`.
+    """
     db_ok = False
     try:
         conn = db_manager.get_connection()
@@ -260,20 +271,114 @@ async def health(db_manager: DatabaseManager = Depends(get_db_manager)):
     except Exception as e:  # noqa: BLE001 - health must never raise
         logger.warning(f"External-analysis health DB check failed: {e}")
 
+    upstream = await asyncio.to_thread(_firecrawl_capabilities)
+    upstream_ok = upstream.get("status") == "ok"
+
     return {
         "status": "ok" if db_ok else "degraded",
         "contract_version": CONTRACT_VERSION,
         "provider": PROVIDER_ID,
+        "checks": {
+            "database": "ok" if db_ok else "unavailable",
+            "upstream_firecrawl": "ok" if upstream_ok else "unavailable",
+        },
     }
 
 
+# FA-16 §3.6 — one coverage query per kind: instruments served, earliest/latest
+# as_of, median observations per instrument, failure counts (last collection run).
+# `last_run_failures` reads the in-process collection-state dicts the fundamental/
+# ownership collectors already maintain; it is best-effort and process-local (no
+# durable job history exists yet), so it is omitted entirely when the collector
+# has never run in this process rather than reported as a fabricated zero.
+_COVERAGE_QUERIES: Dict[str, str] = {
+    "fundamental": """
+        SELECT stock_code AS instrument, MIN(effective_at) AS earliest, MAX(effective_at) AS latest,
+               COUNT(*) AS observations
+        FROM kap_fundamentals GROUP BY stock_code
+    """,
+    "market": """
+        SELECT ticker AS instrument, MIN(market_date) AS earliest, MAX(market_date) AS latest,
+               COUNT(*) AS observations
+        FROM isyatirim_market_history GROUP BY ticker
+    """,
+    "ownership": """
+        SELECT ticker AS instrument, MIN(snapshot_date) AS earliest, MAX(snapshot_date) AS latest,
+               COUNT(*) AS observations
+        FROM isyatirim_ownership_history GROUP BY ticker
+    """,
+    "sentiment": """
+        SELECT d.stock_code AS instrument, MIN(d.disclosure_date) AS earliest, MAX(d.disclosure_date) AS latest,
+               COUNT(*) AS observations
+        FROM kap_disclosure_sentiment s JOIN kap_disclosures d ON d.id = s.disclosure_id
+        WHERE d.stock_code IS NOT NULL
+        GROUP BY d.stock_code
+    """,
+}
+
+# kind -> in-process collection-state dict, when one exists (best-effort failure count).
+def _collection_states() -> Dict[str, dict]:
+    return {
+        "fundamental": _fundamental_collection_state,
+        "ownership": _ownership_collection_state,
+    }
+
+
+def _median(values: List[Any]) -> Optional[float]:
+    nums = sorted(v for v in values if v is not None)
+    if not nums:
+        return None
+    mid = len(nums) // 2
+    if len(nums) % 2:
+        return float(nums[mid])
+    return (nums[mid - 1] + nums[mid]) / 2.0
+
+
+def _kind_coverage(db_manager: DatabaseManager, kind: str, query: str) -> Dict[str, Any]:
+    try:
+        rows = db_manager.query(query, ())
+    except Exception as exc:  # noqa: BLE001 - coverage must never break /capabilities
+        logger.warning("coverage query failed for kind=%s: %s", kind, exc)
+        return {"instruments_served": 0, "earliest_as_of": None, "latest_as_of": None, "median_observations_per_instrument": None}
+
+    earliest = min((r.get("earliest") for r in rows if r.get("earliest") is not None), default=None)
+    latest = max((r.get("latest") for r in rows if r.get("latest") is not None), default=None)
+    coverage: Dict[str, Any] = {
+        "instruments_served": len(rows),
+        "earliest_as_of": _to_iso_utc_coverage(earliest),
+        "latest_as_of": _to_iso_utc_coverage(latest),
+        "median_observations_per_instrument": _median([r.get("observations") for r in rows]),
+    }
+    state = _collection_states().get(kind)
+    if state is not None and state.get("started_at") is not None:
+        coverage["last_collection_run"] = {
+            "started_at": state.get("started_at"),
+            "finished_at": state.get("finished_at"),
+            "status": state.get("status"),
+            "failure_count": state.get("failed", 0),
+        }
+    return coverage
+
+
+def _to_iso_utc_coverage(value: Any) -> Optional[str]:
+    """Local alias so this module doesn't need to import the fundamental repo's
+    private `_to_iso_utc` just for the coverage block."""
+    from infrastructure.repositories.external_analysis_repository import _to_iso_utc
+    return _to_iso_utc(value)
+
+
 @router.get("/capabilities")
-async def capabilities():
-    """Return only runtime-confirmed Firecrawl capabilities for external clients."""
+async def capabilities(db_manager: DatabaseManager = Depends(get_db_manager)):
+    """Return runtime-confirmed Firecrawl capabilities plus per-kind coverage (FA-16 §3.6)."""
+    coverage = {
+        kind: _kind_coverage(db_manager, kind, query)
+        for kind, query in _COVERAGE_QUERIES.items()
+    }
     return {
         "contract_version": CONTRACT_VERSION,
         "provider": PROVIDER_ID,
         "firecrawl": _firecrawl_capabilities(),
+        "coverage": coverage,
     }
 
 
@@ -704,6 +809,278 @@ async def fundamental_point(
         return _db_error("database temporarily unavailable")
     except Exception as e:  # noqa: BLE001
         logger.error(f"Fundamental point failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Market kind (FA-05) — daily İş Yatırım OHLC/volume/market-cap history
+# ════════════════════════════════════════════════════════════════════════════
+
+class MarketBatchRequest(BaseModel):
+    """§4 batch body (market kind)."""
+
+    market: Market
+    instruments: List[str] = Field(..., min_length=1)
+    as_of: Optional[str] = None
+    contract_version: str = CONTRACT_VERSION
+
+
+def _market_repo(db_manager: DatabaseManager) -> MarketRepository:
+    return MarketRepository(db_manager)
+
+
+@router.post("/market/batch")
+async def market_batch(
+    request: MarketBatchRequest,
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    contract_version = _resolve_contract_version(request.contract_version)
+    repo = _market_repo(db_manager)
+    try:
+        items = [
+            repo.get_point(
+                instrument, request.market.value, request.as_of,
+                contract_version=contract_version,
+            )
+            for instrument in request.instruments
+        ]
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Batch market failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+    return {"contract_version": contract_version, "items": items}
+
+
+@router.get("/market/{instrument}/history")
+async def market_history(
+    instrument: str,
+    market: Market = Query(...),
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    limit: int = Query(100, ge=1, le=1000),
+    cursor: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    resolved_version = _resolve_contract_version(contract_version)
+    repo = _market_repo(db_manager)
+    try:
+        data = repo.get_history(
+            instrument, market.value, date_from, date_to, limit, cursor,
+            contract_version=resolved_version,
+        )
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Market history failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+    return {
+        "contract_version": resolved_version,
+        "instrument": data["instrument"],
+        "market": data["market"],
+        "kind": "market",
+        "items": data["items"],
+        "next_cursor": data["next_cursor"],
+    }
+
+
+@router.get("/market/{instrument}")
+async def market_point(
+    instrument: str,
+    market: Market = Query(...),
+    as_of: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    resolved_version = _resolve_contract_version(contract_version)
+    repo = _market_repo(db_manager)
+    try:
+        return repo.get_point(instrument, market.value, as_of, contract_version=resolved_version)
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Market point failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Index kind (FA-05) — market-wide index series (XU100, XU030, XBANK, XUSIN)
+#
+# No confirmed public data source yet: İş Yatırım's per-ticker HisseTekil endpoint
+# returns ok:true with an empty series for every index-code variant tried
+# (XU100, XU100.E, BIST100, "XU 100") — it does not serve index-level OHLC series.
+# Until a verified source is wired in, every index request is an honest
+# `unavailable` rather than a guess (§3.4). Tracked as a FA-05 follow-up.
+# ════════════════════════════════════════════════════════════════════════════
+
+_SUPPORTED_INDEX_CODES = {"XU100", "XU030", "XBANK", "XUSIN"}
+
+
+@router.get("/index/{code}/history")
+async def index_history(
+    code: str,
+    market: Market = Query(Market.BIST),
+    contract_version: str = Query(CONTRACT_VERSION),
+):
+    resolved_version = _resolve_contract_version(contract_version)
+    index_code = code.strip().upper()
+    detail = (
+        "No verified İş Yatırım (or other) data source for index-level history yet."
+        if index_code in _SUPPORTED_INDEX_CODES
+        else f"Unsupported index code '{index_code}'."
+    )
+    return {
+        "contract_version": resolved_version,
+        "instrument": index_code,
+        "market": market.value,
+        "kind": "index",
+        "items": [],
+        "next_cursor": None,
+        "status": "unavailable",
+        "detail": detail,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Ownership kind (FA-09) — daily foreign-ownership / free-float snapshots
+# ════════════════════════════════════════════════════════════════════════════
+
+_ownership_collection_task = None
+_ownership_collection_state = {"status": "idle", "total": 0, "completed": 0, "fetched": 0, "failed": 0, "started_at": None, "finished_at": None}
+
+
+def _ownership_repo(db_manager: DatabaseManager) -> OwnershipRepository:
+    return OwnershipRepository(db_manager)
+
+
+async def _collect_all_ownership_snapshots(db_manager: DatabaseManager) -> None:
+    """Paced daily snapshot of every active BIST ticker's ownership %.
+
+    The public company card exposes only the CURRENT percentage, so this is how
+    FA-09's history accrues — one row per ticker for today, every day this runs.
+    """
+    global _ownership_collection_state
+    from datetime import date as _date
+
+    try:
+        rows = db_manager.query("SELECT code FROM bist_companies WHERE is_active = TRUE ORDER BY code", ())
+        tickers = [row["code"].strip().upper() for row in rows if row.get("code")]
+    except Exception:
+        tickers = []
+    tickers = tickers or sorted(STATIC_BIST_CATALOG)
+    _ownership_collection_state.update({"status": "running", "total": len(tickers), "completed": 0, "fetched": 0, "failed": 0, "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
+    delay = max(0.1, float(os.getenv("ISYATIRIM_OWNERSHIP_COLLECTION_DELAY_SECONDS", "0.5")))
+    today = _date.today()
+    for ticker in tickers:
+        try:
+            payload = await asyncio.to_thread(fetch_fundamentals, ticker)
+            current = payload.get("current_valuation", {})
+            db_manager.upsert_isyatirim_ownership_snapshot(
+                ticker, today,
+                current.get("foreign_ownership_percent"),
+                current.get("free_float_percent"),
+            )
+            _ownership_collection_state["fetched"] += 1
+        except Exception as exc:  # noqa: BLE001 - one unavailable company must not stop the collection
+            logger.warning("Ownership snapshot failed for %s: %s", ticker, exc)
+            _ownership_collection_state["failed"] += 1
+        _ownership_collection_state["completed"] += 1
+        await asyncio.sleep(delay)
+    _ownership_collection_state.update({"status": "completed", "finished_at": datetime.now(timezone.utc).isoformat()})
+
+
+@router.post("/ownership/collect")
+async def collect_ownership_snapshots(db_manager: DatabaseManager = Depends(get_db_manager)):
+    """Start a paced daily ownership-snapshot collection run (FA-09)."""
+    global _ownership_collection_task
+    if _ownership_collection_task is not None and not _ownership_collection_task.done():
+        return JSONResponse(status_code=409, content={"status": "running", **_ownership_collection_state})
+    _ownership_collection_task = asyncio.create_task(_collect_all_ownership_snapshots(db_manager))
+    return {**_ownership_collection_state, "status": "started"}
+
+
+@router.get("/ownership/collection-status")
+async def ownership_collection_status():
+    return {"contract_version": CONTRACT_VERSION, **_ownership_collection_state}
+
+
+@router.post("/ownership/batch")
+async def ownership_batch(
+    request: MarketBatchRequest,
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    contract_version = _resolve_contract_version(request.contract_version)
+    repo = _ownership_repo(db_manager)
+    try:
+        items = [
+            repo.get_point(
+                instrument, request.market.value, request.as_of,
+                contract_version=contract_version,
+            )
+            for instrument in request.instruments
+        ]
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Batch ownership failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+    return {"contract_version": contract_version, "items": items}
+
+
+@router.get("/ownership/{instrument}/history")
+async def ownership_history(
+    instrument: str,
+    market: Market = Query(...),
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    limit: int = Query(100, ge=1, le=1000),
+    cursor: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    resolved_version = _resolve_contract_version(contract_version)
+    repo = _ownership_repo(db_manager)
+    try:
+        data = repo.get_history(
+            instrument, market.value, date_from, date_to, limit, cursor,
+            contract_version=resolved_version,
+        )
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Ownership history failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+    return {
+        "contract_version": resolved_version,
+        "instrument": data["instrument"],
+        "market": data["market"],
+        "kind": "ownership",
+        "items": data["items"],
+        "next_cursor": data["next_cursor"],
+    }
+
+
+@router.get("/ownership/{instrument}")
+async def ownership_point(
+    instrument: str,
+    market: Market = Query(...),
+    as_of: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    resolved_version = _resolve_contract_version(contract_version)
+    repo = _ownership_repo(db_manager)
+    try:
+        return repo.get_point(instrument, market.value, as_of, contract_version=resolved_version)
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Ownership point failed: {e}", exc_info=True)
         return _db_error(str(e))
 
 
