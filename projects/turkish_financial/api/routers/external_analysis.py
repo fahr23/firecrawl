@@ -38,6 +38,8 @@ from infrastructure.repositories.external_analysis_repository import (
 from infrastructure.repositories.fundamental_repository import FundamentalRepository
 from infrastructure.repositories.market_repository import MarketRepository
 from infrastructure.repositories.ownership_repository import OwnershipRepository
+from infrastructure.repositories.event_repository import EventRepository
+from infrastructure.repositories.corporate_action_repository import CorporateActionRepository
 from infrastructure.repositories.news_repository import NewsRepository
 from infrastructure.contracts.instrument_identity_map import STATIC_BIST_CATALOG
 from scrapers.isyatirim_market_data import build_market_history_payload, fetch_market_history
@@ -1082,6 +1084,116 @@ async def ownership_point(
     except Exception as e:  # noqa: BLE001
         logger.error(f"Ownership point failed: {e}", exc_info=True)
         return _db_error(str(e))
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Events kind (FA-07) — normalized KAP disclosure event taxonomy
+# ════════════════════════════════════════════════════════════════════════════
+
+def _event_repo(db_manager: DatabaseManager) -> EventRepository:
+    return EventRepository(db_manager)
+
+
+@router.get("/events/{instrument}/history")
+async def events_history(
+    instrument: str,
+    market: Market = Query(...),
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    limit: int = Query(100, ge=1, le=1000),
+    cursor: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    resolved_version = _resolve_contract_version(contract_version)
+    repo = _event_repo(db_manager)
+    try:
+        data = repo.get_history(
+            instrument, market.value, date_from, date_to, limit, cursor,
+            contract_version=resolved_version,
+        )
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Events history failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+    return {
+        "contract_version": resolved_version,
+        "instrument": data["instrument"],
+        "market": data["market"],
+        "kind": "events",
+        "items": data["items"],
+        "next_cursor": data["next_cursor"],
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Corporate actions kind (FA-06, CRITICAL) — back-adjustment price factors
+# ════════════════════════════════════════════════════════════════════════════
+
+def _corporate_action_repo(db_manager: DatabaseManager) -> CorporateActionRepository:
+    return CorporateActionRepository(db_manager)
+
+
+@router.post("/corporate_actions/{instrument}/detect")
+async def detect_corporate_actions(
+    instrument: str,
+    market: Market = Query(Market.BIST),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Run FA-06 detection for one ticker over its stored market history.
+
+    Idempotent — safe to re-run after new market history/events accrue."""
+    if market != Market.BIST:
+        return JSONResponse(status_code=400, content={
+            "contract_version": CONTRACT_VERSION, "instrument": instrument.upper(),
+            "market": market.value, "kind": "corporate_actions", "status": "unavailable",
+            "detail": "Corporate-action detection currently supports market=bist only.",
+        })
+    repo = _corporate_action_repo(db_manager)
+    try:
+        result = await asyncio.to_thread(repo.detect_and_persist, instrument)
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Corporate action detection failed for {instrument}: {e}", exc_info=True)
+        return _db_error(str(e))
+    return {"contract_version": CONTRACT_VERSION, **result}
+
+
+@router.get("/corporate_actions/{instrument}/history")
+async def corporate_actions_history(
+    instrument: str,
+    market: Market = Query(...),
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    limit: int = Query(100, ge=1, le=1000),
+    cursor: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    resolved_version = _resolve_contract_version(contract_version)
+    repo = _corporate_action_repo(db_manager)
+    try:
+        data = repo.get_history(
+            instrument, market.value, date_from, date_to, limit, cursor,
+            contract_version=resolved_version,
+        )
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Corporate actions history failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+    return {
+        "contract_version": resolved_version,
+        "instrument": data["instrument"],
+        "market": data["market"],
+        "kind": "corporate_actions",
+        "items": data["items"],
+        "next_cursor": data["next_cursor"],
+    }
 
 
 # ════════════════════════════════════════════════════════════════════════════

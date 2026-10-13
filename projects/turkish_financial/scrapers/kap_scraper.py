@@ -2406,6 +2406,17 @@ class KAPScraper(BaseScraper):
                 except Exception as e:
                     logger.error(f"Failed to save disclosure {disclosure_index}: {e}")
 
+                # FA-07: classify every saved disclosure into the normalized event
+                # taxonomy. Best-effort — a classification failure must not drop
+                # the disclosure itself, which is already saved above.
+                try:
+                    from domain.services.kap_event_classifier import classify
+
+                    event = classify(disc_row)
+                    self.db_manager.upsert_kap_event({**event, "stock_code": primary_code})
+                except Exception as e:
+                    logger.warning(f"FA-07 event classification failed for {disclosure_index}: {e}")
+
             disclosures.append(disc_row)
 
         return {

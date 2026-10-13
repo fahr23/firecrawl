@@ -509,6 +509,33 @@ class DatabaseManager:
                 WHERE disclosure_id IS NOT NULL
             ''').format(sql.Identifier(self.schema)))
 
+            # FA-07: normalized event classification per disclosure, one row per
+            # disclosure (idempotent on disclosure_index). A re-classification with
+            # a newer mapping_version replaces the row for that disclosure — the
+            # disclosure itself never changes, only which taxonomy mapped it.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.kap_events (
+                    id SERIAL PRIMARY KEY,
+                    stock_code VARCHAR(20),
+                    disclosure_index VARCHAR(100) NOT NULL,
+                    event_type VARCHAR(30) NOT NULL,
+                    mapping_version VARCHAR(20) NOT NULL,
+                    title TEXT,
+                    published_at TIMESTAMP,
+                    available_at TIMESTAMP,
+                    classified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(disclosure_index)
+                )
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_kap_events_stock_code
+                ON {}.kap_events(stock_code, published_at DESC)
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_kap_events_type
+                ON {}.kap_events(event_type)
+            ''').format(sql.Identifier(self.schema)))
+
             # --- KAP platform-level news (SPK/MKK/BIS announcements) -------
             # These are not company disclosures but regulatory/platform news that
             # affects whole sectors or the market. Separate table to keep company
@@ -748,6 +775,32 @@ class DatabaseManager:
                     fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (ticker, market_date)
                 )
+            ''').format(sql.Identifier(self.schema)))
+
+            # FA-06 corporate actions with back-adjustment price factors. Keyed on
+            # (ticker, ex_date, event_type) so a re-run of the detection job is
+            # idempotent; `match_status` distinguishes a verified KAP match from an
+            # unmatched share-count change (never a fabricated factor either way).
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.corporate_actions (
+                    id SERIAL PRIMARY KEY,
+                    ticker VARCHAR(20) NOT NULL,
+                    ex_date DATE NOT NULL,
+                    event_type VARCHAR(30) NOT NULL,
+                    ratio REAL,
+                    subscription_price REAL,
+                    cash_amount REAL,
+                    price_factor REAL,
+                    source_disclosure_index VARCHAR(100),
+                    method_version VARCHAR(20) NOT NULL DEFAULT '1',
+                    match_status VARCHAR(20) NOT NULL,
+                    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(ticker, ex_date, event_type)
+                )
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_corporate_actions_ticker
+                ON {}.corporate_actions(ticker, ex_date DESC)
             ''').format(sql.Identifier(self.schema)))
 
             # FA-09 daily ownership snapshots. The public company card only ever
@@ -1078,6 +1131,95 @@ class DatabaseManager:
             return True
         except Exception as e:
             logger.error(f"upsert_disclosure failed for {data.get('disclosure_id')}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def upsert_corporate_action(self, action: Dict[str, Any]) -> bool:
+        """
+        Upsert one detected corporate action (FA-06), keyed on
+        (ticker, ex_date, event_type). Idempotent: re-running detection over the
+        same range updates the row in place rather than duplicating it.
+        """
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO corporate_actions
+                       (ticker, ex_date, event_type, ratio, subscription_price,
+                        cash_amount, price_factor, source_disclosure_index,
+                        method_version, match_status)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (ticker, ex_date, event_type) DO UPDATE SET
+                       ratio = EXCLUDED.ratio,
+                       subscription_price = EXCLUDED.subscription_price,
+                       cash_amount = EXCLUDED.cash_amount,
+                       price_factor = EXCLUDED.price_factor,
+                       source_disclosure_index = EXCLUDED.source_disclosure_index,
+                       method_version = EXCLUDED.method_version,
+                       match_status = EXCLUDED.match_status,
+                       detected_at = CURRENT_TIMESTAMP""",
+                (
+                    action["ticker"].strip().upper(),
+                    action["ex_date"],
+                    action["event_type"],
+                    action.get("ratio"),
+                    action.get("subscription_price"),
+                    action.get("cash_amount"),
+                    action.get("price_factor"),
+                    action.get("source_disclosure_index"),
+                    action.get("method_version", "1"),
+                    action["match_status"],
+                ),
+            )
+            conn.commit()
+            return True
+        except Exception as exc:
+            logger.warning("Could not persist corporate action for %s %s: %s", action.get("ticker"), action.get("ex_date"), exc)
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def upsert_kap_event(self, event: Dict[str, Any]) -> bool:
+        """
+        Upsert one classified event into kap_events, keyed on disclosure_index
+        (FA-07). A re-run with the same mapping_version is idempotent; a newer
+        mapping_version replaces the prior classification for that disclosure.
+        """
+        if not event.get("source_disclosure_index"):
+            return False
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """INSERT INTO kap_events
+                       (stock_code, disclosure_index, event_type, mapping_version,
+                        title, published_at, available_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (disclosure_index) DO UPDATE SET
+                       stock_code = EXCLUDED.stock_code,
+                       event_type = EXCLUDED.event_type,
+                       mapping_version = EXCLUDED.mapping_version,
+                       title = EXCLUDED.title,
+                       published_at = EXCLUDED.published_at,
+                       available_at = EXCLUDED.available_at,
+                       classified_at = CURRENT_TIMESTAMP""",
+                (
+                    event.get("stock_code"),
+                    event["source_disclosure_index"],
+                    event["event_type"],
+                    event["mapping_version"],
+                    event.get("title"),
+                    event.get("published_at"),
+                    event.get("available_at"),
+                ),
+            )
+            conn.commit()
+            return True
+        except Exception as exc:
+            logger.warning("Could not persist KAP event for disclosure %s: %s", event.get("source_disclosure_index"), exc)
             conn.rollback()
             return False
         finally:

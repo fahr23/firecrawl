@@ -140,6 +140,7 @@ class FakeDB:
         self.companies: dict = {}
         self.disclosures: list = []
         self.news: list = []
+        self.events: list = []
         self._next_id = 1
 
     def query(self, sql, params=None):
@@ -151,6 +152,10 @@ class FakeDB:
 
     def upsert_disclosure(self, data):
         self.disclosures.append(dict(data))
+        return True
+
+    def upsert_kap_event(self, event):
+        self.events.append(dict(event))
         return True
 
     def upsert_news(self, data):
@@ -291,6 +296,24 @@ class TestScrapeAndSaveDisclosures:
         assert result["total"] == 2
         assert result["saved"] == 2
         assert len(db.disclosures) == 2
+
+    def test_disclosures_classified_into_fa07_events(self):
+        """FA-07: every saved disclosure is also classified into kap_events."""
+        scraper = _make_scraper()
+        db = FakeDB()
+        scraper.db_manager = db
+
+        async def fake_post(url, body):
+            return SAMPLE_DISCLOSURES
+
+        scraper._post_kap_api_json = fake_post
+        run(scraper.scrape_and_save_disclosures(days_back=7))
+
+        assert len(db.events) == 2
+        by_disclosure = {e["source_disclosure_index"]: e for e in db.events}
+        assert by_disclosure["1234567"]["event_type"] == "special_situation"
+        assert by_disclosure["9876543"]["event_type"] == "financial_report"
+        assert by_disclosure["9876543"]["stock_code"] == "AKBNK"
 
     def test_disclosure_fields_populated(self):
         scraper = _make_scraper()
