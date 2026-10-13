@@ -168,6 +168,47 @@ class DatabaseManager:
                     UNIQUE(index_name, company_code)
                 )
             ''').format(sql.Identifier(self.schema)))
+
+            # FA-10: dated sector/industry classification history, one row per
+            # (stock_code, valid_from) — a re-classification closes the prior
+            # row's valid_to and opens a new one, instead of overwriting it, so
+            # "classification at a past date" stays answerable.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.stock_classification_history (
+                    id SERIAL PRIMARY KEY,
+                    stock_code VARCHAR(20) NOT NULL,
+                    sector VARCHAR(100),
+                    industry VARCHAR(100),
+                    taxonomy VARCHAR(50) NOT NULL DEFAULT 'kap',
+                    valid_from DATE NOT NULL,
+                    valid_to DATE,
+                    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(stock_code, taxonomy, valid_from)
+                )
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_stock_classification_current
+                ON {}.stock_classification_history(stock_code, valid_to)
+            ''').format(sql.Identifier(self.schema)))
+
+            # FA-10: dated index-membership history, parallel to the undated
+            # bist_index_members snapshot above — a membership change closes the
+            # prior row's valid_to and opens a new one.
+            cursor.execute(sql.SQL('''
+                CREATE TABLE IF NOT EXISTS {}.index_membership_history (
+                    id SERIAL PRIMARY KEY,
+                    index_code VARCHAR(20) NOT NULL,
+                    stock_code VARCHAR(20) NOT NULL,
+                    valid_from DATE NOT NULL,
+                    valid_to DATE,
+                    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(index_code, stock_code, valid_from)
+                )
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_index_membership_current
+                ON {}.index_membership_history(index_code, valid_to)
+            ''').format(sql.Identifier(self.schema)))
             
             # TradingView Sectors table
             cursor.execute(sql.SQL('''
@@ -296,7 +337,27 @@ class DatabaseManager:
                     UNIQUE(indicator_code, date)
                 )
             ''').format(sql.Identifier(self.schema)))
-            
+
+            # FA-11: the "date" column above is the observation's reference date,
+            # not when the statistic was actually released — point-in-time macro
+            # (§3.2) needs both kept distinct. series_alias is the F23-facing name
+            # (e.g. "CPI_INDEX"); indicator_code stays the raw EVDS series code so
+            # existing rows/readers keep working untouched.
+            cursor.execute(sql.SQL('''
+                ALTER TABLE {}.tcmb_macro_data
+                    ADD COLUMN IF NOT EXISTS series_alias VARCHAR(50),
+                    ADD COLUMN IF NOT EXISTS reference_period VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS release_date DATE,
+                    ADD COLUMN IF NOT EXISTS unit VARCHAR(50),
+                    ADD COLUMN IF NOT EXISTS frequency VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS publisher VARCHAR(20),
+                    ADD COLUMN IF NOT EXISTS revision_id VARCHAR(100)
+            ''').format(sql.Identifier(self.schema)))
+            cursor.execute(sql.SQL('''
+                CREATE INDEX IF NOT EXISTS idx_tcmb_macro_alias
+                ON {}.tcmb_macro_data(series_alias, date DESC)
+            ''').format(sql.Identifier(self.schema)))
+
 
 
 
@@ -1131,6 +1192,97 @@ class DatabaseManager:
             return True
         except Exception as e:
             logger.error(f"upsert_disclosure failed for {data.get('disclosure_id')}: {e}")
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def record_stock_classification(
+        self,
+        stock_code: str,
+        sector: Optional[str],
+        industry: Optional[str],
+        as_of: Any,
+        taxonomy: str = "kap",
+    ) -> bool:
+        """
+        Record a classification observed as of `as_of` (FA-10). If the most
+        recent open row for this (stock_code, taxonomy) already has the same
+        (sector, industry), this is a no-op (repeated collection stays
+        idempotent). Otherwise the prior open row's valid_to is closed and a
+        new row opens at `as_of`.
+        """
+        code = stock_code.strip().upper()
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id, sector, industry FROM stock_classification_history
+                   WHERE stock_code = %s AND taxonomy = %s AND valid_to IS NULL
+                   ORDER BY valid_from DESC LIMIT 1""",
+                (code, taxonomy),
+            )
+            current = cursor.fetchone()
+            if current and current[1] == sector and current[2] == industry:
+                return True  # unchanged — idempotent no-op
+
+            if current:
+                cursor.execute(
+                    "UPDATE stock_classification_history SET valid_to = %s WHERE id = %s",
+                    (as_of, current[0]),
+                )
+            cursor.execute(
+                """INSERT INTO stock_classification_history
+                       (stock_code, sector, industry, taxonomy, valid_from)
+                   VALUES (%s, %s, %s, %s, %s)
+                   ON CONFLICT (stock_code, taxonomy, valid_from) DO UPDATE SET
+                       sector = EXCLUDED.sector, industry = EXCLUDED.industry""",
+                (code, sector, industry, taxonomy, as_of),
+            )
+            conn.commit()
+            return True
+        except Exception as exc:
+            logger.warning("record_stock_classification failed for %s: %s", stock_code, exc)
+            conn.rollback()
+            return False
+        finally:
+            self.return_connection(conn)
+
+    def record_index_membership(self, index_code: str, stock_code: str, as_of: Any, is_member: bool) -> bool:
+        """
+        Record `stock_code`'s membership state in `index_code` as of `as_of`
+        (FA-10). `is_member=True` opens a new row if none is currently open;
+        `is_member=False` closes the currently-open row, if any. Both
+        directions are idempotent no-ops when the state already matches.
+        """
+        idx = index_code.strip().upper()
+        code = stock_code.strip().upper()
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT id FROM index_membership_history
+                   WHERE index_code = %s AND stock_code = %s AND valid_to IS NULL""",
+                (idx, code),
+            )
+            open_row = cursor.fetchone()
+
+            if is_member and open_row is None:
+                cursor.execute(
+                    """INSERT INTO index_membership_history (index_code, stock_code, valid_from)
+                       VALUES (%s, %s, %s)
+                       ON CONFLICT (index_code, stock_code, valid_from) DO NOTHING""",
+                    (idx, code, as_of),
+                )
+            elif not is_member and open_row is not None:
+                cursor.execute(
+                    "UPDATE index_membership_history SET valid_to = %s WHERE id = %s",
+                    (as_of, open_row[0]),
+                )
+            conn.commit()
+            return True
+        except Exception as exc:
+            logger.warning("record_index_membership failed for %s/%s: %s", index_code, stock_code, exc)
             conn.rollback()
             return False
         finally:

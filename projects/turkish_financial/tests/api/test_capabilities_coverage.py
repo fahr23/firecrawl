@@ -56,7 +56,10 @@ class TestCapabilitiesCoverage:
         with patch.object(external_analysis, "_firecrawl_capabilities", _offline_firecrawl):
             body = client.get("/api/external/v1/capabilities").json()
 
-        assert set(body["coverage"].keys()) == {"fundamental", "market", "ownership", "sentiment"}
+        assert set(body["coverage"].keys()) == {
+            "fundamental", "market", "ownership", "sentiment",
+            "events", "corporate_actions", "classification",
+        }
         for entry in body["coverage"].values():
             assert entry["instruments_served"] == 0
             assert entry["earliest_as_of"] is None

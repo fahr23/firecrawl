@@ -40,6 +40,10 @@ from infrastructure.repositories.market_repository import MarketRepository
 from infrastructure.repositories.ownership_repository import OwnershipRepository
 from infrastructure.repositories.event_repository import EventRepository
 from infrastructure.repositories.corporate_action_repository import CorporateActionRepository
+from infrastructure.repositories.macro_repository import MacroRepository
+from infrastructure.repositories.classification_repository import ClassificationRepository
+from infrastructure.repositories.earnings_calendar_repository import EarningsCalendarRepository
+from infrastructure.repositories.dividend_repository import DividendRepository
 from infrastructure.repositories.news_repository import NewsRepository
 from infrastructure.contracts.instrument_identity_map import STATIC_BIST_CATALOG
 from scrapers.isyatirim_market_data import build_market_history_payload, fetch_market_history
@@ -315,6 +319,21 @@ _COVERAGE_QUERIES: Dict[str, str] = {
         FROM kap_disclosure_sentiment s JOIN kap_disclosures d ON d.id = s.disclosure_id
         WHERE d.stock_code IS NOT NULL
         GROUP BY d.stock_code
+    """,
+    "events": """
+        SELECT stock_code AS instrument, MIN(published_at) AS earliest, MAX(published_at) AS latest,
+               COUNT(*) AS observations
+        FROM kap_events WHERE stock_code IS NOT NULL GROUP BY stock_code
+    """,
+    "corporate_actions": """
+        SELECT ticker AS instrument, MIN(ex_date) AS earliest, MAX(ex_date) AS latest,
+               COUNT(*) AS observations
+        FROM corporate_actions GROUP BY ticker
+    """,
+    "classification": """
+        SELECT stock_code AS instrument, MIN(valid_from) AS earliest, MAX(valid_from) AS latest,
+               COUNT(*) AS observations
+        FROM stock_classification_history GROUP BY stock_code
     """,
 }
 
@@ -1191,6 +1210,201 @@ async def corporate_actions_history(
         "instrument": data["instrument"],
         "market": data["market"],
         "kind": "corporate_actions",
+        "items": data["items"],
+        "next_cursor": data["next_cursor"],
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Macro kind (FA-11) — EVDS core series by F23 alias
+#
+# Every alias is honestly `unavailable` today: no EVDS series code has been
+# verified against the live catalog yet (domain.services.macro_series_registry),
+# and release_date (required on every row, per §3.4) is not sourced from EVDS's
+# basic series endpoint at all. See macro_repository.py's module docstring.
+# ════════════════════════════════════════════════════════════════════════════
+
+def _macro_repo(db_manager: DatabaseManager) -> MacroRepository:
+    return MacroRepository(db_manager)
+
+
+@router.get("/macro/series")
+async def macro_series_catalog(db_manager: DatabaseManager = Depends(get_db_manager)):
+    """List every F23 macro alias this provider recognizes, with its
+    verification state — never a live upstream call, just the registry."""
+    repo = _macro_repo(db_manager)
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "provider": "tcmb-evds",
+        "items": repo.list_series(),
+    }
+
+
+@router.get("/macro/{series}/history")
+async def macro_history(
+    series: str,
+    market: Market = Query(Market.BIST),
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    limit: int = Query(100, ge=1, le=1000),
+    cursor: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    resolved_version = _resolve_contract_version(contract_version)
+    repo = _macro_repo(db_manager)
+    try:
+        data = repo.get_history(
+            series, date_from, date_to, limit, cursor,
+            contract_version=resolved_version,
+        )
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Macro history failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+    return {
+        "contract_version": resolved_version,
+        "instrument": data["series"],
+        "market": "tr",
+        "kind": "macro",
+        "items": data["items"],
+        "next_cursor": data["next_cursor"],
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Classification kind (FA-10) — dated sector/industry + index membership
+#
+# No scraper populates stock_classification_history / index_membership_history
+# yet (bist_companies.sector and bist_index_members have no writer either), so
+# every instrument reads as honestly `unclassified` and every index has an
+# empty member list today — the read/write contract shape is real and ready
+# once a classification source is wired in.
+# ════════════════════════════════════════════════════════════════════════════
+
+def _classification_repo(db_manager: DatabaseManager) -> ClassificationRepository:
+    return ClassificationRepository(db_manager)
+
+
+@router.get("/classification/{instrument}/history")
+async def classification_history(
+    instrument: str,
+    market: Market = Query(...),
+    limit: int = Query(100, ge=1, le=1000),
+    cursor: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    resolved_version = _resolve_contract_version(contract_version)
+    repo = _classification_repo(db_manager)
+    try:
+        data = repo.get_history(instrument, market.value, limit, cursor, contract_version=resolved_version)
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Classification history failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+    return {
+        "contract_version": resolved_version,
+        "instrument": data["instrument"],
+        "market": data["market"],
+        "kind": "classification",
+        "items": data["items"],
+        "next_cursor": data["next_cursor"],
+    }
+
+
+@router.get("/index/{code}/members")
+async def index_members(
+    code: str,
+    as_of: Optional[str] = Query(None),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    repo = _classification_repo(db_manager)
+    try:
+        data = await asyncio.to_thread(repo.get_index_members, code, as_of)
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Index members failed: {e}", exc_info=True)
+        return _db_error(str(e))
+    return {"contract_version": CONTRACT_VERSION, **data}
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Earnings calendar kind (FA-08) — derived from FA-02's kap_fundamentals rows
+# ════════════════════════════════════════════════════════════════════════════
+
+def _earnings_calendar_repo(db_manager: DatabaseManager) -> EarningsCalendarRepository:
+    return EarningsCalendarRepository(db_manager)
+
+
+@router.get("/earnings_calendar/{instrument}/history")
+async def earnings_calendar_history(
+    instrument: str,
+    market: Market = Query(...),
+    limit: int = Query(100, ge=1, le=1000),
+    cursor: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    resolved_version = _resolve_contract_version(contract_version)
+    repo = _earnings_calendar_repo(db_manager)
+    try:
+        data = repo.get_history(instrument, market.value, limit, cursor, contract_version=resolved_version)
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Earnings calendar history failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+    return {
+        "contract_version": resolved_version,
+        "instrument": data["instrument"],
+        "market": data["market"],
+        "kind": "earnings_calendar",
+        "items": data["items"],
+        "next_cursor": data["next_cursor"],
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Dividends kind (FA-08) — ex_date from FA-07's cash_dividend events;
+# payment_date / cash_per_share not parsed yet (needs disclosure-body tables,
+# same gap as FA-06's rights-issue/dividend price factors)
+# ════════════════════════════════════════════════════════════════════════════
+
+def _dividend_repo(db_manager: DatabaseManager) -> DividendRepository:
+    return DividendRepository(db_manager)
+
+
+@router.get("/dividends/{instrument}/history")
+async def dividends_history(
+    instrument: str,
+    market: Market = Query(...),
+    limit: int = Query(100, ge=1, le=1000),
+    cursor: Optional[str] = Query(None),
+    contract_version: str = Query(CONTRACT_VERSION),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    resolved_version = _resolve_contract_version(contract_version)
+    repo = _dividend_repo(db_manager)
+    try:
+        data = repo.get_history(instrument, market.value, limit, cursor, contract_version=resolved_version)
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Dividends history failed: {e}", exc_info=True)
+        return _db_error(str(e))
+
+    return {
+        "contract_version": resolved_version,
+        "instrument": data["instrument"],
+        "market": data["market"],
+        "kind": "dividends",
         "items": data["items"],
         "next_cursor": data["next_cursor"],
     }
