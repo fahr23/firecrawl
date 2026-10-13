@@ -32,8 +32,8 @@ class MacroSeriesSpec(NamedTuple):
     publisher: str  # "TÜİK" | "TCMB"
 
 
-# F23's fixed alias set (provider-wait-list §2 `macro` kind); FA-12 adds more
-# later. Every alias is upper-case, matching how F23 sends it.
+# F23's fixed FA-11 alias set (provider-wait-list §2 `macro` kind). Every
+# alias is upper-case, matching how F23 sends it.
 _REGISTRY: dict[str, MacroSeriesSpec] = {
     "CPI_INDEX": MacroSeriesSpec(evds_code=None, unit="index", frequency="monthly", publisher="TÜİK"),
     "POLICY_RATE": MacroSeriesSpec(evds_code=None, unit="percent", frequency="daily", publisher="TCMB"),
@@ -42,7 +42,26 @@ _REGISTRY: dict[str, MacroSeriesSpec] = {
     "GOLD_TRY_GRAM": MacroSeriesSpec(evds_code=None, unit="TRY", frequency="daily", publisher="TCMB"),
 }
 
+# FA-12 M3 additions: TL government bond yields, deposit/loan rates, REER, PPI.
+# CDS and energy (Brent, natural gas) are deliberately excluded — ADR D7 gates
+# them on confirming a source whose terms allow storage, an owner licensing
+# decision, not something to build around with a guessed source.
+_FA12_REGISTRY: dict[str, MacroSeriesSpec] = {
+    "GOV_BOND_YIELD_2Y": MacroSeriesSpec(evds_code=None, unit="percent", frequency="daily", publisher="TCMB"),
+    "GOV_BOND_YIELD_10Y": MacroSeriesSpec(evds_code=None, unit="percent", frequency="daily", publisher="TCMB"),
+    "DEPOSIT_RATE": MacroSeriesSpec(evds_code=None, unit="percent", frequency="monthly", publisher="TCMB"),
+    "LOAN_RATE": MacroSeriesSpec(evds_code=None, unit="percent", frequency="monthly", publisher="TCMB"),
+    "REER": MacroSeriesSpec(evds_code=None, unit="index", frequency="monthly", publisher="TCMB"),
+    "PPI_INDEX": MacroSeriesSpec(evds_code=None, unit="index", frequency="monthly", publisher="TÜİK"),
+    "CAPACITY_UTILIZATION": MacroSeriesSpec(evds_code=None, unit="percent", frequency="monthly", publisher="TCMB"),
+}
+_REGISTRY.update(_FA12_REGISTRY)
+
 SUPPORTED_ALIASES: tuple[str, ...] = tuple(_REGISTRY.keys())
+FA11_ALIASES: tuple[str, ...] = (
+    "CPI_INDEX", "POLICY_RATE", "USD_TRY", "EUR_TRY", "GOLD_TRY_GRAM",
+)
+FA12_ALIASES: tuple[str, ...] = tuple(_FA12_REGISTRY.keys())
 
 
 def supports_alias(alias: str) -> bool:

@@ -36,11 +36,15 @@ def make_client(db: FakeDB) -> TestClient:
 
 
 class TestSeriesCatalog:
-    def test_lists_all_five_aliases_unverified(self):
+    def test_lists_fa11_and_fa12_aliases_unverified(self):
         client = make_client(FakeDB())
         body = client.get("/api/external/v1/macro/series").json()
         aliases = {item["alias"] for item in body["items"]}
-        assert aliases == {"CPI_INDEX", "POLICY_RATE", "USD_TRY", "EUR_TRY", "GOLD_TRY_GRAM"}
+        assert aliases == {
+            "CPI_INDEX", "POLICY_RATE", "USD_TRY", "EUR_TRY", "GOLD_TRY_GRAM",
+            "GOV_BOND_YIELD_2Y", "GOV_BOND_YIELD_10Y", "DEPOSIT_RATE",
+            "LOAN_RATE", "REER", "PPI_INDEX", "CAPACITY_UTILIZATION",
+        }
         assert all(item["verified"] is False for item in body["items"])
 
 
