@@ -66,3 +66,4 @@ _local/
 
 
 apps/api/src/lib/scrape-interact/*.md
+!deploy/turkish-financial/base/BIST_TUM.csv

@@ -67,7 +67,7 @@ def make_client():
 def test_ui_and_assets_are_served():
     client, _ = make_client()
 
-    page = client.get("/")
+    page = client.get("/ui")
     script = client.get("/assets/app.js")
 
     assert page.status_code == 200

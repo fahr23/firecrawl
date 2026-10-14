@@ -1,0 +1,30 @@
+# Firecrawl runtime config for this workspace. Secrets come from the
+# `turkish-financial-secrets` Secret (POSTGRES_PASSWORD, optional PROXY_*),
+# which overlays create out of band and never commit.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: firecrawl-config
+data:
+  POSTGRES_HOST: "postgres"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "postgres"
+  POSTGRES_USER: "postgres"
+  USE_DB_AUTHENTICATION: "false"
+  REDIS_URL: "redis://redis:6379"
+  REDIS_RATE_LIMIT_URL: "redis://redis:6379"
+  NUQ_RABBITMQ_URL: "amqp://rabbitmq:5672"
+  PLAYWRIGHT_MICROSERVICE_URL: "http://playwright-service:3000/scrape"
+  HTML_TO_MARKDOWN_SERVICE_URL: "http://go-html-to-md-service:8080"
+  HOST: "0.0.0.0"
+  PORT: "3002"
+  INTERNAL_PORT: "3002"
+  EXTRACT_WORKER_PORT: "3004"
+  WORKER_PORT: "3005"
+  NUQ_WORKER_COUNT: "0"
+  ENV: "production"
+  LOGGING_LEVEL: "info"
+  # Slower start under a 1-CPU limit.
+  HARNESS_STARTUP_TIMEOUT_MS: "180000"
+  # The harness runs 5 Node processes in one pod; cap each heap.
+  NODE_OPTIONS: "--max-old-space-size=384"

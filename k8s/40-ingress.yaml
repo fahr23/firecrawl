@@ -24,7 +24,6 @@ spec:
     # -------------------------------------------------------------------------
     - firecrawl.localhost
     - api.localhost
-    - turkish.localhost
     - academic.localhost
     secretName: firecrawl-tls
   rules:
@@ -53,16 +52,6 @@ spec:
         backend:
           service:
             name: firecrawl-api
-            port:
-              number: 8000
-  - host: turkish.localhost
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: turkish-financial-api
             port:
               number: 8000
   - host: academic.localhost

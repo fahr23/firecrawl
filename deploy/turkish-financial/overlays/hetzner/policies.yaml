@@ -1,0 +1,81 @@
+# Guard rails so this workspace can never starve backtofuture-prod on the
+# shared 16 GiB node, and is reachable only from inside the cluster.
+
+# Caps the whole namespace. Sized for: always-on API + Postgres, plus the
+# collector window (Firecrawl stack at 1 replica each) and one rolling update.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: turkish-financial-quota
+spec:
+  hard:
+    requests.cpu: "1500m"
+    requests.memory: 2Gi
+    limits.cpu: "6"
+    limits.memory: 6Gi
+    persistentvolumeclaims: "2"
+    requests.storage: 20Gi
+    services.nodeports: "0"
+    services.loadbalancers: "0"
+---
+# Defaults for any container that does not declare resources.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: turkish-financial-defaults
+spec:
+  limits:
+  - type: Container
+    default:
+      memory: 128Mi
+      cpu: 200m
+    defaultRequest:
+      memory: 32Mi
+      cpu: 10m
+---
+# Private GHCR images (ghcr-pull-secret is copied from backtofuture-prod).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: default
+imagePullSecrets:
+- name: ghcr-pull-secret
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+# Firecrawl, Postgres, the API and the collector talk to each other freely.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - podSelector: {}
+---
+# backtofuture (f23) reads the API; nothing else outside this namespace can.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backtofuture-to-api
+spec:
+  podSelector:
+    matchLabels:
+      app: turkish-financial-api
+  policyTypes: ["Ingress"]
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: backtofuture-prod
+    ports:
+    - protocol: TCP
+      port: 8000

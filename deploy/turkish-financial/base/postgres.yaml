@@ -1,0 +1,110 @@
+# One small Postgres for both the finance data (database `turkish_financial`)
+# and Firecrawl's NuQ job queue (database `postgres`, created by the image).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: firecrawl-nuq-postgres
+        imagePullPolicy: IfNotPresent
+        args:
+        - "postgres"
+        - "-c"
+        - "listen_addresses=*"
+        - "-c"
+        - "shared_buffers=64MB"
+        - "-c"
+        - "effective_cache_size=192MB"
+        - "-c"
+        - "work_mem=2MB"
+        - "-c"
+        - "maintenance_work_mem=32MB"
+        - "-c"
+        - "max_connections=100"
+        - "-c"
+        - "max_wal_size=256MB"
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: POSTGRES_DB
+          value: "postgres"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: turkish-financial-secrets
+              key: POSTGRES_PASSWORD
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "25m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        # Runs once on an empty data dir, after the image's 010-nuq.sql.
+        - name: initdb
+          mountPath: /docker-entrypoint-initdb.d/020-turkish-financial.sql
+          subPath: 020-turkish-financial.sql
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "postgres"]
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "postgres"]
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: postgres-data
+      - name: initdb
+        configMap:
+          name: postgres-initdb
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+  selector:
+    app: postgres

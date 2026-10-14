@@ -1,0 +1,146 @@
+# Wakes the workspace's Firecrawl stack on a schedule, runs collections through the
+# Turkish Financial API, then scales the stack back to 0.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: collector-window
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: collector-window
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments", "deployments/scale"]
+  resourceNames:
+  - firecrawl-api
+  - playwright-service
+  - go-html-to-md-service
+  - redis
+  - rabbitmq
+  verbs: ["get", "list", "watch", "patch", "update"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: collector-window
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: collector-window
+subjects:
+- kind: ServiceAccount
+  name: collector-window
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: collector-window
+spec:
+  # Daily before BIST opens (10:00 TRT). Edit to taste, e.g. "0 7,19 * * *".
+  schedule: "0 7 * * *"
+  timeZone: "Europe/Istanbul"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 10800
+      ttlSecondsAfterFinished: 604800
+      template:
+        metadata:
+          labels:
+            app: collector-window
+            mode: collect
+        spec:
+          serviceAccountName: collector-window
+          restartPolicy: Never
+          terminationGracePeriodSeconds: 60
+          containers:
+          - name: collect
+            image: alpine/k8s:1.31.13
+            imagePullPolicy: IfNotPresent
+            command: ["bash", "/scripts/collect.sh", "collect"]
+            env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: DAYS_BACK
+              value: "2"
+            # Comma-separated BIST tickers for X/FinTwit; empty = skip social collection.
+            - name: SOCIAL_TICKERS
+              value: ""
+            - name: YOUTUBE_LIMIT_PER_CHANNEL
+              value: "10"
+            - name: ISYATIRIM_ENABLED
+              value: "true"
+            resources:
+              requests:
+                memory: "32Mi"
+                cpu: "10m"
+              limits:
+                memory: "128Mi"
+                cpu: "200m"
+            volumeMounts:
+            - name: script
+              mountPath: /scripts
+          volumes:
+          - name: script
+            configMap:
+              name: collector-window-script
+---
+# Safety net: if a collect pod is killed before its cleanup runs, this puts
+# the Firecrawl stack back to 0 within the hour.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: collector-window-sleeper
+spec:
+  schedule: "15 * * * *"
+  timeZone: "Europe/Istanbul"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app: collector-window
+            mode: sleep-if-idle
+        spec:
+          serviceAccountName: collector-window
+          restartPolicy: Never
+          containers:
+          - name: sleeper
+            image: alpine/k8s:1.31.13
+            imagePullPolicy: IfNotPresent
+            command: ["bash", "/scripts/collect.sh", "sleep-if-idle"]
+            env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            resources:
+              requests:
+                memory: "16Mi"
+                cpu: "10m"
+              limits:
+                memory: "64Mi"
+                cpu: "100m"
+            volumeMounts:
+            - name: script
+              mountPath: /scripts
+          volumes:
+          - name: script
+            configMap:
+              name: collector-window-script

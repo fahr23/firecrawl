@@ -1,0 +1,364 @@
+# Firecrawl stack used only for KAP, X and non-RSS news collection.
+# All replicas: 0 — the collector-window CronJob wakes them (1 each), runs the
+# collections, and scales them back to 0. Collection may be slow; memory is tight.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: firecrawl-api
+  labels:
+    app: firecrawl-api
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: firecrawl-api
+  template:
+    metadata:
+      labels:
+        app: firecrawl-api
+    spec:
+      initContainers:
+      - name: wait-for-deps
+        image: busybox:1.36
+        imagePullPolicy: IfNotPresent
+        command:
+        - sh
+        - -c
+        - |
+          for hp in postgres:5432 redis:6379 rabbitmq:5672 playwright-service:3000 go-html-to-md-service:8080; do
+            until nc -z "${hp%:*}" "${hp#*:}"; do echo "waiting for $hp"; sleep 2; done
+          done
+        resources:
+          requests:
+            memory: "8Mi"
+            cpu: "5m"
+          limits:
+            memory: "32Mi"
+            cpu: "50m"
+      containers:
+      - name: api
+        image: firecrawl-api
+        imagePullPolicy: IfNotPresent
+        command: ["node", "dist/src/harness.js", "--start-docker"]
+        ports:
+        - containerPort: 3002
+          name: http
+        envFrom:
+        - configMapRef:
+            name: firecrawl-config
+        - secretRef:
+            name: turkish-financial-secrets
+        resources:
+          requests:
+            memory: "768Mi"
+            cpu: "100m"
+          limits:
+            # Workers stop taking jobs above MAX_RAM (80%) of this cgroup limit,
+            # so it degrades to slower rather than OOM. ~1.25Gi is used at idle.
+            memory: "2Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /v0/health/liveness
+            port: 3002
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /v0/health/liveness
+            port: 3002
+          initialDelaySeconds: 45
+          periodSeconds: 10
+          timeoutSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: firecrawl-api
+  labels:
+    app: firecrawl-api
+spec:
+  ports:
+  - port: 3002
+    targetPort: 3002
+    name: http
+  selector:
+    app: firecrawl-api
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: playwright-service
+  labels:
+    app: playwright-service
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: playwright-service
+  template:
+    metadata:
+      labels:
+        app: playwright-service
+    spec:
+      containers:
+      - name: playwright-service
+        image: firecrawl-playwright-service
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: PORT
+          value: "3000"
+        - name: BLOCK_MEDIA
+          value: "true"
+        - name: ALLOW_LOCAL_WEBHOOKS
+          value: "false"
+        # Chromium memory scales with open pages; 2 is enough for paced KAP/X.
+        - name: MAX_CONCURRENT_PAGES
+          value: "2"
+        - name: PROXY_SERVER
+          valueFrom:
+            secretKeyRef:
+              name: turkish-financial-secrets
+              key: PROXY_SERVER
+              optional: true
+        - name: PROXY_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: turkish-financial-secrets
+              key: PROXY_USERNAME
+              optional: true
+        - name: PROXY_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: turkish-financial-secrets
+              key: PROXY_PASSWORD
+              optional: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: tmp-cache
+          mountPath: /tmp/.cache
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+      volumes:
+      - name: tmp-cache
+        emptyDir:
+          sizeLimit: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: playwright-service
+  labels:
+    app: playwright-service
+spec:
+  ports:
+  - port: 3000
+    targetPort: 3000
+    name: http
+  selector:
+    app: playwright-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-html-to-md-service
+  labels:
+    app: go-html-to-md-service
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: go-html-to-md-service
+  template:
+    metadata:
+      labels:
+        app: go-html-to-md-service
+    spec:
+      containers:
+      - name: go-html-to-md-service
+        image: firecrawl-go-html-to-md
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: PORT
+          value: "8080"
+        - name: ENV
+          value: "production"
+        resources:
+          requests:
+            memory: "16Mi"
+            cpu: "10m"
+          limits:
+            memory: "128Mi"
+            cpu: "250m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-html-to-md-service
+  labels:
+    app: go-html-to-md-service
+spec:
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  selector:
+    app: go-html-to-md-service
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels:
+    app: redis
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        imagePullPolicy: IfNotPresent
+        # Only holds per-window queue/rate-limit state: no persistence needed.
+        command:
+        - redis-server
+        - --maxmemory
+        - "96mb"
+        - --save
+        - ""
+        - --appendonly
+        - "no"
+        ports:
+        - containerPort: 6379
+          name: redis
+        resources:
+          requests:
+            memory: "16Mi"
+            cpu: "10m"
+          limits:
+            memory: "128Mi"
+            cpu: "250m"
+        readinessProbe:
+          exec:
+            command: ["redis-cli", "ping"]
+          initialDelaySeconds: 3
+          periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels:
+    app: redis
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  selector:
+    app: redis
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  labels:
+    app: rabbitmq
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+      - name: rabbitmq
+        # The management plugin is not used by Firecrawl.
+        image: rabbitmq:3-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5672
+          name: amqp
+        env:
+        # Fewer Erlang schedulers and no busy-waiting: less RAM and idle CPU.
+        - name: RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS
+          value: "+S 1:1 +A 2 +sbwt none +sbwtdcpu none +sbwtdio none"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "384Mi"
+            cpu: "500m"
+        # rabbitmq-diagnostics starts a second Erlang VM per probe; TCP is enough.
+        readinessProbe:
+          tcpSocket:
+            port: 5672
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 5672
+          initialDelaySeconds: 30
+          periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  labels:
+    app: rabbitmq
+spec:
+  ports:
+  - port: 5672
+    targetPort: 5672
+    name: amqp
+  selector:
+    app: rabbitmq

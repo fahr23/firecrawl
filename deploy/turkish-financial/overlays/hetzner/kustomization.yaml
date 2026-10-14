@@ -1,0 +1,34 @@
+# Production workspace on the Hetzner k3s node (f23).
+#
+# Not exposed to the internet: no Ingress, no NodePort. Only pods in the
+# `backtofuture-prod` namespace may call the API:
+#   http://turkish-financial-api.turkish-financial-prod.svc.cluster.local:8000/api/external/v1
+#
+# One-time setup and deploy: see ../../README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: turkish-financial-prod
+
+resources:
+- namespace.yaml
+- policies.yaml
+- ../../base
+
+# Built for linux/amd64 by ../../build-push.sh <tag>.
+images:
+- name: turkish-financial-api
+  newName: ghcr.io/fahr23/turkish-financial-api
+  newTag: 9a7b36d6d
+- name: firecrawl-api
+  newName: ghcr.io/fahr23/firecrawl-api
+  newTag: 9a7b36d6d
+- name: firecrawl-playwright-service
+  newName: ghcr.io/fahr23/firecrawl-playwright-service
+  newTag: 9a7b36d6d
+- name: firecrawl-go-html-to-md
+  newName: ghcr.io/fahr23/firecrawl-go-html-to-md
+  newTag: 9a7b36d6d
+- name: firecrawl-nuq-postgres
+  newName: ghcr.io/fahr23/firecrawl-nuq-postgres
+  newTag: 9a7b36d6d

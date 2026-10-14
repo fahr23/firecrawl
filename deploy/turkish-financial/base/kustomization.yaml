@@ -1,0 +1,28 @@
+# Turkish Financial workspace: the finance API plus its own scale-to-zero
+# Firecrawl stack. Overlays set the namespace, images and cluster policies:
+#   overlays/local    OrbStack dev cluster   -> namespace turkish-financial
+#   overlays/hetzner  production k3s (f23)   -> namespace turkish-financial-prod
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+- pairs:
+    app.kubernetes.io/part-of: turkish-financial
+
+resources:
+- config.yaml
+- postgres.yaml
+- finance-api.yaml
+- firecrawl.yaml
+- collector-window.yaml
+
+configMapGenerator:
+- name: bist-catalog
+  files:
+  - BIST_TUM.csv
+- name: collector-window-script
+  files:
+  - collect.sh=collector-window.sh
+- name: postgres-initdb
+  literals:
+  - 020-turkish-financial.sql=CREATE DATABASE turkish_financial;

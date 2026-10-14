@@ -1,0 +1,51 @@
+# Local OrbStack dev workspace.
+#   kubectl --context orbstack apply -k deploy/turkish-financial/overlays/local
+#   API: http://localhost:30080 or http://turkish.localhost:32080  (in-cluster: turkish-financial-api.turkish-financial.svc:8000)
+#
+# Images are the arm64 builds skaffold/docker compose make from this repo.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: turkish-financial
+
+resources:
+- namespace.yaml
+- ingress.yaml
+- ../../base
+
+patches:
+- target:
+    kind: Service
+    name: turkish-financial-api
+  patch: |-
+    - op: add
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30080
+
+images:
+- name: turkish-financial-api
+  newName: firecrawl-turkish-financial-api
+  newTag: latest
+- name: firecrawl-api
+  newName: ghcr.io/firecrawl/firecrawl
+  newTag: latest
+- name: firecrawl-playwright-service
+  newName: ghcr.io/firecrawl/playwright-service
+  newTag: latest
+- name: firecrawl-go-html-to-md
+  newName: ghcr.io/firecrawl/go-html-to-md-service
+  newTag: latest
+- name: firecrawl-nuq-postgres
+  newName: ghcr.io/firecrawl/nuq-postgres
+  newTag: latest
+
+# Dev-only password; production creates its Secret out of band.
+secretGenerator:
+- name: turkish-financial-secrets
+  options:
+    disableNameSuffixHash: true
+  literals:
+  - POSTGRES_PASSWORD=postgres
