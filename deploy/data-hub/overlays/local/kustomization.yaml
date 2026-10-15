@@ -1,12 +1,12 @@
 # Local OrbStack dev workspace.
-#   kubectl --context orbstack apply -k deploy/turkish-financial/overlays/local
-#   API: http://localhost:30080 or http://turkish.localhost:32080  (in-cluster: turkish-financial-api.turkish-financial.svc:8000)
+#   kubectl --context orbstack apply -k deploy/data-hub/overlays/local
+#   API: http://localhost:30080 or http://data-hub.localhost:32080  (in-cluster: data-hub-api.data-hub.svc:8000)
 #
 # Images are the arm64 builds skaffold/docker compose make from this repo.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: turkish-financial
+namespace: data-hub
 
 resources:
 - namespace.yaml
@@ -16,7 +16,7 @@ resources:
 patches:
 - target:
     kind: Service
-    name: turkish-financial-api
+    name: data-hub-api
   patch: |-
     - op: add
       path: /spec/type
@@ -26,7 +26,7 @@ patches:
       value: 30080
 
 images:
-- name: turkish-financial-api
+- name: data-hub-api
   newName: firecrawl-turkish-financial-api
   newTag: latest
 - name: firecrawl-api
@@ -44,7 +44,7 @@ images:
 
 # Dev-only password; production creates its Secret out of band.
 secretGenerator:
-- name: turkish-financial-secrets
+- name: data-hub-secrets
   options:
     disableNameSuffixHash: true
   literals:

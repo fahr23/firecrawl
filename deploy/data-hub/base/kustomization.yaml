@@ -1,13 +1,13 @@
-# Turkish Financial workspace: the finance API plus its own scale-to-zero
+# Data Hub workspace: the finance API plus its own scale-to-zero
 # Firecrawl stack. Overlays set the namespace, images and cluster policies:
-#   overlays/local    OrbStack dev cluster   -> namespace turkish-financial
-#   overlays/hetzner  production k3s (f23)   -> namespace turkish-financial
+#   overlays/local    OrbStack dev cluster   -> namespace data-hub
+#   overlays/hetzner  production k3s (f23)   -> namespace data-hub
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 labels:
 - pairs:
-    app.kubernetes.io/part-of: turkish-financial
+    app.kubernetes.io/part-of: data-hub
 
 resources:
 - config.yaml

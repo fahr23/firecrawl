@@ -1,15 +1,15 @@
-# Turkish Financial workspace
+# Data Hub workspace
 
-The Turkish Financial API with its own Firecrawl stack, in its own namespace.
+The Data Hub API with its own Firecrawl stack, in its own namespace.
 
 | Cluster | Context | Namespace | API |
 |---|---|---|---|
-| Local (OrbStack) | `orbstack` | `turkish-financial` | `http://localhost:30080`, `http://turkish.localhost:32080` |
-| Production (Hetzner k3s, node f23) | `hetzner-production` | `turkish-financial` | in-cluster only (see below) |
+| Local (OrbStack) | `orbstack` | `data-hub` | `http://localhost:30080`, `http://data-hub.localhost:32080` |
+| Production (Hetzner k3s, node f23) | `hetzner-production` | `data-hub` | in-cluster only (see below) |
 
 ## How it runs
 
-- **Always on:** `turkish-financial-api` and `postgres` (≈0.3 GiB used). They serve all
+- **Always on:** `data-hub-api` and `postgres` (≈0.3 GiB used). They serve all
   `GET` endpoints from stored data.
 - **Scaled to 0:** `firecrawl-api`, `playwright-service`, `go-html-to-md-service`, `redis`,
   `rabbitmq`. The `collector-window` CronJob (daily 07:00 Europe/Istanbul) wakes them
@@ -23,12 +23,12 @@ The Turkish Financial API with its own Firecrawl stack, in its own namespace.
 ## Calling it from backtofuture (f23)
 
 ```
-http://turkish-financial-api.turkish-financial.svc.cluster.local:8000/api/external/v1
+http://data-hub-api.data-hub.svc.cluster.local:8000/api/external/v1
 ```
 
 Production has no Ingress and no NodePort. NetworkPolicies allow ingress to the API
 only from `app: strategy-management` pods in `backtofuture-prod` (and from within this
-namespace). The namespace is `turkish-financial` on both clusters, so F23's
+namespace). The namespace is `data-hub` on both clusters, so F23's
 `EXTERNAL_ANALYSIS_API_URL` is the same in every overlay. Endpoints are
 documented in `backtofuture/docs/CLIENT_GUIDE.md`; replace its `localhost:8000` base.
 
@@ -37,19 +37,19 @@ documented in `backtofuture/docs/CLIENT_GUIDE.md`; replace its `localhost:8000` 
 Local (arm64 images built by skaffold / docker compose from this repo):
 
 ```
-kubectl --context orbstack apply -k deploy/turkish-financial/overlays/local
+kubectl --context orbstack apply -k deploy/data-hub/overlays/local
 ```
 
 Production:
 
 ```
-deploy/turkish-financial/build-push.sh <tag>     # linux/amd64 images -> ghcr.io/fahr23 (private)
+deploy/data-hub/build-push.sh <tag>     # linux/amd64 images -> ghcr.io/fahr23 (private)
 # set <tag> in overlays/hetzner/kustomization.yaml
-deploy/turkish-financial/deploy-hetzner.sh
+deploy/data-hub/deploy-hetzner.sh
 ```
 
 `deploy-hetzner.sh` creates the namespace, copies `ghcr-pull-secret` from
-`backtofuture-prod`, generates `turkish-financial-secrets` (random Postgres password,
+`backtofuture-prod`, generates `data-hub-secrets` (random Postgres password,
 never committed) on first run, and applies the overlay. The namespace has a
 ResourceQuota (2 GiB requests / 6 GiB limits) and the same Pod Security level as
 `backtofuture-prod`.

@@ -47,7 +47,7 @@ spec:
         - configMapRef:
             name: firecrawl-config
         - secretRef:
-            name: turkish-financial-secrets
+            name: data-hub-secrets
         resources:
           requests:
             memory: "768Mi"
@@ -123,19 +123,19 @@ spec:
         - name: PROXY_SERVER
           valueFrom:
             secretKeyRef:
-              name: turkish-financial-secrets
+              name: data-hub-secrets
               key: PROXY_SERVER
               optional: true
         - name: PROXY_USERNAME
           valueFrom:
             secretKeyRef:
-              name: turkish-financial-secrets
+              name: data-hub-secrets
               key: PROXY_USERNAME
               optional: true
         - name: PROXY_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: turkish-financial-secrets
+              name: data-hub-secrets
               key: PROXY_PASSWORD
               optional: true
         resources:

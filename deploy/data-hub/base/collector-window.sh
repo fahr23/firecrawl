@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Collector window for the Turkish Financial workspace.
+# Collector window for the Data Hub workspace.
 #
 #   collect.sh collect        wake the Firecrawl stack, run Firecrawl-backed
 #                             collections, put the stack back to 0, then run the
@@ -9,7 +9,7 @@
 set -uo pipefail
 
 NS="${POD_NAMESPACE:?POD_NAMESPACE is required}"
-API="${FINANCE_API_URL:-http://turkish-financial-api:8000}"
+API="${FINANCE_API_URL:-http://data-hub-api:8000}"
 # Dependencies first; firecrawl-api's init containers wait for them anyway.
 DEPS="redis rabbitmq go-html-to-md-service playwright-service"
 STACK="firecrawl-api $DEPS"

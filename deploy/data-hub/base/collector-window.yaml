@@ -1,5 +1,5 @@
 # Wakes the workspace's Firecrawl stack on a schedule, runs collections through the
-# Turkish Financial API, then scales the stack back to 0.
+# Data Hub API, then scales the stack back to 0.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

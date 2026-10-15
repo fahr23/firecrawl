@@ -6,7 +6,7 @@
 apiVersion: v1
 kind: ResourceQuota
 metadata:
-  name: turkish-financial-quota
+  name: data-hub-quota
 spec:
   hard:
     requests.cpu: "1500m"
@@ -22,7 +22,7 @@ spec:
 apiVersion: v1
 kind: LimitRange
 metadata:
-  name: turkish-financial-defaults
+  name: data-hub-defaults
 spec:
   limits:
   - type: Container
@@ -70,7 +70,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: turkish-financial-api
+      app: data-hub-api
   policyTypes: ["Ingress"]
   ingress:
   - from:

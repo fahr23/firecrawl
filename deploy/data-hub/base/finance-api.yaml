@@ -1,20 +1,20 @@
-# The Turkish Financial API: always on, serves stored data to clients
-# (e.g. backtofuture) at http://turkish-financial-api.<namespace>.svc:8000.
+# The Data Hub API: always on, serves stored data to clients
+# (e.g. backtofuture) at http://data-hub-api.<namespace>.svc:8000.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: turkish-financial-api
+  name: data-hub-api
   labels:
-    app: turkish-financial-api
+    app: data-hub-api
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: turkish-financial-api
+      app: data-hub-api
   template:
     metadata:
       labels:
-        app: turkish-financial-api
+        app: data-hub-api
     spec:
       initContainers:
       - name: wait-for-postgres
@@ -29,8 +29,8 @@ spec:
             memory: "32Mi"
             cpu: "50m"
       containers:
-      - name: turkish-financial-api
-        image: turkish-financial-api
+      - name: data-hub-api
+        image: data-hub-api
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
@@ -51,7 +51,7 @@ spec:
         - name: APP_DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: turkish-financial-secrets
+              name: data-hub-secrets
               key: POSTGRES_PASSWORD
         # Legacy DB_* names still read by older modules.
         - name: DB_HOST
@@ -65,7 +65,7 @@ spec:
         - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: turkish-financial-secrets
+              name: data-hub-secrets
               key: POSTGRES_PASSWORD
         - name: DB_SCHEMA
           value: "turkish_financial"
@@ -74,7 +74,7 @@ spec:
         - name: TCMB_EVDS_API_KEY
           valueFrom:
             secretKeyRef:
-              name: turkish-financial-secrets
+              name: data-hub-secrets
               key: TCMB_EVDS_API_KEY
               optional: true
         - name: BIST_CATALOG_PATH
@@ -116,13 +116,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: turkish-financial-api
+  name: data-hub-api
   labels:
-    app: turkish-financial-api
+    app: data-hub-api
 spec:
   ports:
   - port: 8000
     targetPort: 8000
     name: http
   selector:
-    app: turkish-financial-api
+    app: data-hub-api

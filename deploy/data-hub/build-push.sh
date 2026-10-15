@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build the Turkish Financial workspace images for the Hetzner node (linux/amd64)
+# Build the Data Hub workspace images for the Hetzner node (linux/amd64)
 # from this fork and push them to GHCR as private packages.
 #
-#   deploy/turkish-financial/build-push.sh [TAG]     (default TAG: git short SHA)
+#   deploy/data-hub/build-push.sh [TAG]     (default TAG: git short SHA)
 #
 # Then set the same TAG in overlays/hetzner/kustomization.yaml.
 set -euo pipefail

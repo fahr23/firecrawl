@@ -2,13 +2,13 @@
 #
 # Not exposed to the internet: no Ingress, no NodePort. Only `app: strategy-management`
 # pods in the `backtofuture-prod` namespace may call the API:
-#   http://turkish-financial-api.turkish-financial.svc.cluster.local:8000/api/external/v1
+#   http://data-hub-api.data-hub.svc.cluster.local:8000/api/external/v1
 #
 # One-time setup and deploy: see ../../README.md.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: turkish-financial
+namespace: data-hub
 
 resources:
 - namespace.yaml
@@ -17,18 +17,18 @@ resources:
 
 # Built for linux/amd64 by ../../build-push.sh <tag>.
 images:
-- name: turkish-financial-api
+- name: data-hub-api
   newName: ghcr.io/fahr23/turkish-financial-api
-  newTag: 9a7b36d6d
+  newTag: 1eef6f7cf
 - name: firecrawl-api
   newName: ghcr.io/fahr23/firecrawl-api
-  newTag: 9a7b36d6d
+  newTag: 1eef6f7cf
 - name: firecrawl-playwright-service
   newName: ghcr.io/fahr23/firecrawl-playwright-service
-  newTag: 9a7b36d6d
+  newTag: 1eef6f7cf
 - name: firecrawl-go-html-to-md
   newName: ghcr.io/fahr23/firecrawl-go-html-to-md
-  newTag: 9a7b36d6d
+  newTag: 1eef6f7cf
 - name: firecrawl-nuq-postgres
   newName: ghcr.io/fahr23/firecrawl-nuq-postgres
-  newTag: 9a7b36d6d
+  newTag: 1eef6f7cf

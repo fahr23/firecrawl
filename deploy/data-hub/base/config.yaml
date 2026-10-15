@@ -1,5 +1,5 @@
 # Firecrawl runtime config for this workspace. Secrets come from the
-# `turkish-financial-secrets` Secret (POSTGRES_PASSWORD, optional PROXY_*),
+# `data-hub-secrets` Secret (POSTGRES_PASSWORD, optional PROXY_*),
 # which overlays create out of band and never commit.
 apiVersion: v1
 kind: ConfigMap

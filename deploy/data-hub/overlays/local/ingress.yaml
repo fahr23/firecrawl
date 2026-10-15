@@ -1,17 +1,17 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: turkish-financial
+  name: data-hub
 spec:
   ingressClassName: nginx
   rules:
-  - host: turkish.localhost
+  - host: data-hub.localhost
     http:
       paths:
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: turkish-financial-api
+            name: data-hub-api
             port:
               number: 8000

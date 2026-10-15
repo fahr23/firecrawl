@@ -41,7 +41,7 @@ Record which fallback succeeded without logging credentials or proxy URLs.
 
 ## Kubernetes workspace
 
-The finance API runs in its own workspace, `deploy/turkish-financial/` (read its
+The finance API runs in its own workspace, `deploy/data-hub/` (read its
 README first). It no longer lives in the shared `k8s/` Firecrawl manifests.
 
 - `base/`: finance API, one Postgres (`turkish_financial` DB + Firecrawl's NuQ DB), and
@@ -49,13 +49,13 @@ README first). It no longer lives in the shared `k8s/` Firecrawl manifests.
   at **replicas: 0**. The `collector-window` CronJob (07:00 Europe/Istanbul) wakes the
   stack, posts to the finance collect endpoints, and scales it back to 0;
   `collector-window-sleeper` is the hourly safety net. Limits are deliberately tight.
-- `overlays/local`: OrbStack context `orbstack`, namespace `turkish-financial`,
-  `localhost:30080` and `turkish.localhost:32080`, arm64 images built by skaffold.
+- `overlays/local`: OrbStack context `orbstack`, namespace `data-hub`,
+  `localhost:30080` and `data-hub.localhost:32080`, arm64 images built by skaffold.
 - `overlays/hetzner`: context `hetzner-production` (single amd64 node `f23`), namespace
-  `turkish-financial`, private `ghcr.io/fahr23/*` images, ResourceQuota, PSA
+  `data-hub`, private `ghcr.io/fahr23/*` images, ResourceQuota, PSA
   baseline, default-deny NetworkPolicies; only `app: strategy-management` pods in
   `backtofuture-prod` may call
-  `turkish-financial-api.turkish-financial.svc.cluster.local:8000`. No Ingress.
+  `data-hub-api.data-hub.svc.cluster.local:8000`. No Ingress.
 - Ship to production with `build-push.sh <tag>` (amd64) then `deploy-hetzner.sh`.
 
 Gotchas: base Firecrawl env vars `NUM_WORKERS_PER_QUEUE`, `MAX_CONCURRENT_JOBS`,
