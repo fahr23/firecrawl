@@ -86,6 +86,10 @@ spec:
             # KAP financial statements per daily run (Firecrawl-backed, slow).
             - name: FUNDAMENTAL_MAX_INSTRUMENTS
               value: "20"
+            # ~1-2.5 min per ticker observed; 30 min cut runs short and put Firecrawl
+            # to sleep under the remaining tickers. Fits activeDeadlineSeconds (3h).
+            - name: FUNDAMENTAL_TIMEOUT_SECONDS
+              value: "3600"
             # Sessions of market history re-fetched per run (overlap = idempotent).
             - name: MARKET_DAYS
               value: "7"
