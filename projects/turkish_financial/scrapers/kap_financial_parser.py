@@ -566,3 +566,54 @@ def derive_period(year: Any, quarter: Any = None) -> str:
     if q in {"1", "2", "3", "4"}:
         return f"{year_str}-Q{q}"
     return year_str
+
+
+# ── disclosure-page metadata (FA-02 point-in-time + units) ────────────────────
+# Verified on a live KAP financial-report page (/tr/Bildirim/1598405, 2026-10-15):
+#   rawHtml:  "publishDate":"2026.04.28 20:12:13"  (Istanbul time; the two other
+#             timestamps on the page are signatory e-signature times, not publish)
+#   markdown: | Sunum Para Birimi | 1.000 TL |      (presentation unit: thousands)
+#   markdown: Cari Dönem<br>31.03.2026               (current period end)
+_PUBLISH_DATE_RE = re.compile(r'publishDate\\?"\s*:\s*\\?"(\d{4}\.\d{2}\.\d{2} \d{2}:\d{2}:\d{2})')
+_PRESENTATION_UNIT_RE = re.compile(r"Sunum Para Birimi\s*\|\s*([\d.]*)\s*([A-Za-zÇĞİÖŞÜçğıöşü]{2,4})\s*\|")
+_PERIOD_END_RE = re.compile(r"Cari\s+D[öo]nem(?:<br>|\s|\\n)+(\d{2})\.(\d{2})\.(\d{4})")
+_ISTANBUL_UTC_OFFSET_HOURS = 3  # Türkiye has stayed on UTC+3 year-round since 2016
+
+
+def extract_statement_meta(markdown: str, raw_html: str = "") -> Dict[str, Any]:
+    """Publish time (UTC), presentation unit and period end of one KAP financial report.
+
+    Keys are present only when found on the page — absence is honest, never guessed:
+    ``published_at`` (aware UTC datetime), ``unit_multiplier`` (1 for TL, 1000 for
+    "1.000 TL"), ``currency`` ("TRY" for TL, else the code shown), ``period_end`` (date).
+    """
+    from datetime import date, datetime, timedelta, timezone
+
+    meta: Dict[str, Any] = {}
+    m = _PUBLISH_DATE_RE.search(raw_html or "")
+    if m:
+        local = datetime.strptime(m.group(1), "%Y.%m.%d %H:%M:%S")
+        meta["published_at"] = (local - timedelta(hours=_ISTANBUL_UTC_OFFSET_HOURS)).replace(tzinfo=timezone.utc)
+    m = _PRESENTATION_UNIT_RE.search(markdown or "")
+    if m:
+        digits = m.group(1).replace(".", "")
+        meta["unit_multiplier"] = int(digits) if digits else 1
+        code = m.group(2).upper()
+        meta["currency"] = "TRY" if code in {"TL", "TRY"} else code
+    m = _PERIOD_END_RE.search(markdown or "")
+    if m:
+        day, month, year = (int(g) for g in m.groups())
+        meta["period_end"] = date(year, month, day)
+    return meta
+
+
+def scale_facts(facts: Dict[str, Any], multiplier: Optional[int]) -> Dict[str, Any]:
+    """Convert facts presented in units of `multiplier` (e.g. thousands) to whole units.
+
+    Every canonical key is a currency amount; shares_outstanding is read from paid-in
+    capital, which at BIST's 1 TL nominal share value equals the share count in TL.
+    """
+    if not multiplier or multiplier == 1:
+        return dict(facts)
+    return {k: (v * multiplier if isinstance(v, (int, float)) and not isinstance(v, bool) else v)
+            for k, v in facts.items()}

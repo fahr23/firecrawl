@@ -1361,7 +1361,8 @@ class KAPScraper(BaseScraper):
         return None
 
     async def fetch_financial_statement_facts(
-        self, disclosure_index: Any, pd_oid: Optional[str] = None
+        self, disclosure_index: Any, pd_oid: Optional[str] = None,
+        meta: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
         Fetch one financial-report's (current, prior) canonical facts.
@@ -1374,16 +1375,19 @@ class KAPScraper(BaseScraper):
         .xlsx path when the page yields nothing. Returns ({}, {}) when both fail.
         """
         from scrapers.kap_financial_parser import (
+            extract_statement_meta,
             parse_financial_table_markdown,
             parse_financial_table_xlsx,
             normalize_facts,
         )
 
+        # `meta`, when given, is filled with the page's publish time, presentation
+        # unit and period end (see extract_statement_meta).
         url = f"{self.BASE_URL}/tr/Bildirim/{disclosure_index}"
         for proxy in self.KAP_FIRECRAWL_PROXIES:
             try:
                 result = await self.scrape_url(
-                    url, formats=["markdown"], proxy=proxy, only_main_content=False,
+                    url, formats=["markdown", "rawHtml"], proxy=proxy, only_main_content=False,
                     wait_for=6000, timeout=90000,
                     location={"country": "TR", "languages": ["tr-TR", "tr"]},
                 )
@@ -1391,8 +1395,11 @@ class KAPScraper(BaseScraper):
                     continue
                 data = result.get("data") or {}
                 md = data.get("markdown") if isinstance(data, dict) else getattr(data, "markdown", None)
+                raw = data.get("rawHtml") if isinstance(data, dict) else getattr(data, "rawHtml", None)
                 current, prior = parse_financial_table_markdown(md or "")
                 if current:
+                    if meta is not None:
+                        meta.update(extract_statement_meta(md or "", raw or ""))
                     return current, prior
             except Exception as e:
                 logger.debug(f"FR markdown fetch (proxy={proxy}) failed for {disclosure_index}: {e}")
@@ -1443,6 +1450,8 @@ class KAPScraper(BaseScraper):
         market: Optional[Dict[str, Any]] = None,
         consolidation: str = "consolidated",
         period_end: Optional[Any] = None,
+        published_at: Optional[Any] = None,
+        available_at: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Parse → analyze → persist one instrument/period financial statement.
@@ -1466,7 +1475,9 @@ class KAPScraper(BaseScraper):
         saved = False
         if self.db_manager is not None:
             try:
-                published_at = self._lookup_published_at(disclosure_index)
+                published_at = published_at or self._lookup_published_at(disclosure_index)
+                # KAP disclosures are public the moment they are published.
+                available_at = available_at or published_at
                 revision_id = f"kap:{disclosure_index}" if disclosure_index else None
                 repo = FundamentalRepository(self.db_manager)
                 repo.upsert_statement(
@@ -1481,6 +1492,7 @@ class KAPScraper(BaseScraper):
                     consolidation=consolidation,
                     revision_id=revision_id,
                     published_at=published_at,
+                    available_at=available_at,
                     period_end=period_end,
                 )
                 repo.upsert_fundamentals(
@@ -1495,6 +1507,7 @@ class KAPScraper(BaseScraper):
                     consolidation=consolidation,
                     revision_id=revision_id,
                     published_at=published_at,
+                    available_at=available_at,
                     period_end=period_end,
                 )
                 saved = True
@@ -1567,6 +1580,7 @@ class KAPScraper(BaseScraper):
             STATIC_MEMBER_OID_MAP,
             resolve_member_oid,
         )
+        from scrapers.kap_financial_parser import scale_facts
 
         if not instruments:
             instruments = sorted(STATIC_MEMBER_OID_MAP.keys())
@@ -1593,8 +1607,9 @@ class KAPScraper(BaseScraper):
 
             for member in all_members:
                 disclosure_index = member.get("disclosureIndex")
+                meta: Dict[str, Any] = {}
                 current_labels, prior_labels = await self.fetch_financial_statement_facts(
-                    disclosure_index, pd_oid=member.get("pdOid")
+                    disclosure_index, pd_oid=member.get("pdOid"), meta=meta
                 )
                 if not current_labels:
                     failed.append({
@@ -1603,6 +1618,15 @@ class KAPScraper(BaseScraper):
                         "reason": "no_parsable_facts",
                     })
                     continue
+
+                # Contract amounts are whole currency units; KAP presents most statements
+                # in thousands. An unknown unit could be off by 1000x, so skip, never guess.
+                multiplier = meta.get("unit_multiplier")
+                if not multiplier:
+                    failed.append({"stock_code": code, "disclosure_index": disclosure_index, "reason": "unit_unknown"})
+                    continue
+                current_labels = scale_facts(current_labels, multiplier)
+                prior_labels = scale_facts(prior_labels, multiplier) if prior_labels else prior_labels
 
                 period_code = member.get("period") or self._ANNUAL_PERIOD
                 is_annual = period_code == self._ANNUAL_PERIOD
@@ -1616,10 +1640,12 @@ class KAPScraper(BaseScraper):
                     prior_statement=prior_labels or None,
                     company_name=member.get("title"),
                     fiscal_period="annual" if is_annual else "interim",
-                    currency="TRY",
+                    currency=meta.get("currency", "TRY"),
                     reporting_standard="TFRS",
                     disclosure_index=str(disclosure_index) if disclosure_index is not None else None,
                     market=market_data.get(code),
+                    period_end=meta.get("period_end"),
+                    published_at=meta.get("published_at"),
                 )
                 (processed if result["facts"] else failed).append(
                     result if result["facts"]
