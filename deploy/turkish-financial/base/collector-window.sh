@@ -48,6 +48,22 @@ post() {
   esac
 }
 
+# wait_until_done NAME STATUS_PATH TIMEOUT_SECONDS: poll a background run's status.
+wait_until_done() {
+  local name="$1" path="$2" timeout="$3" waited=0 status
+  while [ "$waited" -lt "$timeout" ]; do
+    status=$(curl -sS --max-time 10 "$API$path" | jq -r '.status // empty' 2>/dev/null)
+    if [ "$status" != "running" ]; then
+      log "<- $name finished: $(curl -sS --max-time 10 "$API$path" | head -c 500)"
+      return 0
+    fi
+    sleep 30
+    waited=$((waited + 30))
+  done
+  log "!! $name still running after ${timeout}s; leaving it to finish without Firecrawl"
+  failures=$((failures + 1))
+}
+
 collect() {
   local days="${DAYS_BACK:-2}"
 
@@ -65,6 +81,12 @@ collect() {
       post "social sentiment" /api/external/v1/social-sentiment/collect \
         "{\"tickers\": $tickers, \"days_back\": $days, \"limit_per_ticker\": ${SOCIAL_LIMIT_PER_TICKER:-20}}" 1800
     fi
+    # KAP financial statements need Firecrawl, so they must finish before sleep.
+    # Bounded batch per day (never-collected tickers first); coverage accrues.
+    post "KAP fundamentals" /api/external/v1/fundamental/collect \
+      "{\"max_instruments\": ${FUNDAMENTAL_MAX_INSTRUMENTS:-20}}" 60
+    wait_until_done "KAP fundamentals" /api/external/v1/fundamental/collection-status \
+      "${FUNDAMENTAL_TIMEOUT_SECONDS:-1800}"
   else
     log "Firecrawl stack did not become ready; skipping Firecrawl-backed collections"
     failures=$((failures + 1))
@@ -81,6 +103,12 @@ collect() {
     # GET /api/external/v1/isyatirim/fundamentals/collection-status for progress.
     post "İş Yatırım fundamentals" /api/external/v1/isyatirim/fundamentals/collect \
       '{"force": false}' 60
+    # Market history for the whole universe (+ corporate-action detection), so
+    # point reads never trigger a fetch; poll .../market/collection-status.
+    post "BIST market history" /api/external/v1/market/collect \
+      "{\"days\": ${MARKET_DAYS:-7}}" 60
+    # Daily ownership snapshot; history accrues one row per run.
+    post "ownership snapshots" /api/external/v1/ownership/collect '{}' 60
   fi
 
   log "done with $failures failure(s)"

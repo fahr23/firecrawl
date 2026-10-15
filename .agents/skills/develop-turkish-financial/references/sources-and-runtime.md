@@ -52,9 +52,10 @@ README first). It no longer lives in the shared `k8s/` Firecrawl manifests.
 - `overlays/local`: OrbStack context `orbstack`, namespace `turkish-financial`,
   `localhost:30080` and `turkish.localhost:32080`, arm64 images built by skaffold.
 - `overlays/hetzner`: context `hetzner-production` (single amd64 node `f23`), namespace
-  `turkish-financial-prod`, private `ghcr.io/fahr23/*` images, ResourceQuota, PSA
-  baseline, default-deny NetworkPolicies; only `backtofuture-prod` may call
-  `turkish-financial-api.turkish-financial-prod.svc.cluster.local:8000`. No Ingress.
+  `turkish-financial`, private `ghcr.io/fahr23/*` images, ResourceQuota, PSA
+  baseline, default-deny NetworkPolicies; only `app: strategy-management` pods in
+  `backtofuture-prod` may call
+  `turkish-financial-api.turkish-financial.svc.cluster.local:8000`. No Ingress.
 - Ship to production with `build-push.sh <tag>` (amd64) then `deploy-hetzner.sh`.
 
 Gotchas: base Firecrawl env vars `NUM_WORKERS_PER_QUEUE`, `MAX_CONCURRENT_JOBS`,

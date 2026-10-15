@@ -7,7 +7,7 @@
 set -euo pipefail
 
 CTX="${KUBE_CONTEXT:-hetzner-production}"
-NS=turkish-financial-prod
+NS=turkish-financial
 DIR="$(cd "$(dirname "$0")" && pwd)"
 k() { kubectl --context "$CTX" "$@"; }
 

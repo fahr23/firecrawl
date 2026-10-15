@@ -486,8 +486,11 @@ _COVERAGE_QUERIES: Dict[str, str] = {
 
 # kind -> in-process collection-state dict, when one exists (best-effort failure count).
 def _collection_states() -> Dict[str, dict]:
+    # Each kind maps to the run that writes the table its coverage query reads.
     return {
-        "fundamental": _fundamental_collection_state,
+        "fundamental": _kap_fundamental_collection_state,
+        "market": _market_collection_state,
+        "corporate_actions": _market_collection_state,
         "ownership": _ownership_collection_state,
     }
 
@@ -890,6 +893,88 @@ def _spawn_on_demand_fundamental_fetch(instrument: str, db_manager: DatabaseMana
     )
 
 
+class FundamentalCollectRequest(BaseModel):
+    # KAP is slow (Firecrawl page renders, rate-based anti-bot), so each daily
+    # run handles a bounded batch; coverage accrues across runs.
+    max_instruments: int = Field(20, ge=1, le=600)
+    tickers: Optional[List[str]] = None
+
+
+_kap_fundamental_collection_task = None
+_kap_fundamental_collection_state = {"status": "idle", "total": 0, "completed": 0, "fetched": 0, "failed": 0, "started_at": None, "finished_at": None}
+
+
+def _fundamental_collection_queue(db_manager: DatabaseManager, limit: int) -> List[str]:
+    """Never-collected tickers first, then the stalest."""
+    try:
+        rows = db_manager.query(
+            """
+            SELECT b.code
+            FROM bist_companies b
+            LEFT JOIN (
+                SELECT stock_code, MAX(effective_at) AS last_at
+                FROM kap_fundamentals GROUP BY stock_code
+            ) f ON f.stock_code = b.code
+            WHERE b.is_active = TRUE
+            ORDER BY f.last_at ASC NULLS FIRST, b.code
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        tickers = [r["code"].strip().upper() for r in rows if r.get("code")]
+    except Exception:  # noqa: BLE001 - fall back to the built-in catalogue
+        tickers = []
+    return tickers or sorted(STATIC_BIST_CATALOG)[:limit]
+
+
+async def _collect_kap_fundamentals(db_manager: DatabaseManager, tickers: List[str]) -> None:
+    from scrapers.kap_scraper import KAPScraper
+    from infrastructure.contracts.instrument_identity_map import resolve_member_oid
+
+    _kap_fundamental_collection_state.update({"status": "running", "total": len(tickers), "completed": 0, "fetched": 0, "failed": 0, "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
+    scraper = KAPScraper(db_manager=db_manager)
+    for idx, ticker in enumerate(tickers):
+        if idx:
+            await asyncio.sleep(scraper.KAP_PAGE_DELAY_S)  # KAP anti-bot is rate-based
+        try:
+            if resolve_member_oid(ticker, db_manager=db_manager) is None:
+                # member/filter POST is dead (live 404); GET resolution only.
+                await scraper.refresh_member_oids_via_get(instruments=[ticker])
+            result = await scraper.scrape_financial_statements(instruments=[ticker])
+            if result.get("processed"):
+                _kap_fundamental_collection_state["fetched"] += 1
+            else:
+                _kap_fundamental_collection_state["failed"] += 1
+        except Exception as exc:  # noqa: BLE001 - one ticker must not stop the run
+            logger.warning("KAP fundamental collection failed for %s: %s", ticker, exc)
+            _kap_fundamental_collection_state["failed"] += 1
+        _kap_fundamental_collection_state["completed"] += 1
+    _kap_fundamental_collection_state.update({"status": "completed", "finished_at": datetime.now(timezone.utc).isoformat()})
+
+
+@router.post("/fundamental/collect")
+async def collect_kap_fundamentals(
+    request: FundamentalCollectRequest = FundamentalCollectRequest(),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Start a paced KAP financial-statement collection run (needs Firecrawl up)."""
+    global _kap_fundamental_collection_task
+    if _kap_fundamental_collection_task is not None and not _kap_fundamental_collection_task.done():
+        return JSONResponse(status_code=409, content={"status": "running", **_kap_fundamental_collection_state})
+    tickers = (
+        [t.strip().upper() for t in request.tickers if t.strip()][: request.max_instruments]
+        if request.tickers
+        else _fundamental_collection_queue(db_manager, request.max_instruments)
+    )
+    _kap_fundamental_collection_task = asyncio.create_task(_collect_kap_fundamentals(db_manager, tickers))
+    return {**_kap_fundamental_collection_state, "status": "started", "tickers": tickers}
+
+
+@router.get("/fundamental/collection-status")
+async def kap_fundamental_collection_status():
+    return {"contract_version": CONTRACT_VERSION, **_kap_fundamental_collection_state}
+
+
 # ── batch (§6.2) ──────────────────────────────────────────────────────────────
 @router.post("/fundamental/batch")
 async def fundamental_batch(
@@ -990,6 +1075,66 @@ class MarketBatchRequest(BaseModel):
 
 def _market_repo(db_manager: DatabaseManager) -> MarketRepository:
     return MarketRepository(db_manager)
+
+
+def _active_bist_tickers(db_manager: DatabaseManager) -> List[str]:
+    try:
+        rows = db_manager.query("SELECT code FROM bist_companies WHERE is_active = TRUE ORDER BY code", ())
+        tickers = [row["code"].strip().upper() for row in rows if row.get("code")]
+    except Exception:  # noqa: BLE001 - fall back to the built-in catalogue
+        tickers = []
+    return tickers or sorted(STATIC_BIST_CATALOG)
+
+
+class MarketCollectRequest(BaseModel):
+    # A daily run only needs the last few sessions; overlap keeps it idempotent
+    # across missed days. Use a large value (≤730) once to backfill.
+    days: int = Field(7, ge=1, le=730)
+
+
+_market_collection_task = None
+_market_collection_state = {"status": "idle", "total": 0, "completed": 0, "fetched": 0, "failed": 0, "corporate_actions_detected": 0, "started_at": None, "finished_at": None}
+
+
+async def _collect_all_bist_market_history(db_manager: DatabaseManager, days: int) -> None:
+    """C5: pre-collect daily market history for the whole BIST universe so a
+    point read never has to trigger a fetch, then re-run FA-06 corporate-action
+    detection for each ticker over its updated history (DB-only, idempotent)."""
+    tickers = _active_bist_tickers(db_manager)
+    _market_collection_state.update({"status": "running", "total": len(tickers), "completed": 0, "fetched": 0, "failed": 0, "corporate_actions_detected": 0, "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
+    delay = max(0.1, float(os.getenv("ISYATIRIM_MARKET_COLLECTION_DELAY_SECONDS", "0.5")))
+    actions = _corporate_action_repo(db_manager)
+    for ticker in tickers:
+        try:
+            payload = await asyncio.to_thread(fetch_market_history, ticker, days)
+            db_manager.upsert_isyatirim_market_history(ticker, payload["series"])
+            _market_collection_state["fetched"] += 1
+            result = await asyncio.to_thread(actions.detect_and_persist, ticker)
+            _market_collection_state["corporate_actions_detected"] += int(result.get("detected") or 0)
+        except Exception as exc:  # noqa: BLE001 - one unavailable ticker must not stop the run
+            logger.warning("Market history collection failed for %s: %s", ticker, exc)
+            _market_collection_state["failed"] += 1
+        _market_collection_state["completed"] += 1
+        await asyncio.sleep(delay)
+    _market_collection_state.update({"status": "completed", "finished_at": datetime.now(timezone.utc).isoformat()})
+
+
+@router.post("/market/collect")
+async def collect_market_history(
+    request: MarketCollectRequest = MarketCollectRequest(),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Start a paced BIST market-history (+ corporate-action detection) run."""
+    global _market_collection_task
+    if _market_collection_task is not None and not _market_collection_task.done():
+        return JSONResponse(status_code=409, content={"status": "running", **_market_collection_state})
+    _market_collection_task = asyncio.create_task(_collect_all_bist_market_history(db_manager, request.days))
+    return {**_market_collection_state, "status": "started"}
+
+
+@router.get("/market/collection-status")
+async def market_collection_status():
+    return {"contract_version": CONTRACT_VERSION, **_market_collection_state}
 
 
 async def _fetch_market_in_background(instrument: str, db_manager: DatabaseManager, market: str) -> None:
@@ -1164,12 +1309,7 @@ async def _collect_all_ownership_snapshots(db_manager: DatabaseManager) -> None:
     global _ownership_collection_state
     from datetime import date as _date
 
-    try:
-        rows = db_manager.query("SELECT code FROM bist_companies WHERE is_active = TRUE ORDER BY code", ())
-        tickers = [row["code"].strip().upper() for row in rows if row.get("code")]
-    except Exception:
-        tickers = []
-    tickers = tickers or sorted(STATIC_BIST_CATALOG)
+    tickers = _active_bist_tickers(db_manager)
     _ownership_collection_state.update({"status": "running", "total": len(tickers), "completed": 0, "fetched": 0, "failed": 0, "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
     delay = max(0.1, float(os.getenv("ISYATIRIM_OWNERSHIP_COLLECTION_DELAY_SECONDS", "0.5")))
     today = _date.today()

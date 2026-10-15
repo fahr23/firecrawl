@@ -5,7 +5,7 @@ The Turkish Financial API with its own Firecrawl stack, in its own namespace.
 | Cluster | Context | Namespace | API |
 |---|---|---|---|
 | Local (OrbStack) | `orbstack` | `turkish-financial` | `http://localhost:30080`, `http://turkish.localhost:32080` |
-| Production (Hetzner k3s, node f23) | `hetzner-production` | `turkish-financial-prod` | in-cluster only (see below) |
+| Production (Hetzner k3s, node f23) | `hetzner-production` | `turkish-financial` | in-cluster only (see below) |
 
 ## How it runs
 
@@ -23,11 +23,13 @@ The Turkish Financial API with its own Firecrawl stack, in its own namespace.
 ## Calling it from backtofuture (f23)
 
 ```
-http://turkish-financial-api.turkish-financial-prod.svc.cluster.local:8000/api/external/v1
+http://turkish-financial-api.turkish-financial.svc.cluster.local:8000/api/external/v1
 ```
 
 Production has no Ingress and no NodePort. NetworkPolicies allow ingress to the API
-only from pods in `backtofuture-prod` (and from within this namespace). Endpoints are
+only from `app: strategy-management` pods in `backtofuture-prod` (and from within this
+namespace). The namespace is `turkish-financial` on both clusters, so F23's
+`EXTERNAL_ANALYSIS_API_URL` is the same in every overlay. Endpoints are
 documented in `backtofuture/docs/CLIENT_GUIDE.md`; replace its `localhost:8000` base.
 
 ## Deploy

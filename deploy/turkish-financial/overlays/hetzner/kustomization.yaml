@@ -1,14 +1,14 @@
 # Production workspace on the Hetzner k3s node (f23).
 #
-# Not exposed to the internet: no Ingress, no NodePort. Only pods in the
-# `backtofuture-prod` namespace may call the API:
-#   http://turkish-financial-api.turkish-financial-prod.svc.cluster.local:8000/api/external/v1
+# Not exposed to the internet: no Ingress, no NodePort. Only `app: strategy-management`
+# pods in the `backtofuture-prod` namespace may call the API:
+#   http://turkish-financial-api.turkish-financial.svc.cluster.local:8000/api/external/v1
 #
 # One-time setup and deploy: see ../../README.md.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: turkish-financial-prod
+namespace: turkish-financial
 
 resources:
 - namespace.yaml

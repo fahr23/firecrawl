@@ -80,6 +80,12 @@ spec:
               value: "10"
             - name: ISYATIRIM_ENABLED
               value: "true"
+            # KAP financial statements per daily run (Firecrawl-backed, slow).
+            - name: FUNDAMENTAL_MAX_INSTRUMENTS
+              value: "20"
+            # Sessions of market history re-fetched per run (overlap = idempotent).
+            - name: MARKET_DAYS
+              value: "7"
             resources:
               requests:
                 memory: "32Mi"
