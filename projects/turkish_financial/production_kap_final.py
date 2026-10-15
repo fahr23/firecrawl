@@ -200,7 +200,7 @@ class ProductionKAPScraper:
                 try:
                     result = self.firecrawl.scrape(
                         url,
-                        formats=["html"],
+                        formats=["html", "rawHtml"],
                         wait_for=3000
                     )
                     
@@ -214,6 +214,7 @@ class ProductionKAPScraper:
                             "url": url,
                             "data": {
                                 "html": html_content,
+                                "rawHtml": getattr(result, "raw_html", None) or getattr(result, "rawHtml", None) or "",
                                 "markdown": result.markdown or "",
                                 "metadata": {"statusCode": 200, "error": None, "source": "firecrawl_api"}
                             }
@@ -331,7 +332,35 @@ class ProductionKAPScraper:
             # Fallback to simple scrape without clicking
             return {"success": False, "url": url, "error": "No scraping method available"}
     
-    async def get_pdf_attachments_from_detail(self, detail_url: str) -> list:
+    @staticmethod
+    def _apply_disclosure_basic(item: dict, basic: dict) -> None:
+        """Replace the list-row guesses with KAP's own identity for the disclosure.
+
+        The list row only yields a synthetic id and a free-text company cell (often
+        several companies run together); the detail page's disclosureBasic has the
+        real disclosure index, ticker, title and publish time.
+        """
+        if not basic or not basic.get("disclosure_index"):
+            return
+        published_at = basic.get("published_at")
+        item["disclosure_id"] = basic["disclosure_index"]
+        item["kap_identity"] = True
+        item["stock_code"] = basic.get("stock_code")
+        item["company_name"] = basic.get("company_name") or item.get("company_name")
+        item["disclosure_type"] = basic.get("title") or item.get("disclosure_type")
+        item["subject"] = basic.get("title")
+        item["subject_code"] = basic.get("disclosure_class")
+        item["is_late"] = basic.get("is_late")
+        if published_at is not None:
+            item["published_at"] = published_at
+            item["disclosure_date"] = published_at.date()
+            item["timestamp"] = published_at.isoformat()
+        item["data"] = {
+            **(item.get("data") or {}),
+            "disclosure_basic": {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in basic.items()},
+        }
+
+    async def get_pdf_attachments_from_detail(self, detail_url: str, basic_out: Optional[dict] = None) -> list:
         """Extract PDF attachment URLs from disclosure detail page"""
         import aiohttp
         from bs4 import BeautifulSoup
@@ -346,6 +375,9 @@ class ProductionKAPScraper:
                 return []
             
             content = result.get('data', {}).get('html', '')
+            if basic_out is not None:
+                from scrapers.kap_disclosure_page import extract_disclosure_basic
+                basic_out.update(extract_disclosure_basic(result.get('data', {}).get('rawHtml', '')) or {})
             soup = BeautifulSoup(content, 'html.parser')
             
             # Find all download links for PDF files
@@ -919,6 +951,38 @@ class ProductionKAPScraper:
         
         return ""
 
+    @staticmethod
+    def _save_events(items: list) -> int:
+        """FA-07: classify each KAP-identified disclosure into the event taxonomy.
+
+        Best-effort per item: a classification failure never drops the disclosure,
+        which is already saved. KAP disclosures are public when published, so
+        available_at = published_at.
+        """
+        from database.db_manager import DatabaseManager
+        from domain.services.kap_event_classifier import classify
+
+        identified = [i for i in items if i.get("kap_identity") and i.get("stock_code")]
+        if not identified:
+            return 0
+        db = DatabaseManager()
+        saved = 0
+        for item in identified:
+            try:
+                event = classify({
+                    "title": item.get("subject") or item.get("disclosure_type"),
+                    "subject_code": item.get("subject_code"),
+                    "disclosure_id": item["disclosure_id"],
+                    "published_at": item.get("published_at"),
+                })
+                event["available_at"] = event.get("published_at")
+                if db.upsert_kap_event({**event, "stock_code": item["stock_code"]}):
+                    saved += 1
+            except Exception as e:
+                logger.warning(f"FA-07 event classification failed for {item.get('disclosure_id')}: {e}")
+        logger.info(f"Classified {saved} disclosures into FA-07 events")
+        return saved
+
     async def save_to_database(self, items: list) -> int:
         """Save items to PostgreSQL database"""
         try:
@@ -954,14 +1018,19 @@ class ProductionKAPScraper:
                     cursor.execute("""
                         INSERT INTO kap_disclosures 
                         (disclosure_id, company_name, disclosure_type, disclosure_date, 
-                         timestamp, language_info, has_attachment, detail_url, pdf_url, pdf_text, content, data, scraped_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                         timestamp, language_info, has_attachment, detail_url, pdf_url, pdf_text, content, data, scraped_at,
+                         stock_code, subject, subject_code, is_late)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         ON CONFLICT (disclosure_id) DO UPDATE SET
                             content = EXCLUDED.content,
                             data = EXCLUDED.data,
                             pdf_url = EXCLUDED.pdf_url,
                             pdf_text = EXCLUDED.pdf_text,
-                            scraped_at = EXCLUDED.scraped_at
+                            scraped_at = EXCLUDED.scraped_at,
+                            stock_code = EXCLUDED.stock_code,
+                            subject = EXCLUDED.subject,
+                            subject_code = EXCLUDED.subject_code,
+                            is_late = EXCLUDED.is_late
                     """, (
                         item['disclosure_id'],
                         item['company_name'],
@@ -975,7 +1044,11 @@ class ProductionKAPScraper:
                         pdf_text,
                         item['content'],
                         json.dumps(item['data']),
-                        datetime.now()
+                        datetime.now(),
+                        item.get('stock_code'),
+                        item.get('subject'),
+                        item.get('subject_code'),
+                        item.get('is_late'),
                     ))
                     saved_count += 1
                     
@@ -986,7 +1059,8 @@ class ProductionKAPScraper:
             conn.commit()
             cursor.close()
             conn.close()
-            
+
+            self._save_events(items)
             logger.info(f"Saved {saved_count} items to database")
             return saved_count
             
@@ -1232,8 +1306,10 @@ class ProductionKAPScraper:
             for item in items:
                 detail_url = item.get('detail_url', '')
                 if detail_url:
-                    # Get PDF attachments from detail page
-                    attachments = await self.get_pdf_attachments_from_detail(detail_url)
+                    # Get PDF attachments from detail page (and the disclosure's identity)
+                    basic: dict = {}
+                    attachments = await self.get_pdf_attachments_from_detail(detail_url, basic_out=basic)
+                    self._apply_disclosure_basic(item, basic)
                     
                     if attachments:
                         # Extract text from all PDF attachments
@@ -1261,7 +1337,16 @@ class ProductionKAPScraper:
             
             logger.info(f"Successfully fetched {pdf_fetch_count} PDF files, total {total_pdf_chars:,} chars extracted")
             
-            # Step 5: Save to database
+            # Step 5: Save to database. Only disclosures whose detail page gave KAP's own
+            # index are stored: a synthetic id would re-insert the same disclosure on
+            # every run and can't be linked to a ticker.
+            identified = [i for i in items if i.get("kap_identity")]
+            if len(identified) < len(items):
+                logger.warning(
+                    f"{len(items) - len(identified)} of {len(items)} disclosures had no KAP identity "
+                    "(detail page unavailable); not saved"
+                )
+            items = identified
             saved_count = await self.save_to_database(items)
             
             # Step 6: Perform and save sentiment analysis
