@@ -44,7 +44,10 @@ spec:
   schedule: "0 7 * * *"
   timeZone: "Europe/Istanbul"
   concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 3600
+  # A cluster that is asleep at 07:00 (a laptop running OrbStack) would otherwise
+  # skip the whole day: runs missed by more than this window are dropped. 12h lets
+  # the day's run start when the cluster comes back that day.
+  startingDeadlineSeconds: 43200
   successfulJobsHistoryLimit: 2
   failedJobsHistoryLimit: 3
   jobTemplate:

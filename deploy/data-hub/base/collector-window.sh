@@ -43,7 +43,7 @@ post() {
     -H 'Content-Type: application/json' -X POST "$API$path" -d "$body") || code=000
   log "<- $name HTTP $code: $(head -c 500 /tmp/out.json 2>/dev/null)"
   case "$code" in
-    200|409) ;;  # 409: İş Yatırım collection already running
+    200|202|409) ;;  # 202: started in the background; 409: a run is already going
     *) failures=$((failures + 1)) ;;
   esac
 }

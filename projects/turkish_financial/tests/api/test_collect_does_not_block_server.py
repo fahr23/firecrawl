@@ -7,7 +7,6 @@ Collection pipelines now run via api.off_loop.run_off_loop, so a blocking
 pipeline stalls only its worker thread. These tests make the pipeline block with
 time.sleep (as yt_dlp does) and assert /health still answers meanwhile.
 """
-import threading
 import time
 from unittest.mock import patch
 
@@ -70,32 +69,40 @@ def test_run_off_loop_returns_the_pipeline_result():
         loop.close()
 
 
-def test_health_answers_while_a_youtube_collect_is_blocking():
+def test_youtube_collect_returns_202_and_health_answers_while_it_runs():
+    """F23 gives up after 8s, so the collect must answer at once and run in the
+    background; /health must stay fast while the blocking pipeline runs."""
+    from api.youtube_scheduler import scheduler
+
+    scheduler.is_running = False
     with patch("application.use_cases.collect_youtube_sentiment_use_case.CollectYouTubeSentimentUseCase", BlockingUseCase), \
          patch("scrapers.youtube_scraper.YouTubeScraper", lambda **_k: None), \
          patch.object(youtube_sentiment, "_build_sentiment_analyzer", lambda: None), \
          TestClient(_app()) as client:
-        collect_result = {}
-
-        def collect():
-            collect_result["r"] = client.post(
-                "/api/external/v1/youtube-sentiment/collect",
-                json={"channels": ["https://www.youtube.com/@x/videos"], "days_back": 1, "limit_per_channel": 1},
-            )
-
-        t = threading.Thread(target=collect)
-        t.start()
-        time.sleep(0.3)  # the collect is now inside its blocking call
+        t0 = time.monotonic()
+        started = client.post(
+            "/api/external/v1/youtube-sentiment/collect",
+            json={"channels": ["https://www.youtube.com/@x/videos"], "days_back": 1, "limit_per_channel": 1},
+        )
+        post_elapsed = time.monotonic() - t0
+        second = client.post("/api/external/v1/youtube-sentiment/collect", json={"days_back": 1})
 
         t0 = time.monotonic()
         health = client.get("/api/external/v1/health")
-        elapsed = time.monotonic() - t0
-        t.join(timeout=10)
+        health_elapsed = time.monotonic() - t0
 
+        deadline = time.monotonic() + 10
+        while scheduler.is_running and time.monotonic() < deadline:
+            time.sleep(0.05)
+        schedule = client.get("/api/external/v1/youtube-sentiment/schedule").json()
+
+    assert started.status_code == 202 and started.json()["status"] == "started"
+    assert post_elapsed < 0.5, f"collect held the request for {post_elapsed:.2f}s"
+    assert second.status_code == 409
     assert health.status_code == 200
-    assert elapsed < 0.5, f"/health waited {elapsed:.2f}s behind a blocking collect"
-    assert collect_result["r"].status_code == 200
-    assert collect_result["r"].json()["scraped"] == 0
+    assert health_elapsed < 0.5, f"/health waited {health_elapsed:.2f}s behind a blocking collect"
+    assert schedule["is_running"] is False
+    assert schedule["last_result"]["scraped"] == 0
 
 
 def test_fundamental_miss_skips_kap_fetch_while_firecrawl_sleeps():

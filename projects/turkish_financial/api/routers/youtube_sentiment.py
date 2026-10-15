@@ -13,6 +13,7 @@ but `provider = "youtube-scraper"`.
 
 Mounted at `/api/external/v1` (see api/main.py).
 """
+import asyncio
 import logging
 from typing import List, Optional
 
@@ -109,22 +110,34 @@ async def set_youtube_schedule(request: YouTubeScheduleConfigRequest):
 
 # ── collect trigger ───────────────────────────────────────────────────────────
 
-@router.post("/youtube-sentiment/collect")
+@router.post("/youtube-sentiment/collect", status_code=202)
 async def youtube_sentiment_collect(
     request: YouTubeCollectRequest,
     db_manager: DatabaseManager = Depends(get_db_manager),
 ):
     """
-    Trigger one YouTube sentiment collection run.
+    Start one YouTube sentiment collection run in the background.
+
+    Returns 202 at once (409 if a run is already going); the result lands in
+    GET /youtube-sentiment/schedule (`last_result`). A run takes minutes, far
+    longer than a caller's read timeout (F23 gives up after 8s), so it is never
+    held open on the request.
 
     When `channels` is omitted the config seed list is used (set via YOUTUBE_CHANNELS
     env var or POST /youtube-sentiment/schedule).
     """
+    from datetime import datetime
+
     from api.youtube_scheduler import scheduler
     from scrapers.youtube_scraper import YouTubeScraper
     from application.use_cases.collect_youtube_sentiment_use_case import (
         CollectYouTubeSentimentUseCase,
     )
+
+    if scheduler.is_running:
+        return JSONResponse(status_code=409, content={
+            "contract_version": CONTRACT_VERSION, "status": "running", **scheduler.status(),
+        })
 
     channels = request.channels or scheduler.channels
     if not channels:
@@ -132,14 +145,14 @@ async def youtube_sentiment_collect(
         scheduler._seed_channels_from_config()
         channels = scheduler.channels
 
-    try:
-        scraper = YouTubeScraper(db_manager=db_manager)
-        analyzer = _build_sentiment_analyzer()
-        use_case = CollectYouTubeSentimentUseCase(scraper, analyzer, db_manager)
+    scraper = YouTubeScraper(db_manager=db_manager)
+    analyzer = _build_sentiment_analyzer()
+    use_case = CollectYouTubeSentimentUseCase(scraper, analyzer, db_manager)
+    scheduler.is_running = True
+    scheduler.last_run = datetime.utcnow()
+    triggered_at = scheduler.last_run.isoformat() + "Z"
 
-        scheduler.is_running = True
-        from datetime import datetime
-        scheduler.last_run = datetime.utcnow()
+    async def _run() -> None:
         try:
             result = await run_off_loop(lambda: use_case.execute(
                 channel_urls=channels,
@@ -147,20 +160,20 @@ async def youtube_sentiment_collect(
                 limit_per_channel=request.limit_per_channel,
                 stored_only=request.stored_only,
             ))
+            scheduler.last_result = {**result, "triggered_at": triggered_at}
+        except Exception as e:  # noqa: BLE001 - recorded for GET /schedule, never raised
+            logger.error(f"YouTube sentiment collect failed: {e}", exc_info=True)
+            scheduler.last_result = {"error": str(e), "triggered_at": triggered_at}
         finally:
             scheduler.is_running = False
 
-        scheduler.last_result = {**result, "triggered_at": scheduler.last_run.isoformat() + "Z"}
-        return {"contract_version": CONTRACT_VERSION, **result}
-
-    except DatabaseManager.PoolExhaustedError:
-        return _db_error("database temporarily unavailable")
-    except Exception as e:  # noqa: BLE001
-        logger.error(f"YouTube sentiment collect failed: {e}", exc_info=True)
-        return JSONResponse(
-            status_code=500,
-            content={"contract_version": CONTRACT_VERSION, "status": "error", "detail": str(e)},
-        )
+    asyncio.create_task(_run())
+    return {
+        "contract_version": CONTRACT_VERSION,
+        "status": "started",
+        "triggered_at": triggered_at,
+        "channels": len(channels or []),
+    }
 
 
 # ── read endpoints ────────────────────────────────────────────────────────────
