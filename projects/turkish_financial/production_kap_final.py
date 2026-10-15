@@ -59,7 +59,13 @@ class ProductionKAPScraper:
         """Initialize production scraper"""
         # Initialize Firecrawl API client for advanced scraping with actions
         self.firecrawl_api_key = os.getenv("FIRECRAWL_API_KEY", "test-api-key")
-        self.firecrawl_api_url = os.getenv("FIRECRAWL_API_URL", "http://localhost:3002")
+        # FIRECRAWL_BASE_URL is what compose/k8s and the rest of the app set; without
+        # this fallback the KAP disclosure scrape hit localhost:3002 in every deployment.
+        self.firecrawl_api_url = (
+            os.getenv("FIRECRAWL_API_URL")
+            or os.getenv("FIRECRAWL_BASE_URL")
+            or "http://localhost:3002"
+        )
         
         # Always set playwright_url as fallback
         self.playwright_url = os.getenv("PLAYWRIGHT_SERVICE_URL", "http://localhost:3000/scrape")

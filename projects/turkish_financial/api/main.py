@@ -52,7 +52,15 @@ class RequestResponseLoggerMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         
         process_time = time.time() - start_time
-        
+
+        # One self-contained line per request: the multi-line block below interleaves
+        # across concurrent requests, so its Path and Process Time can't be paired.
+        query = f"?{request.url.query}" if request.url.query else ""
+        logger.info(
+            f"ACCESS {request.method} {request.url.path}{query} "
+            f"{response.status_code} {process_time:.3f}s"
+        )
+
         # Log response
         logger.info(f"\n📤 OUTGOING RESPONSE")
         logger.info(f"   Status Code: {response.status_code}")
