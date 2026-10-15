@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_db_manager
+from api.off_loop import run_off_loop
 from database.db_manager import DatabaseManager
 from domain.entities.external_analysis import (
     CONTRACT_VERSION,
@@ -894,7 +895,8 @@ def _spawn_on_demand_fundamental_fetch(instrument: str, db_manager: DatabaseMana
         return
     _spawn_on_demand_fetch(
         ("fundamental", "bist", instrument),
-        lambda: _fetch_fundamental_in_background(instrument, db_manager),
+        # KAP scraping does some blocking I/O; keep it off the request loop.
+        lambda: run_off_loop(lambda: _fetch_fundamental_in_background(instrument, db_manager)),
     )
 
 
@@ -972,7 +974,9 @@ async def collect_kap_fundamentals(
         else _fundamental_collection_queue(db_manager, request.max_instruments)
     )
     _kap_fundamental_collection_state.update({"status": "running", "total": len(tickers), "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
-    _kap_fundamental_collection_task = asyncio.create_task(_collect_kap_fundamentals(db_manager, tickers))
+    _kap_fundamental_collection_task = asyncio.create_task(
+        run_off_loop(lambda: _collect_kap_fundamentals(db_manager, tickers))
+    )
     return {**_kap_fundamental_collection_state, "status": "started", "tickers": tickers}
 
 
