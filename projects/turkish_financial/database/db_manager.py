@@ -95,7 +95,7 @@ class DatabaseManager:
                     pdf_text TEXT,
                     content TEXT,
                     data JSONB,
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             ''').format(sql.Identifier(self.schema)))
 
@@ -116,8 +116,8 @@ class DatabaseManager:
                     target_audience VARCHAR(50),
                     analysis_text TEXT,
                     risk_level VARCHAR(20),
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    analyzed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(disclosure_id)
                 )
             ''').format(
@@ -136,7 +136,7 @@ class DatabaseManager:
                     title TEXT,
                     summary TEXT,
                     data JSONB,
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(company_code, report_date, title)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -149,7 +149,7 @@ class DatabaseManager:
                     name VARCHAR(255),
                     symbol VARCHAR(20),
                     sector VARCHAR(100),
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             ''').format(sql.Identifier(self.schema)))
             cursor.execute(sql.SQL('''
@@ -164,7 +164,7 @@ class DatabaseManager:
                     index_name VARCHAR(100),
                     company_code VARCHAR(10),
                     company_name VARCHAR(255),
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(index_name, company_code)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -182,7 +182,7 @@ class DatabaseManager:
                     taxonomy VARCHAR(50) NOT NULL DEFAULT 'kap',
                     valid_from DATE NOT NULL,
                     valid_to DATE,
-                    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(stock_code, taxonomy, valid_from)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -201,7 +201,7 @@ class DatabaseManager:
                     stock_code VARCHAR(20) NOT NULL,
                     valid_from DATE NOT NULL,
                     valid_to DATE,
-                    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(index_code, stock_code, valid_from)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -217,7 +217,7 @@ class DatabaseManager:
                     sector_name VARCHAR(255),
                     stock_symbol VARCHAR(50),
                     stock_name VARCHAR(255),
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(sector_name, stock_symbol)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -229,7 +229,7 @@ class DatabaseManager:
                     industry_name VARCHAR(255),
                     stock_symbol VARCHAR(50),
                     stock_name VARCHAR(255),
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(industry_name, stock_symbol)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -242,7 +242,7 @@ class DatabaseManager:
                     date DATE,
                     price REAL,
                     currency VARCHAR(10),
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(commodity_type, date)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -254,7 +254,7 @@ class DatabaseManager:
                     symbol VARCHAR(50) UNIQUE,
                     name VARCHAR(255),
                     price REAL,
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             ''').format(sql.Identifier(self.schema)))
             
@@ -274,7 +274,7 @@ class DatabaseManager:
                     risk_level VARCHAR(20),
                     summary TEXT,
                     raw_analysis JSONB,
-                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    analyzed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(report_id)
                 )
             ''').format(
@@ -298,10 +298,7 @@ class DatabaseManager:
                     ADD COLUMN IF NOT EXISTS stock_code VARCHAR(20)
             ''').format(sql.Identifier(self.schema)))
 
-            cursor.execute(sql.SQL('''
-                CREATE INDEX IF NOT EXISTS idx_kap_disclosures_stock_code
-                ON {}.kap_disclosures(stock_code)
-            ''').format(sql.Identifier(self.schema)))
+            # Index changes from here on live in database/migrations (003 replaced this one).
 
             # KAP financialTable API addresses companies by mkkMemberOid; cache the
             # ticker→oid mapping here so resolve_member_oid() can avoid re-querying KAP.
@@ -333,7 +330,7 @@ class DatabaseManager:
                     indicator_code VARCHAR(50) NOT NULL,
                     date DATE NOT NULL,
                     value REAL,
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(indicator_code, date)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -377,7 +374,7 @@ class DatabaseManager:
                     reporting_standard VARCHAR(50),
                     disclosure_index VARCHAR(100),
                     facts JSONB NOT NULL,
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(stock_code, period)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -397,8 +394,8 @@ class DatabaseManager:
                 ALTER TABLE {0}.kap_financial_statements
                     ADD COLUMN IF NOT EXISTS consolidation VARCHAR(20) NOT NULL DEFAULT 'consolidated',
                     ADD COLUMN IF NOT EXISTS revision_id VARCHAR(100),
-                    ADD COLUMN IF NOT EXISTS published_at TIMESTAMP,
-                    ADD COLUMN IF NOT EXISTS available_at TIMESTAMP,
+                    ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ,
+                    ADD COLUMN IF NOT EXISTS available_at TIMESTAMPTZ,
                     ADD COLUMN IF NOT EXISTS period_end DATE,
                     ADD COLUMN IF NOT EXISTS statement_template VARCHAR(20) NOT NULL DEFAULT 'industrial',
                     ADD COLUMN IF NOT EXISTS flow_basis VARCHAR(10) NOT NULL DEFAULT 'ytd'
@@ -470,16 +467,13 @@ class DatabaseManager:
                     data_completeness REAL,
 
                     source_disclosure_index VARCHAR(100),
-                    effective_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    effective_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    computed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(stock_code, period)
                 )
             ''').format(sql.Identifier(self.schema)))
 
-            cursor.execute(sql.SQL('''
-                CREATE INDEX IF NOT EXISTS idx_fundamentals_stock_code
-                ON {}.kap_fundamentals(stock_code)
-            ''').format(sql.Identifier(self.schema)))
+            # Index changes from here on live in database/migrations (003 replaced this one).
 
             cursor.execute(sql.SQL('''
                 CREATE INDEX IF NOT EXISTS idx_fundamentals_effective_at
@@ -495,8 +489,8 @@ class DatabaseManager:
                 ALTER TABLE {0}.kap_fundamentals
                     ADD COLUMN IF NOT EXISTS consolidation VARCHAR(20) NOT NULL DEFAULT 'consolidated',
                     ADD COLUMN IF NOT EXISTS revision_id VARCHAR(100),
-                    ADD COLUMN IF NOT EXISTS published_at TIMESTAMP,
-                    ADD COLUMN IF NOT EXISTS available_at TIMESTAMP,
+                    ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ,
+                    ADD COLUMN IF NOT EXISTS available_at TIMESTAMPTZ,
                     ADD COLUMN IF NOT EXISTS period_end DATE,
                     ADD COLUMN IF NOT EXISTS statement_template VARCHAR(20) NOT NULL DEFAULT 'industrial',
                     ADD COLUMN IF NOT EXISTS flow_basis VARCHAR(10) NOT NULL DEFAULT 'ytd',
@@ -563,12 +557,7 @@ class DatabaseManager:
                     ADD COLUMN IF NOT EXISTS is_late BOOLEAN DEFAULT FALSE
             ''').format(sql.Identifier(self.schema)))
 
-            # Unique index on disclosure_index for fast upsert-by-id.
-            cursor.execute(sql.SQL('''
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_kap_disclosures_disclosure_id
-                ON {}.kap_disclosures(disclosure_id)
-                WHERE disclosure_id IS NOT NULL
-            ''').format(sql.Identifier(self.schema)))
+            # Index changes from here on live in database/migrations (003 replaced this one).
 
             # FA-07: normalized event classification per disclosure, one row per
             # disclosure (idempotent on disclosure_index). A re-classification with
@@ -582,9 +571,9 @@ class DatabaseManager:
                     event_type VARCHAR(30) NOT NULL,
                     mapping_version VARCHAR(20) NOT NULL,
                     title TEXT,
-                    published_at TIMESTAMP,
-                    available_at TIMESTAMP,
-                    classified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    published_at TIMESTAMPTZ,
+                    available_at TIMESTAMPTZ,
+                    classified_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(disclosure_index)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -608,10 +597,10 @@ class DatabaseManager:
                     news_category VARCHAR(50),
                     title TEXT NOT NULL,
                     content TEXT,
-                    publish_date TIMESTAMP,
+                    publish_date TIMESTAMPTZ,
                     source_url TEXT,
                     data JSONB,
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             ''').format(sql.Identifier(self.schema)))
 
@@ -635,7 +624,7 @@ class DatabaseManager:
                     confidence REAL DEFAULT 0.0,
                     analysis_text TEXT,
                     analyzer VARCHAR(100),
-                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    analyzed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(news_id)
                 )
             ''').format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
@@ -654,8 +643,8 @@ class DatabaseManager:
                     headline TEXT NOT NULL,
                     body TEXT,
                     url TEXT,
-                    published_at TIMESTAMP,
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    published_at TIMESTAMPTZ,
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             ''').format(sql.Identifier(self.schema)))
 
@@ -680,7 +669,7 @@ class DatabaseManager:
                     key_drivers TEXT,
                     tone_descriptors TEXT,
                     analyzer VARCHAR(100),
-                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    analyzed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(article_id)
                 )
             ''').format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
@@ -701,7 +690,7 @@ class DatabaseManager:
                     kap_score REAL,
                     kap_count INTEGER DEFAULT 0,
                     combined_score REAL,
-                    computed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    computed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(ticker, period_date)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -739,10 +728,10 @@ class DatabaseManager:
                     ticker VARCHAR(20),
                     text TEXT NOT NULL,
                     author VARCHAR(100),
-                    posted_at TIMESTAMP,
+                    posted_at TIMESTAMPTZ,
                     likes INTEGER DEFAULT 0,
                     retweets INTEGER DEFAULT 0,
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             ''').format(sql.Identifier(self.schema)))
 
@@ -759,7 +748,7 @@ class DatabaseManager:
                     sentiment_score REAL DEFAULT 0.0,
                     confidence REAL DEFAULT 0.0,
                     analyzer VARCHAR(100),
-                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    analyzed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(post_id)
                 )
             ''').format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
@@ -778,11 +767,11 @@ class DatabaseManager:
                     transcript TEXT,
                     transcript_method VARCHAR(30),
                     transcript_status VARCHAR(30),
-                    transcript_attempted_at TIMESTAMP,
-                    published_at TIMESTAMP,
+                    transcript_attempted_at TIMESTAMPTZ,
+                    published_at TIMESTAMPTZ,
                     duration INTEGER,
                     lang VARCHAR(10),
-                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    scraped_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             ''').format(sql.Identifier(self.schema)))
 
@@ -798,7 +787,7 @@ class DatabaseManager:
             ''').format(sql.Identifier(self.schema)))
             cursor.execute(sql.SQL('''
                 ALTER TABLE {}.youtube_videos
-                    ADD COLUMN IF NOT EXISTS transcript_attempted_at TIMESTAMP
+                    ADD COLUMN IF NOT EXISTS transcript_attempted_at TIMESTAMPTZ
             ''').format(sql.Identifier(self.schema)))
 
             cursor.execute(sql.SQL('''
@@ -815,7 +804,7 @@ class DatabaseManager:
                     sentiment_score REAL DEFAULT 0.0,
                     confidence REAL DEFAULT 0.0,
                     analyzer VARCHAR(100),
-                    analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    analyzed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(video_id, ticker)
                 )
             ''').format(sql.Identifier(self.schema), sql.Identifier(self.schema)))
@@ -833,7 +822,7 @@ class DatabaseManager:
                     ticker VARCHAR(20) NOT NULL,
                     market_date DATE NOT NULL,
                     data JSONB NOT NULL,
-                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    fetched_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (ticker, market_date)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -848,7 +837,7 @@ class DatabaseManager:
                     ticker VARCHAR(20) NOT NULL,
                     market_date DATE NOT NULL,
                     data JSONB NOT NULL,
-                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    fetched_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (ticker, market_date)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -857,7 +846,7 @@ class DatabaseManager:
                     coin_id VARCHAR(64) NOT NULL,
                     market_date DATE NOT NULL,
                     data JSONB NOT NULL,
-                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    fetched_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (coin_id, market_date)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -879,7 +868,7 @@ class DatabaseManager:
                     source_disclosure_index VARCHAR(100),
                     method_version VARCHAR(20) NOT NULL DEFAULT '1',
                     match_status VARCHAR(20) NOT NULL,
-                    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    detected_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(ticker, ex_date, event_type)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -898,7 +887,7 @@ class DatabaseManager:
                     snapshot_date DATE NOT NULL,
                     foreign_ownership_pct REAL,
                     free_float_pct REAL,
-                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    fetched_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (ticker, snapshot_date)
                 )
             ''').format(sql.Identifier(self.schema)))
@@ -908,7 +897,7 @@ class DatabaseManager:
                     ticker VARCHAR(20) PRIMARY KEY,
                     report_period VARCHAR(20),
                     data JSONB NOT NULL,
-                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    fetched_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 )
             ''').format(sql.Identifier(self.schema)))
             cursor.execute(sql.SQL('''
@@ -916,7 +905,7 @@ class DatabaseManager:
                     ticker VARCHAR(20) NOT NULL,
                     report_period VARCHAR(20) NOT NULL,
                     data JSONB NOT NULL,
-                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    fetched_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (ticker, report_period)
                 )
             ''').format(sql.Identifier(self.schema)))

@@ -107,6 +107,13 @@ async def lifespan(app: FastAPI):
         # not hide the original database failure behind catalogue initialization.
         logger.warning("BIST catalogue seed skipped: %s", exc)
 
+    # Versioned schema migrations (database/migrations). Applied once each, under an
+    # advisory lock; a failure stops startup rather than serving a half-migrated schema.
+    from database.migrate import apply as apply_migrations
+
+    applied = apply_migrations(build_baseline=False)
+    logger.info("Schema migrations applied: %s", ", ".join(applied) if applied else "none pending")
+
     # P3: /health and /capabilities must answer from cache, never a live probe.
     external_analysis.start_firecrawl_capabilities_refresh()
 
