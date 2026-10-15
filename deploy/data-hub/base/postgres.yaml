@@ -77,16 +77,22 @@ spec:
         - name: initdb
           mountPath: /docker-entrypoint-initdb.d/020-turkish-financial.sql
           subPath: 020-turkish-financial.sql
+        # The 1s default timeout failed under load (2026-10-15, 3x in a row): too
+        # tight for a busy node or OrbStack waking up, and a liveness failure would
+        # restart the database mid-collection.
         livenessProbe:
           exec:
             command: ["pg_isready", "-U", "postgres"]
           initialDelaySeconds: 30
           periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 5
         readinessProbe:
           exec:
             command: ["pg_isready", "-U", "postgres"]
           initialDelaySeconds: 5
           periodSeconds: 10
+          timeoutSeconds: 5
       volumes:
       - name: data
         persistentVolumeClaim:
