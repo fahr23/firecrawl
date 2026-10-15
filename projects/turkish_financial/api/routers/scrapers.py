@@ -15,6 +15,7 @@ from api.models import (
     AutoSentimentRequest, WebhookConfigRequest, URLSentimentRequest
 )
 from api.dependencies import get_db_manager, get_config
+from api.off_loop import run_off_loop
 from production_kap_final import ProductionKAPScraper
 from scrapers.bist_scraper import BISTScraper
 from scrapers.tradingview_scraper import TradingViewScraper
@@ -396,7 +397,7 @@ async def scrape_kap(
         )
 
         # Run production KAP scraping
-        result = await scraper.run_production_scrape()
+        result = await run_off_loop(scraper.run_production_scrape)
 
         if not isinstance(result, dict):
             raise HTTPException(status_code=500, detail=f"Unexpected result type: {type(result)}")

@@ -127,11 +127,13 @@ class YouTubeScheduler:
             scraper = YouTubeScraper(db_manager=db)
             analyzer = _build_sentiment_analyzer()
             use_case = CollectYouTubeSentimentUseCase(scraper, analyzer, db)
-            result = await use_case.execute(
+            from api.off_loop import run_off_loop
+
+            result = await run_off_loop(lambda: use_case.execute(
                 channel_urls=self.channels,
                 days_back=self.days_back,
                 limit_per_channel=self.limit_per_channel,
-            )
+            ))
             self.last_result = {**result, "triggered_at": self.last_run.isoformat() + "Z"}
             logger.info(
                 f"YouTubeScheduler: done — scraped={result.get('scraped', 0)} "

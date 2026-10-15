@@ -52,7 +52,7 @@ def make_client(db) -> TestClient:
 
 def _wait(state, timeout=3.0):
     deadline = time.monotonic() + timeout
-    while state["status"] == "running" and time.monotonic() < deadline:
+    while state["status"] != "completed" and time.monotonic() < deadline:
         time.sleep(0.02)
 
 
@@ -185,3 +185,14 @@ def test_capabilities_reports_the_run_that_writes_each_kinds_table():
     assert states["fundamental"] is external_analysis._kap_fundamental_collection_state
     assert states["market"] is external_analysis._market_collection_state
     assert states["corporate_actions"] is external_analysis._market_collection_state
+
+
+def test_status_reads_running_immediately_after_post():
+    """The collector polls status right after POSTing; it must never see the
+    previous run's 'completed' and put Firecrawl to sleep too early."""
+    external_analysis._kap_fundamental_collection_state["status"] = "completed"
+    with patch.object(external_analysis, "_collect_kap_fundamentals", AsyncMock()):
+        client = make_client(FakeDB(queue_rows=[{"code": "THYAO"}]))
+        client.post("/api/external/v1/fundamental/collect", json={})
+        state = client.get("/api/external/v1/fundamental/collection-status").json()
+    assert state["status"] == "running"

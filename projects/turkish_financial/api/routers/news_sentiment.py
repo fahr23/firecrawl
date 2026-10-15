@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_db_manager
+from api.off_loop import run_off_loop
 from database.db_manager import DatabaseManager
 from domain.entities.external_analysis import CONTRACT_VERSION, Market
 from infrastructure.repositories.news_article_repository import (
@@ -203,12 +204,12 @@ async def news_sentiment_collect(
             scheduler.last_run = datetime.utcnow()
             scheduler.is_running = True
             try:
-                result = await use_case.execute(
+                result = await run_off_loop(lambda: use_case.execute(
                     tickers=request.tickers,
                     days_back=request.days_back,
                     sources=request.sources or scheduler.sources,
                     include_investing_comments=request.include_investing_comments,
-                )
+                ))
             finally:
                 scheduler.is_running = False
             scheduler.last_result = {**result, "triggered_at": scheduler.last_run.isoformat() + "Z"}
@@ -311,11 +312,11 @@ async def social_sentiment_collect(
         scraper = SocialMediaScraper(db_manager=db_manager)
         analyzer = _build_sentiment_analyzer()
         use_case = CollectSocialSentimentUseCase(scraper, analyzer, db_manager)
-        result = await use_case.execute(
+        result = await run_off_loop(lambda: use_case.execute(
             tickers=request.tickers,
             days_back=request.days_back,
             limit_per_ticker=request.limit_per_ticker,
-        )
+        ))
         return {"contract_version": CONTRACT_VERSION, **result}
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")

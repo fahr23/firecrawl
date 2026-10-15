@@ -134,12 +134,14 @@ class TestFundamentalOidResolutionSkipsDeadPost:
                  "infrastructure.contracts.instrument_identity_map.resolve_member_oid",
                  return_value=None,
              ):
-            client = make_client(FakeDB())
-            client.get("/api/external/v1/fundamental/THYAO?market=bist")
-            for _ in range(50):
-                if get_based.await_count or post_based.call_count:
-                    break
-                time.sleep(0.02)
+            # Firecrawl must be reported up, or the fetch is (correctly) skipped.
+            with patch.object(external_analysis, "_firecrawl_capabilities_cache", {"status": "ok"}):
+                client = make_client(FakeDB())
+                client.get("/api/external/v1/fundamental/THYAO?market=bist")
+                for _ in range(50):
+                    if get_based.await_count or post_based.call_count:
+                        break
+                    time.sleep(0.02)
 
         post_based.assert_not_called()
         get_based.assert_awaited_once()

@@ -115,11 +115,13 @@ class NewsScheduler:
             scraper = NewsPortalScraper(db_manager=db)
             analyzer = _build_sentiment_analyzer()
             use_case = CollectNewsSentimentUseCase(scraper, analyzer, db)
-            result = await use_case.execute(
+            from api.off_loop import run_off_loop
+
+            result = await run_off_loop(lambda: use_case.execute(
                 days_back=self.days_back,
                 sources=self.sources,
                 include_investing_comments=self.include_investing_comments,
-            )
+            ))
             self.last_result = {**result, "triggered_at": self.last_run.isoformat() + "Z"}
             logger.info(
                 f"NewsScheduler: done — scraped={result.get('scraped',0)} "

@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from api.dependencies import get_db_manager
+from api.off_loop import run_off_loop
 from database.db_manager import DatabaseManager
 from domain.entities.external_analysis import CONTRACT_VERSION, Market
 from infrastructure.repositories.news_article_repository import YouTubeSentimentRepository
@@ -140,12 +141,12 @@ async def youtube_sentiment_collect(
         from datetime import datetime
         scheduler.last_run = datetime.utcnow()
         try:
-            result = await use_case.execute(
+            result = await run_off_loop(lambda: use_case.execute(
                 channel_urls=channels,
                 days_back=request.days_back,
                 limit_per_channel=request.limit_per_channel,
                 stored_only=request.stored_only,
-            )
+            ))
         finally:
             scheduler.is_running = False
 

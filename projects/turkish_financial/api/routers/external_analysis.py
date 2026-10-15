@@ -887,6 +887,11 @@ def _spawn_on_demand_fundamental_fetch(instrument: str, db_manager: DatabaseMana
     """P1 fix: fire the KAP scrape in the background; never await it in a
     request handler. The caller returns the current (unavailable) envelope
     immediately — a later request will see the data once the scrape lands."""
+    if _firecrawl_capabilities_cache.get("status") != "ok":
+        # KAP scraping needs Firecrawl, which sleeps outside the collector window;
+        # the nightly /fundamental/collect run picks never-collected tickers first.
+        logger.info("fundamental %s not stored; Firecrawl asleep, left to the collection window", instrument)
+        return
     _spawn_on_demand_fetch(
         ("fundamental", "bist", instrument),
         lambda: _fetch_fundamental_in_background(instrument, db_manager),
@@ -966,6 +971,7 @@ async def collect_kap_fundamentals(
         if request.tickers
         else _fundamental_collection_queue(db_manager, request.max_instruments)
     )
+    _kap_fundamental_collection_state.update({"status": "running", "total": len(tickers), "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
     _kap_fundamental_collection_task = asyncio.create_task(_collect_kap_fundamentals(db_manager, tickers))
     return {**_kap_fundamental_collection_state, "status": "started", "tickers": tickers}
 
@@ -1128,6 +1134,8 @@ async def collect_market_history(
     global _market_collection_task
     if _market_collection_task is not None and not _market_collection_task.done():
         return JSONResponse(status_code=409, content={"status": "running", **_market_collection_state})
+    # Mark running before returning so a status poll right after the POST never sees the previous run's "completed".
+    _market_collection_state.update({"status": "running", "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
     _market_collection_task = asyncio.create_task(_collect_all_bist_market_history(db_manager, request.days))
     return {**_market_collection_state, "status": "started"}
 
