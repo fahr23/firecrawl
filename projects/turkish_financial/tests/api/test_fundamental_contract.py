@@ -91,7 +91,7 @@ class TestPoint:
         body = r.json()
 
         env = ProviderEnvelope(**body)
-        assert env.contract_version == "1.0"
+        assert env.contract_version == "1.1"
         assert env.instrument == "THYAO"
         assert env.market.value == "bist"
         assert env.kind.value == "fundamental"
@@ -181,7 +181,7 @@ class TestBatch:
         )
         assert r.status_code == 200
         body = r.json()
-        assert body["contract_version"] == "1.0"
+        assert body["contract_version"] == "1.1"
         assert len(body["items"]) == 2
         assert body["items"][0]["instrument"] == "THYAO"
         assert body["items"][1]["instrument"] == "AKBNK"

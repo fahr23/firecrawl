@@ -45,15 +45,14 @@ def make_client(db: FakeDB) -> TestClient:
     return TestClient(app)
 
 
-def _offline_firecrawl():
-    return {"status": "unavailable", "operations": [], "document_parse": False}
+_OFFLINE_FIRECRAWL = {"status": "unavailable", "operations": [], "document_parse": False}
 
 
 class TestCapabilitiesCoverage:
     def test_coverage_block_present_for_every_kind(self):
         db = FakeDB()
         client = make_client(db)
-        with patch.object(external_analysis, "_firecrawl_capabilities", _offline_firecrawl):
+        with patch.object(external_analysis, "_firecrawl_capabilities_cache", _OFFLINE_FIRECRAWL):
             body = client.get("/api/external/v1/capabilities").json()
 
         assert set(body["coverage"].keys()) == {
@@ -73,7 +72,7 @@ class TestCapabilitiesCoverage:
             ],
         })
         client = make_client(db)
-        with patch.object(external_analysis, "_firecrawl_capabilities", _offline_firecrawl):
+        with patch.object(external_analysis, "_firecrawl_capabilities_cache", _OFFLINE_FIRECRAWL):
             body = client.get("/api/external/v1/capabilities").json()
 
         market = body["coverage"]["market"]
@@ -88,7 +87,7 @@ class TestCapabilitiesCoverage:
             raise_for={"fundamental"},
         )
         client = make_client(db)
-        with patch.object(external_analysis, "_firecrawl_capabilities", _offline_firecrawl):
+        with patch.object(external_analysis, "_firecrawl_capabilities_cache", _OFFLINE_FIRECRAWL):
             r = client.get("/api/external/v1/capabilities")
 
         assert r.status_code == 200
@@ -99,6 +98,6 @@ class TestCapabilitiesCoverage:
     def test_last_collection_run_omitted_when_collector_never_ran(self):
         db = FakeDB()
         client = make_client(db)
-        with patch.object(external_analysis, "_firecrawl_capabilities", _offline_firecrawl):
+        with patch.object(external_analysis, "_firecrawl_capabilities_cache", _OFFLINE_FIRECRAWL):
             body = client.get("/api/external/v1/capabilities").json()
         assert "last_collection_run" not in body["coverage"]["fundamental"]

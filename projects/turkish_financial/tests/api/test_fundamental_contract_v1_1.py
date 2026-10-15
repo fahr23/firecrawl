@@ -81,29 +81,43 @@ def make_client(db: FakeDB) -> TestClient:
 
 
 class TestBackwardCompatibility:
-    def test_default_contract_version_is_1_0_and_omits_1_1_fields(self):
+    def test_default_contract_version_is_1_1(self):
+        """provider-wait-list.md §7 C1: every consumer should get the 1.1
+        envelope (point-in-time fields, field_status) without having to ask
+        for it explicitly — 1.1 is the server default; 1.0 is the opt-out
+        kept only for callers still on the legacy shape."""
         client = make_client(FakeDB(point_rows=[_row()]))
         body = client.get("/api/external/v1/fundamental/THYAO?market=bist").json()
+
+        assert body["contract_version"] == "1.1"
+        for field in ("published_at", "available_at", "period_end", "fetched_at", "revision_id", "field_status"):
+            assert field in body
+
+    def test_explicit_1_1_matches_default(self):
+        client = make_client(FakeDB(point_rows=[_row()]))
+        explicit = client.get(
+            "/api/external/v1/fundamental/THYAO?market=bist&contract_version=1.1"
+        ).json()
+        default = client.get("/api/external/v1/fundamental/THYAO?market=bist").json()
+        assert explicit == default
+
+    def test_explicit_1_0_still_opts_out_to_the_legacy_shape(self):
+        client = make_client(FakeDB(point_rows=[_row()]))
+        body = client.get(
+            "/api/external/v1/fundamental/THYAO?market=bist&contract_version=1.0"
+        ).json()
 
         assert body["contract_version"] == "1.0"
         for field in ("published_at", "available_at", "period_end", "fetched_at", "revision_id", "field_status"):
             assert field not in body
 
-    def test_explicit_1_0_matches_default(self):
-        client = make_client(FakeDB(point_rows=[_row()]))
-        explicit = client.get(
-            "/api/external/v1/fundamental/THYAO?market=bist&contract_version=1.0"
-        ).json()
-        default = client.get("/api/external/v1/fundamental/THYAO?market=bist").json()
-        assert explicit == default
-
-    def test_unrecognised_version_degrades_to_1_0(self):
+    def test_unrecognised_version_degrades_to_the_1_1_default(self):
         client = make_client(FakeDB(point_rows=[_row()]))
         body = client.get(
             "/api/external/v1/fundamental/THYAO?market=bist&contract_version=9.9"
         ).json()
-        assert body["contract_version"] == "1.0"
-        assert "field_status" not in body
+        assert body["contract_version"] == "1.1"
+        assert "field_status" in body
 
 
 class TestContract1_1Point:
@@ -177,11 +191,21 @@ class TestContract1_1History:
             assert "revision_id" in item
             assert "field_status" in item
 
-    def test_history_default_version_omits_additive_fields(self):
+    def test_history_default_version_carries_additive_fields(self):
         rows = [_row(period="2026-Q1")]
         client = make_client(FakeDB(history_rows=rows))
         body = client.get(
             "/api/external/v1/fundamental/THYAO/history?market=bist&limit=10"
+        ).json()
+
+        assert body["contract_version"] == "1.1"
+        assert "revision_id" in body["items"][0]
+
+    def test_history_explicit_1_0_omits_additive_fields(self):
+        rows = [_row(period="2026-Q1")]
+        client = make_client(FakeDB(history_rows=rows))
+        body = client.get(
+            "/api/external/v1/fundamental/THYAO/history?market=bist&contract_version=1.0&limit=10"
         ).json()
 
         assert body["contract_version"] == "1.0"

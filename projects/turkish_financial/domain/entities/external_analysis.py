@@ -24,9 +24,14 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
-CONTRACT_VERSION = "1.0"
+CONTRACT_VERSION_1_0 = "1.0"
 CONTRACT_VERSION_1_1 = "1.1"
-SUPPORTED_CONTRACT_VERSIONS = (CONTRACT_VERSION, CONTRACT_VERSION_1_1)
+SUPPORTED_CONTRACT_VERSIONS = (CONTRACT_VERSION_1_0, CONTRACT_VERSION_1_1)
+# Server default: 1.1 is the baseline shape every consumer should get unless it
+# explicitly asks for the legacy 1.0 envelope (point-in-time fields, revision_id,
+# field_status). provider-wait-list.md §1's example envelope is 1.1, and FA-01
+# frames it as something consumers are waiting to receive, not opt into per call.
+CONTRACT_VERSION = CONTRACT_VERSION_1_1
 
 
 # ── enums ───────────────────────────────────────────────────────────────────

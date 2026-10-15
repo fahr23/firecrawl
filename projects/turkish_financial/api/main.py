@@ -97,6 +97,10 @@ async def lifespan(app: FastAPI):
         # The API can still report an honest DB-unavailable response; startup should
         # not hide the original database failure behind catalogue initialization.
         logger.warning("BIST catalogue seed skipped: %s", exc)
+
+    # P3: /health and /capabilities must answer from cache, never a live probe.
+    external_analysis.start_firecrawl_capabilities_refresh()
+
     yield
     # Shutdown: stop background scheduler tasks
     from api.news_scheduler import scheduler

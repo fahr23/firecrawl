@@ -154,7 +154,31 @@ def test_instruments_catalog_keeps_data_tickers_when_company_refresh_is_missing(
     assert asels["available_data"] == ["fundamental", "news_sentiment", "combined_sentiment"]
 
 
+def test_instruments_catalog_lists_market_and_other_new_kinds():
+    """provider-wait-list.md §7 C4: available_data must list every kind served
+    for the ticker, not just sentiment/fundamental/news_sentiment."""
+    class FullCoverageDB(FakeDB):
+        def query(self, sql, params=None):
+            if "has_fundamental" in sql and "all_tickers" in sql:
+                return [{
+                    "ticker": "THYAO", "company_name": "Türk Hava Yolları A.O.", "sector": "Havacılık",
+                    "has_sentiment": False, "has_fundamental": False, "has_news_sentiment": False,
+                    "has_market": True, "has_ownership": True, "has_classification": True,
+                    "has_events": True, "has_corporate_actions": True,
+                }]
+            return super().query(sql, params)
+
+    items = make_client(FullCoverageDB()).get("/api/external/v1/instruments?market=bist").json()["items"]
+    thyao = next(item for item in items if item["ticker"] == "THYAO")
+    assert set(thyao["available_data"]) == {
+        "market", "ownership", "classification", "events", "corporate_actions",
+    }
+
+
 def test_capabilities_only_advertises_the_confirmed_local_parse_route():
+    """P3: /capabilities reads the background-refreshed cache, never a live
+    probe — so this drives the raw probe function once (as the refresh loop
+    would) and asserts the endpoint serves that cached result."""
     client = make_client(FakeDB())
     root = Mock(status_code=200)
     parse_probe = Mock(status_code=400)
@@ -162,11 +186,14 @@ def test_capabilities_only_advertises_the_confirmed_local_parse_route():
     with patch("api.routers.external_analysis.requests.get", return_value=root), patch(
         "api.routers.external_analysis.requests.post", return_value=parse_probe
     ):
+        cached = external_analysis._firecrawl_capabilities()
+
+    with patch.object(external_analysis, "_firecrawl_capabilities_cache", cached):
         response = client.get("/api/external/v1/capabilities")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["contract_version"] == "1.0"
+    assert body["contract_version"] == "1.1"
     assert body["firecrawl"]["status"] == "ok"
     assert body["firecrawl"]["document_parse"] is True
     assert "parse" in body["firecrawl"]["operations"]
@@ -174,11 +201,9 @@ def test_capabilities_only_advertises_the_confirmed_local_parse_route():
 
 def test_capabilities_degrades_honestly_when_firecrawl_is_unreachable():
     client = make_client(FakeDB())
+    offline = {"status": "unavailable", "operations": [], "document_parse": False}
 
-    with patch(
-        "api.routers.external_analysis.requests.get",
-        side_effect=external_analysis.requests.RequestException("offline"),
-    ):
+    with patch.object(external_analysis, "_firecrawl_capabilities_cache", offline):
         body = client.get("/api/external/v1/capabilities").json()
 
     assert body["firecrawl"]["status"] == "unavailable"
@@ -386,7 +411,9 @@ class TestOverview:
         body = client.get(
             "/api/external/v1/sentiment/overview?market=bist&from=2026-05-15&to=2026-06-14"
         ).json()
-        assert body["contract_version"] == "1.0"
+        # Aggregate-only response, no nested envelopes to disagree with —
+        # reports the server's default contract version.
+        assert body["contract_version"] == "1.1"
         assert body["market"] == "bist"
         assert body["summary"]["total_analyses"] == 100
         dist = body["summary"]["distribution"]
@@ -411,7 +438,7 @@ class TestHealth:
         client = make_client(FakeDB())
         body = client.get("/api/external/v1/health").json()
         assert body["status"] == "ok"
-        assert body["contract_version"] == "1.0"
+        assert body["contract_version"] == "1.1"
         assert body["provider"] == "kap-scraper"
 
     def test_checks_report_db_and_upstream_independently(self):
@@ -420,8 +447,8 @@ class TestHealth:
         collector window (see deploy/turkish-financial)."""
         client = make_client(FakeDB())
         with patch.object(
-            external_analysis, "_firecrawl_capabilities",
-            lambda: {"status": "unavailable", "operations": [], "document_parse": False},
+            external_analysis, "_firecrawl_capabilities_cache",
+            {"status": "unavailable", "operations": [], "document_parse": False},
         ):
             body = client.get("/api/external/v1/health").json()
         assert body["status"] == "ok"  # DB-only; unaffected by Firecrawl being down
@@ -435,8 +462,8 @@ class TestHealth:
 
         client = make_client(RaisingDB())
         with patch.object(
-            external_analysis, "_firecrawl_capabilities",
-            lambda: {"status": "ok", "operations": [], "document_parse": False},
+            external_analysis, "_firecrawl_capabilities_cache",
+            {"status": "ok", "operations": [], "document_parse": False},
         ):
             body = client.get("/api/external/v1/health").json()
         assert body["status"] == "degraded"

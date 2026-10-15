@@ -28,6 +28,7 @@ from api.dependencies import get_db_manager
 from database.db_manager import DatabaseManager
 from domain.entities.external_analysis import (
     CONTRACT_VERSION,
+    CONTRACT_VERSION_1_0,
     SUPPORTED_CONTRACT_VERSIONS,
     Market,
 )
@@ -55,6 +56,35 @@ router = APIRouter(tags=["external-analysis"])
 
 _fundamental_collection_task = None
 _fundamental_collection_state = {"status": "idle", "total": 0, "completed": 0, "fetched": 0, "cached": 0, "failed": 0, "started_at": None, "finished_at": None}
+
+# P1 fix: a cache miss must never await a live scrape inside the request — a
+# slow KAP scrape (observed 45s+) blocks the single event loop, so concurrent
+# requests (including /health) hang until it finishes and the readiness probe
+# fails. Instead we fire the fetch as a detached background task (same
+# fire-and-forget idiom as `_fundamental_collection_task` above) and respond
+# immediately with the current (possibly still-unavailable) stored state. A
+# small in-flight set stops concurrent requests for the same instrument from
+# each starting their own redundant scrape.
+_on_demand_fetch_in_flight: set[tuple[str, str, str]] = set()
+
+
+def _spawn_on_demand_fetch(key: tuple[str, str, str], make_coro) -> None:
+    """`make_coro` is a zero-arg callable returning the fetch coroutine — not
+    the coroutine itself — so a deduped call never constructs one it will
+    immediately discard unawaited."""
+    if key in _on_demand_fetch_in_flight:
+        return
+    _on_demand_fetch_in_flight.add(key)
+
+    async def _run():
+        try:
+            await make_coro()
+        except Exception:  # noqa: BLE001 - best-effort, errors already logged by coro
+            pass
+        finally:
+            _on_demand_fetch_in_flight.discard(key)
+
+    asyncio.create_task(_run())
 
 
 class SentimentBatchRequest(BaseModel):
@@ -149,6 +179,31 @@ def _firecrawl_capabilities() -> dict:
     }
 
 
+# P3 fix: `/health` must answer in well under a second even under load. The
+# upstream Firecrawl probe is two live HTTP round-trips (up to ~6s worst case),
+# so it is never run inline in the request — a background loop refreshes this
+# cache on an interval and `/health` only ever reads it.
+_firecrawl_capabilities_cache: dict = {"status": "unavailable", "operations": [], "document_parse": False}
+_firecrawl_capabilities_refresh_task = None
+
+
+async def _refresh_firecrawl_capabilities_loop(interval_seconds: int = 30) -> None:
+    global _firecrawl_capabilities_cache
+    while True:
+        try:
+            _firecrawl_capabilities_cache = await asyncio.to_thread(_firecrawl_capabilities)
+        except Exception as exc:  # noqa: BLE001 - background loop must never die
+            logger.warning("firecrawl capabilities refresh failed: %s", exc)
+        await asyncio.sleep(interval_seconds)
+
+
+def start_firecrawl_capabilities_refresh() -> None:
+    """Called once from the app's startup event (api/main.py)."""
+    global _firecrawl_capabilities_refresh_task
+    if _firecrawl_capabilities_refresh_task is None or _firecrawl_capabilities_refresh_task.done():
+        _firecrawl_capabilities_refresh_task = asyncio.create_task(_refresh_firecrawl_capabilities_loop())
+
+
 _NON_BIST_MARKET_TABLE: Dict[str, tuple[str, str]] = {
     "usa": ("yahoo_market_history", "ticker"),
     "coin": ("coingecko_market_history", "coin_id"),
@@ -229,6 +284,21 @@ async def instruments_catalog(
                 SELECT DISTINCT ticker FROM aggregated_ticker_sentiment
                 WHERE combined_score IS NOT NULL OR news_score IS NOT NULL
             ),
+            has_market AS (
+                SELECT DISTINCT ticker FROM isyatirim_market_history
+            ),
+            has_ownership AS (
+                SELECT DISTINCT ticker FROM isyatirim_ownership_history
+            ),
+            has_classification AS (
+                SELECT DISTINCT stock_code AS ticker FROM stock_classification_history
+            ),
+            has_events AS (
+                SELECT DISTINCT stock_code AS ticker FROM kap_events WHERE stock_code IS NOT NULL
+            ),
+            has_corporate_actions AS (
+                SELECT DISTINCT ticker FROM corporate_actions
+            ),
             all_tickers AS (
                 -- The startup seed keeps this active BIST TÜM catalogue complete.
                 -- Stored historical data is joined below for availability flags, not
@@ -243,11 +313,21 @@ async def instruments_catalog(
                 t.sector,
                 (hs.ticker IS NOT NULL)   AS has_sentiment,
                 (hf.ticker IS NOT NULL)   AS has_fundamental,
-                (hn.ticker IS NOT NULL)   AS has_news_sentiment
+                (hn.ticker IS NOT NULL)   AS has_news_sentiment,
+                (hm.ticker IS NOT NULL)   AS has_market,
+                (ho.ticker IS NOT NULL)   AS has_ownership,
+                (hc.ticker IS NOT NULL)   AS has_classification,
+                (he.ticker IS NOT NULL)   AS has_events,
+                (hca.ticker IS NOT NULL)  AS has_corporate_actions
             FROM all_tickers t
-            LEFT JOIN has_sentiment   hs ON hs.ticker = t.ticker
-            LEFT JOIN has_fundamental hf ON hf.ticker = t.ticker
-            LEFT JOIN has_news_sentiment hn ON hn.ticker = t.ticker
+            LEFT JOIN has_sentiment        hs  ON hs.ticker = t.ticker
+            LEFT JOIN has_fundamental      hf  ON hf.ticker = t.ticker
+            LEFT JOIN has_news_sentiment   hn  ON hn.ticker = t.ticker
+            LEFT JOIN has_market           hm  ON hm.ticker = t.ticker
+            LEFT JOIN has_ownership        ho  ON ho.ticker = t.ticker
+            LEFT JOIN has_classification   hc  ON hc.ticker = t.ticker
+            LEFT JOIN has_events           he  ON he.ticker = t.ticker
+            LEFT JOIN has_corporate_actions hca ON hca.ticker = t.ticker
             ORDER BY t.ticker
             """,
             (),
@@ -273,6 +353,16 @@ async def instruments_catalog(
             available.append("fundamental")
         if r.get("has_news_sentiment"):
             available.extend(["news_sentiment", "combined_sentiment"])
+        if r.get("has_market"):
+            available.append("market")
+        if r.get("has_ownership"):
+            available.append("ownership")
+        if r.get("has_classification"):
+            available.append("classification")
+        if r.get("has_events"):
+            available.append("events")
+        if r.get("has_corporate_actions"):
+            available.append("corporate_actions")
         items.append({
             "ticker": ticker,
             "company_name": r.get("company_name") or STATIC_BIST_CATALOG.get(ticker),
@@ -327,8 +417,7 @@ async def health(db_manager: DatabaseManager = Depends(get_db_manager)):
     except Exception as e:  # noqa: BLE001 - health must never raise
         logger.warning(f"External-analysis health DB check failed: {e}")
 
-    upstream = await asyncio.to_thread(_firecrawl_capabilities)
-    upstream_ok = upstream.get("status") == "ok"
+    upstream_ok = _firecrawl_capabilities_cache.get("status") == "ok"
 
     return {
         "status": "ok" if db_ok else "degraded",
@@ -456,7 +545,7 @@ async def capabilities(db_manager: DatabaseManager = Depends(get_db_manager)):
     return {
         "contract_version": CONTRACT_VERSION,
         "provider": PROVIDER_ID,
-        "firecrawl": _firecrawl_capabilities(),
+        "firecrawl": _firecrawl_capabilities_cache,
         "coverage": coverage,
     }
 
@@ -672,7 +761,10 @@ async def sentiment_batch(
         logger.error(f"Batch sentiment failed: {e}", exc_info=True)
         return _db_error(str(e))
 
-    return {"contract_version": CONTRACT_VERSION, "items": items}
+    # Sentiment has no contract-1.1 support (ExternalAnalysisRepository always
+    # emits the 1.0 shape) — label this wrapper 1.0 too, not the server-wide
+    # default, so it never disagrees with the envelopes nested inside it.
+    return {"contract_version": CONTRACT_VERSION_1_0, "items": items}
 
 
 # ── overview (§6.4) — static path before {instrument} ────────────────────────
@@ -718,7 +810,7 @@ async def sentiment_history(
         return _db_error(str(e))
 
     return {
-        "contract_version": CONTRACT_VERSION,
+        "contract_version": CONTRACT_VERSION_1_0,
         "instrument": data["instrument"],
         "market": data["market"],
         "kind": "sentiment",
@@ -749,22 +841,11 @@ async def sentiment_point(
 # Fundamental kind (§3) — sourced from KAP "Finansal Tablolar"
 # ════════════════════════════════════════════════════════════════════════════
 
-async def _on_demand_fundamental_fetch(
-    instrument: str,
-    db_manager: DatabaseManager,
-    repo,
-    market: str,
-    as_of: Optional[str] = None,
-    contract_version: str = "1.0",
-) -> dict:
-    """Trigger a live KAP scrape for *instrument* and re-query the repo.
-
-    Called when the DB has no row for the ticker.  Best-effort: if the scrape
-    fails we still return the unavailable envelope rather than raising.
-
-    If the instrument's mkkMemberOid is not yet known, calls refresh_member_oids
-    first to populate it from KAP's member API, then retries the scrape.
-    """
+async def _fetch_fundamental_in_background(
+    instrument: str, db_manager: DatabaseManager
+) -> None:
+    """Actually run the live KAP scrape. Never awaited by a request handler —
+    see `_spawn_on_demand_fundamental_fetch`."""
     from scrapers.kap_scraper import KAPScraper
     from infrastructure.contracts.instrument_identity_map import resolve_member_oid
 
@@ -775,29 +856,38 @@ async def _on_demand_fundamental_fetch(
     try:
         scraper = KAPScraper(db_manager=db_manager)
 
-        # If OID is unknown, try to discover all OIDs before scraping.
+        # If OID is unknown, discover it before scraping. P2: KAP's
+        # `member/filter` POST (`refresh_member_oids`) is a confirmed dead
+        # endpoint (live 404, not transient/anti-bot) — trying it first wastes
+        # a multi-proxy JS-injection cascade (45s+) on every miss before ever
+        # reaching the GET fallback, which is why fundamental coverage stayed
+        # at 0. Go straight to the GET-based resolution, which is verified
+        # live and working.
         if resolve_member_oid(instrument, db_manager=db_manager) is None:
             logger.info(
-                "mkkMemberOid for %s unknown — running refresh_member_oids first",
+                "mkkMemberOid for %s unknown — resolving via GET (member/filter POST is dead)",
                 instrument,
             )
             try:
-                await scraper.refresh_member_oids()
+                await scraper.refresh_member_oids_via_get(instruments=[instrument])
             except Exception as exc:
-                logger.warning("refresh_member_oids failed: %s", exc)
-            # If POST-based refresh failed, try the GET-based fallback.
-            if resolve_member_oid(instrument, db_manager=db_manager) is None:
-                try:
-                    await scraper.refresh_member_oids_via_get(instruments=[instrument])
-                except Exception as exc:
-                    logger.warning("refresh_member_oids_via_get failed: %s", exc)
+                logger.warning("refresh_member_oids_via_get failed: %s", exc)
 
         await scraper.scrape_financial_statements(instruments=[instrument])
     except Exception as exc:
         logger.warning(
             "on-demand KAP fetch for %s failed: %s", instrument, exc
         )
-    return repo.get_point(instrument, market, as_of, contract_version=contract_version)
+
+
+def _spawn_on_demand_fundamental_fetch(instrument: str, db_manager: DatabaseManager) -> None:
+    """P1 fix: fire the KAP scrape in the background; never await it in a
+    request handler. The caller returns the current (unavailable) envelope
+    immediately — a later request will see the data once the scrape lands."""
+    _spawn_on_demand_fetch(
+        ("fundamental", "bist", instrument),
+        lambda: _fetch_fundamental_in_background(instrument, db_manager),
+    )
 
 
 # ── batch (§6.2) ──────────────────────────────────────────────────────────────
@@ -816,10 +906,7 @@ async def fundamental_batch(
                 contract_version=contract_version,
             )
             if point.get("status") == "unavailable" and request.as_of is None:
-                point = await _on_demand_fundamental_fetch(
-                    instrument, db_manager, repo, request.market.value,
-                    contract_version=contract_version,
-                )
+                _spawn_on_demand_fundamental_fetch(instrument, db_manager)
             items.append(point)
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")
@@ -879,10 +966,7 @@ async def fundamental_point(
     try:
         result = repo.get_point(instrument, market.value, as_of, contract_version=resolved_version)
         if result.get("status") == "unavailable" and as_of is None:
-            result = await _on_demand_fundamental_fetch(
-                instrument, db_manager, repo, market.value,
-                contract_version=resolved_version,
-            )
+            _spawn_on_demand_fundamental_fetch(instrument, db_manager)
         return result
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")
@@ -908,19 +992,9 @@ def _market_repo(db_manager: DatabaseManager) -> MarketRepository:
     return MarketRepository(db_manager)
 
 
-async def _on_demand_market_fetch(
-    instrument: str,
-    db_manager: DatabaseManager,
-    repo: MarketRepository,
-    market: str,
-    as_of: Optional[str] = None,
-    contract_version: str = "1.0",
-) -> dict:
-    """Trigger a live fetch for *instrument* on a cache miss and re-query.
-
-    Mirrors `_on_demand_fundamental_fetch`'s pattern: best-effort, the caller
-    still gets the (possibly still-unavailable) envelope if the fetch fails.
-    """
+async def _fetch_market_in_background(instrument: str, db_manager: DatabaseManager, market: str) -> None:
+    """Actually run the live fetch. Never awaited by a request handler — see
+    `_spawn_on_demand_market_fetch`."""
     market_key = (market or "").strip().lower()
     try:
         if market_key == "bist":
@@ -937,7 +1011,16 @@ async def _on_demand_market_fetch(
             db_manager.upsert_coingecko_market_history(instrument, payload["series"])
     except Exception as exc:  # noqa: BLE001 - best-effort, honest unavailable on failure
         logger.warning("on-demand market fetch for %s/%s failed: %s", market, instrument, exc)
-    return repo.get_point(instrument, market, as_of, contract_version=contract_version)
+
+
+def _spawn_on_demand_market_fetch(instrument: str, db_manager: DatabaseManager, market: str) -> None:
+    """P1/C5 fix: fire the market data fetch in the background; never await it
+    in a request handler. The caller returns the current (unavailable)
+    envelope immediately — a later request will see the data once it lands."""
+    _spawn_on_demand_fetch(
+        ("market", market, instrument),
+        lambda: _fetch_market_in_background(instrument, db_manager, market),
+    )
 
 
 @router.post("/market/batch")
@@ -955,10 +1038,7 @@ async def market_batch(
                 contract_version=contract_version,
             )
             if point.get("status") == "unavailable" and request.as_of is None:
-                point = await _on_demand_market_fetch(
-                    instrument, db_manager, repo, request.market.value,
-                    contract_version=contract_version,
-                )
+                _spawn_on_demand_market_fetch(instrument, db_manager, request.market.value)
             items.append(point)
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")
@@ -1016,10 +1096,7 @@ async def market_point(
     try:
         result = repo.get_point(instrument, market.value, as_of, contract_version=resolved_version)
         if result.get("status") == "unavailable" and as_of is None:
-            result = await _on_demand_market_fetch(
-                instrument, db_manager, repo, market.value,
-                contract_version=resolved_version,
-            )
+            _spawn_on_demand_market_fetch(instrument, db_manager, market.value)
         return result
     except DatabaseManager.PoolExhaustedError:
         return _db_error("database temporarily unavailable")

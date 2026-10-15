@@ -64,9 +64,24 @@ def make_client(db: FakeDB) -> TestClient:
 
 
 class TestPoint:
-    def test_ok_envelope_shape_1_0(self):
+    def test_ok_envelope_shape_default_is_1_1(self):
+        """provider-wait-list.md §7 C1: 1.1 is the server default now, not an
+        opt-in — a bare request already carries field_status etc."""
         client = make_client(FakeDB(point_rows=[_row()]))
         body = client.get("/api/external/v1/market/THYAO?market=bist").json()
+
+        assert body["contract_version"] == "1.1"
+        assert body["instrument"] == "THYAO"
+        assert body["kind"] == "market"
+        assert body["status"] == "ok"
+        assert body["as_of"] == "2026-05-08T00:00:00Z"
+        assert "field_status" in body
+
+    def test_explicit_1_0_still_opts_out_to_the_legacy_shape(self):
+        client = make_client(FakeDB(point_rows=[_row()]))
+        body = client.get(
+            "/api/external/v1/market/THYAO?market=bist&contract_version=1.0"
+        ).json()
 
         assert body["contract_version"] == "1.0"
         assert body["instrument"] == "THYAO"
@@ -89,6 +104,24 @@ class TestPoint:
         assert payload["usd_try"] == 40.1
         assert payload["close_usd"] == 7.12
         assert "open_try" not in payload  # no upstream source — never fabricated
+
+    def test_payload_carries_trading_date(self):
+        """provider-wait-list.md §7 C3: every market payload must carry its
+        own trading_date, not just the envelope's as_of."""
+        client = make_client(FakeDB(point_rows=[_row(market_date=date(2026, 5, 8))]))
+        payload = client.get("/api/external/v1/market/THYAO?market=bist").json()["payload"]
+        assert payload["trading_date"] == "2026-05-08"
+
+    def test_open_try_is_unavailable_not_fabricated(self):
+        """C3's other half: open_try belongs in the field list, but İş Yatırım
+        has no upstream source for it — field_status must say so rather than
+        silently omitting the field from both payload and field_status."""
+        client = make_client(FakeDB(point_rows=[_row()]))
+        body = client.get(
+            "/api/external/v1/market/THYAO?market=bist&contract_version=1.1"
+        ).json()
+        assert "open_try" not in body["payload"]
+        assert body["field_status"]["open_try"] == "unavailable"
 
     def test_contract_1_1_point_in_time_fields_equal_trading_date(self):
         client = make_client(FakeDB(point_rows=[_row()]))
@@ -133,6 +166,15 @@ class TestHistory:
         assert body["kind"] == "market"
         assert len(body["items"]) == 2
         assert body["next_cursor"] is not None
+
+    def test_items_carry_trading_date(self):
+        rows = [_row(market_date=date(2026, 5, d)) for d in range(1, 3)]
+        client = make_client(FakeDB(history_rows=rows))
+        body = client.get(
+            "/api/external/v1/market/THYAO/history?market=bist&limit=10"
+        ).json()
+        dates = {item["payload"]["trading_date"] for item in body["items"]}
+        assert dates == {"2026-05-01", "2026-05-02"}
 
 
 class TestBatch:

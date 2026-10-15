@@ -53,7 +53,7 @@ class TestPoint:
         client = make_client(FakeDB(point_rows=[_row()]))
         body = client.get("/api/external/v1/ownership/THYAO?market=bist").json()
 
-        assert body["contract_version"] == "1.0"
+        assert body["contract_version"] == "1.1"
         assert body["kind"] == "ownership"
         assert body["status"] == "ok"
         assert body["payload"]["foreign_ownership_pct"] == 0.42
@@ -111,5 +111,5 @@ class TestCollectionTrigger:
         assert r.json()["status"] == "started"
 
         status = client.get("/api/external/v1/ownership/collection-status").json()
-        assert status["contract_version"] == "1.0"
+        assert status["contract_version"] == "1.1"
         assert "total" in status

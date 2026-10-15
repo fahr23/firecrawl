@@ -203,18 +203,30 @@ class MarketRepository:
             return market_date if isinstance(market_date, date) else _parse_trading_date(market_date, config.date_format)
         return _parse_trading_date((row.get("data") or {}).get("trading_date"), config.date_format)
 
-    def _payload(self, config: _MarketConfig, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _payload(
+        self, config: _MarketConfig, data: Dict[str, Any], trading_date: Optional[date]
+    ) -> Dict[str, Any]:
+        # provider-wait-list.md §2/§7 C3: every market payload must carry its
+        # own trading_date — the row IS a daily observation, so this is always
+        # known whenever the envelope is "ok", never a source-dependent field.
         payload: Dict[str, Any] = {}
+        if trading_date is not None:
+            payload["trading_date"] = trading_date.isoformat()
         for payload_field, source_field in config.field_map:
             value = data.get(source_field)
             if value is not None:
                 payload[payload_field] = value
         return payload
 
-    def _field_status(self, config: _MarketConfig, data: Dict[str, Any]) -> Dict[str, str]:
+    def _field_status(
+        self, config: _MarketConfig, data: Dict[str, Any], trading_date: Optional[date]
+    ) -> Dict[str, str]:
         status = {
-            payload_field: ("reported" if data.get(source_field) is not None else "unavailable")
-            for payload_field, source_field in config.field_map
+            "trading_date": "reported" if trading_date is not None else "unavailable",
+            **{
+                payload_field: ("reported" if data.get(source_field) is not None else "unavailable")
+                for payload_field, source_field in config.field_map
+            },
         }
         # Fields this market's source never provides at all — honest absence,
         # not a guess (e.g. coin has no OHLC high/low on the free daily tier).
@@ -242,7 +254,7 @@ class MarketRepository:
             "source": config.source,
             "freshness_seconds": _freshness_seconds(trading_date),
             "status": "ok",
-            "payload": self._payload(config, row["data"]),
+            "payload": self._payload(config, row["data"], trading_date),
         }
         if contract_version != "1.0":
             envelope.update({
@@ -251,7 +263,7 @@ class MarketRepository:
                 "period_end": as_of_iso,
                 "fetched_at": as_of_iso,
                 "revision_id": f"{market}:{instrument}:{trading_date.isoformat()}" if trading_date else None,
-                "field_status": self._field_status(config, row["data"]),
+                "field_status": self._field_status(config, row["data"], trading_date),
             })
         return envelope
 
@@ -260,7 +272,7 @@ class MarketRepository:
     ) -> Dict[str, Any]:
         trading_date = self._as_of(config, row)
         as_of_iso = _to_iso_utc(trading_date)
-        item = {"as_of": as_of_iso, "payload": self._payload(config, row["data"])}
+        item = {"as_of": as_of_iso, "payload": self._payload(config, row["data"], trading_date)}
         if contract_version != "1.0":
             item.update({
                 "published_at": as_of_iso,
@@ -268,7 +280,7 @@ class MarketRepository:
                 "period_end": as_of_iso,
                 "fetched_at": as_of_iso,
                 "status": "ok",
-                "field_status": self._field_status(config, row["data"]),
+                "field_status": self._field_status(config, row["data"], trading_date),
             })
         return item
 
