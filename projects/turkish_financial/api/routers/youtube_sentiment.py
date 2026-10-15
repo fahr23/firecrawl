@@ -110,7 +110,7 @@ async def set_youtube_schedule(request: YouTubeScheduleConfigRequest):
 
 # ── collect trigger ───────────────────────────────────────────────────────────
 
-@router.post("/youtube-sentiment/collect", status_code=202)
+@router.post("/youtube-sentiment/collect")
 async def youtube_sentiment_collect(
     request: YouTubeCollectRequest,
     db_manager: DatabaseManager = Depends(get_db_manager),
@@ -118,7 +118,8 @@ async def youtube_sentiment_collect(
     """
     Start one YouTube sentiment collection run in the background.
 
-    Returns 202 at once (409 if a run is already going); the result lands in
+    Returns 200 {"status": "started"} at once (409 if a run is already going;
+    F23's client logs any non-200 as a warning, so not 202); the result lands in
     GET /youtube-sentiment/schedule (`last_result`). A run takes minutes, far
     longer than a caller's read timeout (F23 gives up after 8s), so it is never
     held open on the request.

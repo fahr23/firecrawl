@@ -69,7 +69,7 @@ def test_run_off_loop_returns_the_pipeline_result():
         loop.close()
 
 
-def test_youtube_collect_returns_202_and_health_answers_while_it_runs():
+def test_youtube_collect_returns_at_once_and_health_answers_while_it_runs():
     """F23 gives up after 8s, so the collect must answer at once and run in the
     background; /health must stay fast while the blocking pipeline runs."""
     from api.youtube_scheduler import scheduler
@@ -96,7 +96,7 @@ def test_youtube_collect_returns_202_and_health_answers_while_it_runs():
             time.sleep(0.05)
         schedule = client.get("/api/external/v1/youtube-sentiment/schedule").json()
 
-    assert started.status_code == 202 and started.json()["status"] == "started"
+    assert started.status_code == 200 and started.json()["status"] == "started"
     assert post_elapsed < 0.5, f"collect held the request for {post_elapsed:.2f}s"
     assert second.status_code == 409
     assert health.status_code == 200
