@@ -14,8 +14,13 @@ data:
   REDIS_URL: "redis://redis:6379"
   REDIS_RATE_LIMIT_URL: "redis://redis:6379"
   NUQ_RABBITMQ_URL: "amqp://rabbitmq:5672"
-  PLAYWRIGHT_MICROSERVICE_URL: "http://playwright-service:3000/scrape"
-  HTML_TO_MARKDOWN_SERVICE_URL: "http://go-html-to-md-service:8080"
+  # Fully qualified on purpose: Firecrawl's HTTP agents resolve hosts with
+  # cacheable-lookup (dns.resolve4), which ignores the pod's search domains. A bare
+  # "playwright-service" then goes to the upstream resolver, and a home router's
+  # catch-all answer (e.g. 192.168.1.1) silently breaks rendering. Both overlays
+  # use the data-hub namespace.
+  PLAYWRIGHT_MICROSERVICE_URL: "http://playwright-service.data-hub.svc.cluster.local:3000/scrape"
+  HTML_TO_MARKDOWN_SERVICE_URL: "http://go-html-to-md-service.data-hub.svc.cluster.local:8080"
   HOST: "0.0.0.0"
   PORT: "3002"
   INTERNAL_PORT: "3002"
