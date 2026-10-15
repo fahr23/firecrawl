@@ -701,3 +701,46 @@ class TestFetchKapApiJsonFallback:
             "https://www.kap.org.tr/tr/api/financialTable/listCompanyExcelMembers/abc/2025/T"
         ))
         assert result == [{"member": "x"}]
+
+
+def _run_private(coro):
+    """Run on a private loop. asyncio.run() would clear the main thread's default
+    loop, breaking legacy get_event_loop()-based tests later in the session."""
+    import asyncio
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
+class TestBistDirectoryCache:
+    """The company list is rendered once per run, not once per ticker."""
+
+    def setup_method(self):
+        from scrapers.kap_scraper import KAPScraper
+        KAPScraper._BIST_DIRECTORY_CACHE.update({"at": 0.0, "data": {}})
+
+    def test_second_listing_is_served_from_cache(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from scrapers.kap_scraper import KAPScraper
+
+        page = "[THYAO](https://www.kap.org.tr/tr/sirket-bilgileri/ozet/1-thy)"
+        scrape = AsyncMock(return_value=page)
+        with patch.object(KAPScraper, "_scrape_kap_page", scrape):
+            first = _run_private(KAPScraper(db_manager=None).list_bist_companies_via_get())
+            second = _run_private(KAPScraper(db_manager=None).list_bist_companies_via_get())
+        assert first == second == {"THYAO": {"url": "https://www.kap.org.tr/tr/sirket-bilgileri/ozet/1-thy", "name": ""}}
+        assert scrape.await_count == 1
+
+    def test_failed_render_is_not_cached(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from scrapers.kap_scraper import KAPScraper
+
+        scrape = AsyncMock(side_effect=[None, "[THYAO](https://www.kap.org.tr/tr/sirket-bilgileri/ozet/1-thy)"])
+        with patch.object(KAPScraper, "_scrape_kap_page", scrape):
+            assert _run_private(KAPScraper(db_manager=None).list_bist_companies_via_get()) == {}
+            assert "THYAO" in _run_private(KAPScraper(db_manager=None).list_bist_companies_via_get())
+        assert scrape.await_count == 2

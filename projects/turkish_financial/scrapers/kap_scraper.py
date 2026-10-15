@@ -30,6 +30,7 @@ from utils.pdf_downloader import PDFDownloader
 from utils.llm_analyzer import LLMAnalyzer, LocalLLMProvider, OpenAIProvider, GeminiProvider
 import csv
 import os
+import time
 import json as _json_lib
 import requests as _requests
 from config import config as _app_config
@@ -2059,6 +2060,9 @@ class KAPScraper(BaseScraper):
     # Tolerant of JSON-in-HTML escaping: the key appears as  mkkMemberOid\":\"<32hex>\"
     _MEMBER_OID_RE = re.compile(r'mkkMemberOid[\\":\s]{1,10}([0-9a-f]{32})')
 
+    _BIST_DIRECTORY_CACHE: Dict[str, Any] = {"at": 0.0, "data": {}}
+    BIST_DIRECTORY_TTL_S = float(os.getenv("KAP_DIRECTORY_TTL_S", "21600"))
+
     async def list_bist_companies_via_get(self) -> Dict[str, Dict[str, str]]:
         """
         Scrape KAP's public BIST companies page (GET) → {ticker: {url, name}}.
@@ -2068,6 +2072,13 @@ class KAPScraper(BaseScraper):
         we can then read the company's `mkkMemberOid` off the summary page — all over
         GET, sidestepping the blocked `member/filter` POST.
         """
+        # The ~300k-char company list barely changes; re-rendering it for every ticker
+        # in a collection run overloaded Firecrawl (timeouts). Cache a successful
+        # listing across instances; a failed render is never cached.
+        cache = KAPScraper._BIST_DIRECTORY_CACHE
+        if cache["data"] and time.monotonic() - cache["at"] < self.BIST_DIRECTORY_TTL_S:
+            return dict(cache["data"])
+
         result = await self._scrape_kap_page("https://www.kap.org.tr/tr/bist-sirketler")
         md = result or ""
         companies: Dict[str, Dict[str, str]] = {}
@@ -2077,6 +2088,8 @@ class KAPScraper(BaseScraper):
                 continue
             companies.setdefault(code, {"url": url, "name": ""})
         logger.info(f"Discovered {len(companies)} BIST tickers via GET page")
+        if companies:
+            cache.update({"at": time.monotonic(), "data": dict(companies)})
         return companies
 
     async def resolve_member_oid_via_get(self, company_url: str) -> Optional[str]:
