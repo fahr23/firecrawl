@@ -900,6 +900,35 @@ def _spawn_on_demand_fundamental_fetch(instrument: str, db_manager: DatabaseMana
     )
 
 
+class DisclosureCollectRequest(BaseModel):
+    days_back: int = Field(2, ge=1, le=31)
+
+
+@router.post("/kap/disclosures/collect")
+async def collect_kap_disclosures(
+    request: DisclosureCollectRequest = DisclosureCollectRequest(),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Store KAP disclosures (KAP's own index and ticker) and classify FA-07 events.
+
+    Uses KAP's disclosure search API over plain HTTP — no Firecrawl needed — so it
+    feeds events, dividends and earnings_calendar outside the collector window too.
+    """
+    from scrapers.kap_scraper import KAPScraper
+
+    scraper = KAPScraper(db_manager=db_manager)
+    try:
+        result = await run_off_loop(lambda: scraper.scrape_and_save_disclosures(days_back=request.days_back))
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"KAP disclosure collection failed: {e}", exc_info=True)
+        return _db_error(str(e))
+    body = {k: result.get(k) for k in ("success", "total", "saved", "error") if k in result}
+    status = 200 if result.get("success") else 502
+    return JSONResponse(status_code=status, content={"contract_version": CONTRACT_VERSION, **body})
+
+
 class FundamentalCollectRequest(BaseModel):
     # KAP is slow (Firecrawl page renders, rate-based anti-bot), so each daily
     # run handles a bounded batch; coverage accrues across runs.

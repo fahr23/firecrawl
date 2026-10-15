@@ -280,6 +280,20 @@ SAMPLE_DISCLOSURES = [
 ]
 
 
+def _sync_transport(fake_post):
+    """scrape_and_save_disclosures now calls the synchronous _post_kap_json_direct
+    (KAP's disclosure search API over plain HTTP) from a worker thread."""
+    import asyncio
+
+    def call(url, body):
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(fake_post(url, body))
+        finally:
+            loop.close()
+    return call
+
+
 class TestScrapeAndSaveDisclosures:
     def test_disclosures_saved_to_db(self):
         scraper = _make_scraper()
@@ -289,7 +303,7 @@ class TestScrapeAndSaveDisclosures:
         async def fake_post(url, body):
             return SAMPLE_DISCLOSURES
 
-        scraper._post_kap_api_json = fake_post
+        scraper._post_kap_json_direct = _sync_transport(fake_post)
         result = run(scraper.scrape_and_save_disclosures(days_back=7))
 
         assert result["success"] is True
@@ -306,7 +320,7 @@ class TestScrapeAndSaveDisclosures:
         async def fake_post(url, body):
             return SAMPLE_DISCLOSURES
 
-        scraper._post_kap_api_json = fake_post
+        scraper._post_kap_json_direct = _sync_transport(fake_post)
         run(scraper.scrape_and_save_disclosures(days_back=7))
 
         assert len(db.events) == 2
@@ -323,7 +337,7 @@ class TestScrapeAndSaveDisclosures:
         async def fake_post(url, body):
             return SAMPLE_DISCLOSURES[:1]
 
-        scraper._post_kap_api_json = fake_post
+        scraper._post_kap_json_direct = _sync_transport(fake_post)
         run(scraper.scrape_and_save_disclosures())
 
         disc = db.disclosures[0]
@@ -340,7 +354,7 @@ class TestScrapeAndSaveDisclosures:
         async def fake_post(url, body):
             return {"error": "not a list"}
 
-        scraper._post_kap_api_json = fake_post
+        scraper._post_kap_json_direct = _sync_transport(fake_post)
         result = run(scraper.scrape_and_save_disclosures())
 
         assert result["success"] is False
@@ -353,7 +367,7 @@ class TestScrapeAndSaveDisclosures:
         async def fake_post(url, body):
             return [{"stockCodes": "THYAO", "kapTitle": "No index"}]
 
-        scraper._post_kap_api_json = fake_post
+        scraper._post_kap_json_direct = _sync_transport(fake_post)
         result = run(scraper.scrape_and_save_disclosures())
 
         assert result["total"] == 1
@@ -370,7 +384,7 @@ class TestScrapeAndSaveDisclosures:
             captured_body.update(body)
             return []
 
-        scraper._post_kap_api_json = fake_post
+        scraper._post_kap_json_direct = _sync_transport(fake_post)
 
         with patch(
             "infrastructure.contracts.instrument_identity_map.resolve_member_oid",

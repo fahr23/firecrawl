@@ -2294,6 +2294,42 @@ class KAPScraper(BaseScraper):
     # scrape_and_save_disclosures — proper company disclosures → kap_disclosures
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _parse_kap_publish_date(raw: Any) -> Optional[datetime]:
+        """KAP publishDate ("14.10.2026 22:36:00", Istanbul) -> aware UTC; None if unparsable."""
+        from datetime import timezone
+
+        text = str(raw or "").strip()
+        for fmt in ("%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
+            try:
+                local = datetime.strptime(text[:19], fmt)
+            except ValueError:
+                continue
+            return (local - timedelta(hours=3)).replace(tzinfo=timezone.utc)
+        return None
+
+    def _post_kap_json_direct(self, url: str, body: Dict[str, Any]) -> Optional[Any]:
+        """POST JSON to a KAP site API route with browser-like headers; None on failure."""
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "tr",
+            "Content-Type": "application/json",
+            "Referer": f"{self.BASE_URL}/tr/bildirim-sorgu",
+        }
+        try:
+            resp = _requests.post(url, json=body, headers=headers, timeout=60)
+            if resp.status_code != 200:
+                logger.warning(f"KAP POST {url} -> HTTP {resp.status_code}: {resp.text[:200]}")
+                return None
+            return resp.json()
+        except Exception as e:
+            logger.warning(f"KAP POST {url} failed: {e}")
+            return None
+
     async def scrape_and_save_disclosures(
         self,
         days_back: int = 7,
@@ -2331,36 +2367,39 @@ class KAPScraper(BaseScraper):
                 if oid:
                     oid_list.append(oid)
 
+        # KAP's current disclosure search (what /tr/bildirim-sorgu calls). Plain HTTP
+        # POST, no browser needed; the old memberDisclosureQuery is gone (live
+        # failure 2026-10-15). Body mirrors the site's own request.
         body: Dict[str, Any] = {
             "fromDate": start_date.strftime("%Y-%m-%d"),
             "toDate": end_date.strftime("%Y-%m-%d"),
-            "year": "",
-            "prd": "",
-            "term": "",
-            "ruleType": "",
-            "bdkReview": "",
-            "disclosureClass": "",
-            "index": "",
-            "market": "",
-            "isLate": "",
-            "subjectList": subject_list or [],
+            "memberType": "IGS",
             "mkkMemberOidList": oid_list,
             "inactiveMkkMemberOidList": [],
-            "bdkMemberOidList": [],
+            "disclosureClass": "",
+            "subjectList": subject_list or [],
+            "isLate": "",
             "mainSector": "",
             "sector": "",
             "subSector": "",
-            "memberType": "IGS",
-            "fromSrc": "N",
+            "marketOid": "",
+            "index": "",
+            "bdkReview": "",
+            "bdkMemberOidList": [],
+            "year": "",
+            "term": "",
+            "ruleType": "",
+            "period": "",
+            "fromSrc": False,
             "srcCategory": "",
-            "discIndex": [],
+            "disclosureIndexList": [],
         }
 
-        url = f"{self.BASE_URL}/tr/api/memberDisclosureQuery"
-        data = await self._post_kap_api_json(url, body)
+        url = f"{self.BASE_URL}/tr/api/disclosure/members/byCriteria"
+        data = await asyncio.to_thread(self._post_kap_json_direct, url, body)
 
         if not isinstance(data, list):
-            logger.error(f"memberDisclosureQuery returned unexpected type: {type(data)}")
+            logger.error(f"disclosure/members/byCriteria returned unexpected type: {type(data)}")
             return {
                 "success": False,
                 "error": "invalid_response",
@@ -2382,16 +2421,12 @@ class KAPScraper(BaseScraper):
             stock_codes = [c.strip() for c in raw_codes.split(",") if c.strip()]
             primary_code = stock_codes[0] if stock_codes else None
 
-            # Parse date.
-            publish_date = None
-            date_str = (item.get("publishDate") or "").split("T")[0]
-            if date_str:
-                try:
-                    publish_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                except ValueError:
-                    pass
+            # publishDate is Istanbul local time, e.g. "14.10.2026 22:36:00".
+            published_at = self._parse_kap_publish_date(item.get("publishDate"))
+            publish_date = (published_at + timedelta(hours=3)).date() if published_at else None
 
-            title = (item.get("kapTitle") or item.get("subject") or "").strip()
+            # kapTitle is the company; the disclosure's own title is summary/subject.
+            title = (item.get("summary") or item.get("subject") or "").strip()
             subject = (item.get("subject") or "").strip()
             disclosure_type = (
                 item.get("disclosureType")
@@ -2417,7 +2452,7 @@ class KAPScraper(BaseScraper):
             disc_row: Dict[str, Any] = {
                 "disclosure_id": disclosure_index,
                 "stock_code": primary_code,
-                "company_name": item.get("memberName") or raw_codes,
+                "company_name": item.get("kapTitle") or item.get("memberName") or raw_codes,
                 "disclosure_type": disclosure_type,
                 "disclosure_date": publish_date,
                 "timestamp": item.get("publishDate") or "",
@@ -2452,6 +2487,10 @@ class KAPScraper(BaseScraper):
                     from domain.services.kap_event_classifier import classify
 
                     event = classify(disc_row)
+                    # Full publish time, not just the date; public on publication.
+                    if published_at is not None:
+                        event["published_at"] = published_at
+                        event["available_at"] = published_at
                     self.db_manager.upsert_kap_event({**event, "stock_code": primary_code})
                 except Exception as e:
                     logger.warning(f"FA-07 event classification failed for {disclosure_index}: {e}")

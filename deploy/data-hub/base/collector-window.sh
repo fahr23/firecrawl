@@ -72,8 +72,6 @@ collect() {
   trap sleep_stack EXIT
 
   if wake_stack; then
-    post "KAP disclosures" /api/v1/scrapers/kap \
-      "{\"days_back\": $days}" "${KAP_TIMEOUT_SECONDS:-3600}"
     post "news sentiment" /api/external/v1/news-sentiment/collect \
       "{\"days_back\": $days}" 1800
     if [ -n "${SOCIAL_TICKERS:-}" ]; then
@@ -96,6 +94,10 @@ collect() {
   trap - EXIT
 
   # These run inside the finance pod and do not use Firecrawl.
+  # KAP disclosures via KAP's disclosure search API (plain HTTP): stored under
+  # KAP's own index and ticker, and classified into events/dividends/calendar.
+  post "KAP disclosures" /api/external/v1/kap/disclosures/collect \
+    "{\"days_back\": $days}" 900
   post "YouTube sentiment" /api/external/v1/youtube-sentiment/collect \
     "{\"days_back\": $days, \"limit_per_channel\": ${YOUTUBE_LIMIT_PER_CHANNEL:-10}}" 3600
   if [ "${ISYATIRIM_ENABLED:-true}" = "true" ]; then
