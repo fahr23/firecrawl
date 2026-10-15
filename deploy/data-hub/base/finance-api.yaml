@@ -35,6 +35,12 @@ spec:
         ports:
         - containerPort: 8000
           name: http
+        # Keep serving until kube-proxy has dropped this pod from the Service;
+        # without it, callers get "connection refused" for a few seconds per deploy.
+        lifecycle:
+          preStop:
+            exec:
+              command: ["sleep", "5"]
         env:
         - name: FIRECRAWL_BASE_URL
           value: "http://firecrawl-api:3002"

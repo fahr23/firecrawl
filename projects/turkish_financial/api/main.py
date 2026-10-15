@@ -15,6 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from api.routers import scrapers, reports, health, sentiment, external_analysis, news_sentiment
 from api.routers import youtube_sentiment
+from api.routers import history_backed_kinds
 from utils.logger import setup_logging
 
 # Setup logging
@@ -157,6 +158,8 @@ app.include_router(sentiment.router, prefix="/api/v1/sentiment")
 app.include_router(sentiment.router, prefix="/api/sentiment", tags=["sentiment_legacy"])
 # External Analysis Provider — Data Contract v1.0 (consumed by strategy_management)
 app.include_router(external_analysis.router, prefix="/api/external/v1")
+# Point/batch reads for history-backed kinds, plus honest unavailable for unsourced ones
+app.include_router(history_backed_kinds.router, prefix="/api/external/v1")
 # News-portal sentiment (Bloomberg HT, Foreks, Mynet, Bigpara, Investing.com TR)
 app.include_router(news_sentiment.router, prefix="/api/external/v1")
 # YouTube finance channel sentiment

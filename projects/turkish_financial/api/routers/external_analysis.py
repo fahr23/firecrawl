@@ -1274,7 +1274,8 @@ _SUPPORTED_INDEX_CODES = {"XU100", "XU030", "XBANK", "XUSIN"}
 @router.get("/index/{code}/history")
 async def index_history(
     code: str,
-    market: Market = Query(Market.BIST),
+    # Series scope ("bist"), not the instrument-market enum.
+    market: str = Query("bist"),
     contract_version: str = Query(CONTRACT_VERSION),
 ):
     resolved_version = _resolve_contract_version(contract_version)
@@ -1287,7 +1288,7 @@ async def index_history(
     return {
         "contract_version": resolved_version,
         "instrument": index_code,
-        "market": market.value,
+        "market": market,
         "kind": "index",
         "items": [],
         "next_cursor": None,
@@ -1569,7 +1570,8 @@ async def macro_series_catalog(db_manager: DatabaseManager = Depends(get_db_mana
 @router.get("/macro/{series}/history")
 async def macro_history(
     series: str,
-    market: Market = Query(Market.BIST),
+    # Series scope: F23 sends market=tr for macro; the enum would reject it with 422.
+    market: str = Query("tr"),
     date_from: Optional[str] = Query(None, alias="from"),
     date_to: Optional[str] = Query(None, alias="to"),
     limit: int = Query(100, ge=1, le=1000),
