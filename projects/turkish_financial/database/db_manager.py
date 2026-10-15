@@ -16,6 +16,17 @@ from config import config
 logger = logging.getLogger(__name__)
 
 
+# Adapter item keys -> market_daily columns (mirrored by the views in migration 007).
+_BIST_MARKET_FIELDS = {
+    "close_try": "close", "high_try": "high", "low_try": "low", "average_price_try": "vwap",
+    "volume_try": "turnover", "market_cap_try": "market_cap",
+    "free_float_market_cap_try": "free_float_market_cap", "shares_outstanding": "shares_outstanding",
+    "usd_try": "usd_rate", "close_usd": "close_usd", "market_cap_usd": "market_cap_usd",
+    "free_float_market_cap_usd": "free_float_market_cap_usd", "index_value": "index_value",
+}
+_USA_MARKET_FIELDS = {"open": "open", "high": "high", "low": "low", "close": "close", "volume": "volume"}
+_COIN_MARKET_FIELDS = {"close": "close", "market_cap": "market_cap", "volume": "turnover"}
+
 class DatabaseManager:
     """Database connection and operations manager"""
     
@@ -1785,39 +1796,59 @@ class DatabaseManager:
 
     # ── İş Yatırım public market-history cache ──────────────────────────────
 
-    def upsert_isyatirim_market_history(self, ticker: str, series: List[Dict[str, Any]]) -> bool:
-        """Replace stored source rows by `(ticker, trading_date)`.
+    def _upsert_market_daily(
+        self, market: str, code: str, series: List[Dict[str, Any]], date_format: str,
+        fields: Dict[str, str], currency: str, source: str,
+    ) -> bool:
+        """Replace typed daily rows by (instrument, trading_date) in market_daily.
 
-        The normalized JSON is retained intact so future UI fields can be added
-        without a destructive migration or another upstream request.
+        `fields` maps the adapter's item keys to market_daily columns; the
+        compatibility views (isyatirim/yahoo/coingecko_market_history) map them
+        back, so readers see the same JSON they always did.
         """
+        columns = list(dict.fromkeys(fields.values()))
         rows = []
         for item in series:
             try:
-                market_date = datetime.strptime(str(item["trading_date"]), "%d-%m-%Y").date()
+                trading_date = datetime.strptime(str(item["trading_date"]), date_format).date()
             except (KeyError, TypeError, ValueError):
                 continue
-            rows.append((ticker.strip().upper(), market_date, Json(item)))
+            values = {col: None for col in columns}
+            for key, col in fields.items():
+                values[col] = item.get(key)
+            rows.append((market, code, trading_date, *[values[c] for c in columns], currency, source))
         if not rows:
             return False
+        col_sql = ", ".join(columns)
+        placeholders = ", ".join(["%s"] * len(columns))
+        updates = ", ".join(f"{c} = EXCLUDED.{c}" for c in columns)
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
             cursor.executemany(
-                """INSERT INTO isyatirim_market_history (ticker, market_date, data)
-                   VALUES (%s, %s, %s)
-                   ON CONFLICT (ticker, market_date) DO UPDATE SET
-                       data = EXCLUDED.data, fetched_at = CURRENT_TIMESTAMP""",
+                f"""INSERT INTO market_daily (instrument_id, trading_date, {col_sql}, currency, source)
+                    VALUES (instrument_id_for(%s, %s), %s, {placeholders}, %s, %s)
+                    ON CONFLICT (instrument_id, trading_date) DO UPDATE SET
+                        {updates}, currency = EXCLUDED.currency, source = EXCLUDED.source,
+                        fetched_at = CURRENT_TIMESTAMP""",
                 rows,
             )
             conn.commit()
             return True
         except Exception as exc:
-            logger.warning("Could not persist İş Yatırım market history for %s: %s", ticker, exc)
+            logger.warning("Could not persist %s market history for %s: %s", source, code, exc)
             conn.rollback()
             return False
         finally:
             self.return_connection(conn)
+
+    def upsert_isyatirim_market_history(self, ticker: str, series: List[Dict[str, Any]]) -> bool:
+        """Replace stored BIST rows by `(ticker, trading_date)` in market_daily.
+
+        Item keys outside _BIST_MARKET_FIELDS are not stored; a new upstream field
+        needs a market_daily column (migration) and a mapping entry.
+        """
+        return self._upsert_market_daily("bist", ticker, series, "%d-%m-%Y", _BIST_MARKET_FIELDS, "TRY", "isyatirim")
 
     def get_isyatirim_market_history(self, ticker: str, days: int, max_age_seconds: int) -> Dict[str, Any]:
         """Read a bounded database cache, ordered oldest to newest."""
@@ -1845,33 +1876,7 @@ class DatabaseManager:
         `scrapers/yahoo_market_data.py` stores `trading_date` as ISO
         "YYYY-MM-DD" (unlike İş Yatırım's "DD-MM-YYYY").
         """
-        rows = []
-        for item in series:
-            try:
-                market_date = datetime.strptime(str(item["trading_date"]), "%Y-%m-%d").date()
-            except (KeyError, TypeError, ValueError):
-                continue
-            rows.append((ticker.strip().upper(), market_date, Json(item)))
-        if not rows:
-            return False
-        conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.executemany(
-                """INSERT INTO yahoo_market_history (ticker, market_date, data)
-                   VALUES (%s, %s, %s)
-                   ON CONFLICT (ticker, market_date) DO UPDATE SET
-                       data = EXCLUDED.data, fetched_at = CURRENT_TIMESTAMP""",
-                rows,
-            )
-            conn.commit()
-            return True
-        except Exception as exc:
-            logger.warning("Could not persist Yahoo market history for %s: %s", ticker, exc)
-            conn.rollback()
-            return False
-        finally:
-            self.return_connection(conn)
+        return self._upsert_market_daily("usa", ticker, series, "%Y-%m-%d", _USA_MARKET_FIELDS, "USD", "yahoo")
 
     def get_yahoo_market_history(self, ticker: str, days: int, max_age_seconds: int) -> Dict[str, Any]:
         """Read a bounded database cache, ordered oldest to newest."""
@@ -1895,33 +1900,7 @@ class DatabaseManager:
 
     def upsert_coingecko_market_history(self, coin_id: str, series: List[Dict[str, Any]]) -> bool:
         """Replace stored coin market rows by `(coin_id, trading_date)`."""
-        rows = []
-        for item in series:
-            try:
-                market_date = datetime.strptime(str(item["trading_date"]), "%Y-%m-%d").date()
-            except (KeyError, TypeError, ValueError):
-                continue
-            rows.append((coin_id.strip().lower(), market_date, Json(item)))
-        if not rows:
-            return False
-        conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.executemany(
-                """INSERT INTO coingecko_market_history (coin_id, market_date, data)
-                   VALUES (%s, %s, %s)
-                   ON CONFLICT (coin_id, market_date) DO UPDATE SET
-                       data = EXCLUDED.data, fetched_at = CURRENT_TIMESTAMP""",
-                rows,
-            )
-            conn.commit()
-            return True
-        except Exception as exc:
-            logger.warning("Could not persist CoinGecko market history for %s: %s", coin_id, exc)
-            conn.rollback()
-            return False
-        finally:
-            self.return_connection(conn)
+        return self._upsert_market_daily("coin", coin_id, series, "%Y-%m-%d", _COIN_MARKET_FIELDS, "USD", "coingecko")
 
     def get_coingecko_market_history(self, coin_id: str, days: int, max_age_seconds: int) -> Dict[str, Any]:
         """Read a bounded database cache, ordered oldest to newest."""

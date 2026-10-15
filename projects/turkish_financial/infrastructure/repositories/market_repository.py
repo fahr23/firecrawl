@@ -215,6 +215,10 @@ class MarketRepository:
         for payload_field, source_field in config.field_map:
             value = data.get(source_field)
             if value is not None:
+                # Stored as float8; Postgres renders whole numbers without ".0", so
+                # coerce back to float to keep the served type stable.
+                if isinstance(value, int) and not isinstance(value, bool):
+                    value = float(value)
                 payload[payload_field] = value
         return payload
 

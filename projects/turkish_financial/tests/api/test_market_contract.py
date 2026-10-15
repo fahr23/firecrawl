@@ -211,3 +211,11 @@ class TestIndexStub:
         body = client.get("/api/external/v1/index/NOTREAL/history").json()
         assert body["status"] == "unavailable"
         assert "Unsupported index code" in body["detail"]
+
+
+def test_whole_number_values_are_served_as_floats():
+    """market_daily is float8; Postgres renders 395025000000.0 as 395025000000."""
+    client = make_client(FakeDB(point_rows=[_row(market_cap_try=395025000000, close_try=348)]))
+    payload = client.get("/api/external/v1/market/THYAO?market=bist").json()["payload"]
+    assert isinstance(payload["market_cap_try"], float) and payload["market_cap_try"] == 395025000000.0
+    assert isinstance(payload["close_try"], float)
