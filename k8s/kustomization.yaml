@@ -12,7 +12,6 @@ resources:
 - 12-postgres.yaml
 - 20-go-html-to-md.yaml
 - 21-playwright-service.yaml
-- 23-academic-search.yaml
 - 30-api.yaml
 - 40-ingress.yaml
 - 50-hpa.yaml

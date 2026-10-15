@@ -1,0 +1,86 @@
+# The Academic Search API. Projects/searches live in a SQLite file on the PVC, so
+# exactly one pod may run: replicas 1 and Recreate (never two writers on the file).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: academic-project-data
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: academic-search-api
+  labels:
+    app: academic-search-api
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: academic-search-api
+  template:
+    metadata:
+      labels:
+        app: academic-search-api
+    spec:
+      containers:
+      - name: academic-search-api
+        image: academic-search-api
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8010
+          name: http
+        envFrom:
+        - configMapRef:
+            name: academic-search-config
+        - secretRef:
+            name: academic-search-secrets
+            optional: true
+        resources:
+          requests:
+            memory: "96Mi"
+            cpu: "25m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 8010
+          initialDelaySeconds: 5
+          periodSeconds: 15
+          timeoutSeconds: 5
+        livenessProbe:
+          tcpSocket:
+            port: 8010
+          initialDelaySeconds: 20
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 5
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: academic-project-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: academic-search-api
+  labels:
+    app: academic-search-api
+spec:
+  selector:
+    app: academic-search-api
+  ports:
+  - name: http
+    port: 8010
+    targetPort: 8010

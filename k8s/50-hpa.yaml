@@ -10,8 +10,10 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: firecrawl-api
-  minReplicas: 3
-  maxReplicas: 10
+  # Capped 2026-10-15: with no metrics-server this HPA can't read CPU/memory, sat
+  # at maxReplicas (10 crash-looping, OOMKilled pods) and overloaded the machine.
+  minReplicas: 1
+  maxReplicas: 2
   metrics:
   - type: Resource
     resource:
@@ -38,8 +40,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: playwright-service
-  minReplicas: 2
-  maxReplicas: 6
+  minReplicas: 1
+  maxReplicas: 2
   metrics:
   - type: Resource
     resource:

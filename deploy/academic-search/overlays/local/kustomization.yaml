@@ -1,0 +1,32 @@
+# Local OrbStack dev workspace.
+#   kubectl --context orbstack apply -k deploy/academic-search/overlays/local
+#   API: http://localhost:30081 or http://academic.localhost:32080
+#        (in-cluster: academic-search-api.academic-search.svc:8010)
+#
+# Image: the arm64 build `docker compose build academic-search-api` makes.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: academic-search
+
+resources:
+- namespace.yaml
+- ingress.yaml
+- ../../base
+
+patches:
+- target:
+    kind: Service
+    name: academic-search-api
+  patch: |-
+    - op: add
+      path: /spec/type
+      value: NodePort
+    - op: add
+      path: /spec/ports/0/nodePort
+      value: 30081
+
+images:
+- name: academic-search-api
+  newName: firecrawl-academic-search-api
+  newTag: latest

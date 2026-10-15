@@ -24,7 +24,6 @@ spec:
     # -------------------------------------------------------------------------
     - firecrawl.localhost
     - api.localhost
-    - academic.localhost
     secretName: firecrawl-tls
   rules:
   # ---------------------------------------------------------------------------
@@ -54,16 +53,6 @@ spec:
             name: firecrawl-api
             port:
               number: 8000
-  - host: academic.localhost
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: academic-search-api
-            port:
-              number: 8010
 ---
 # Optional: NodePort service for testing without ingress
 apiVersion: v1

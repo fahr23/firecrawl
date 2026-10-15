@@ -1,0 +1,13 @@
+# Academic Search workspace: the literature-search API and its project store.
+# Overlays set the namespace, images and exposure:
+#   overlays/local    OrbStack dev cluster   -> namespace academic-search
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+- pairs:
+    app.kubernetes.io/part-of: academic-search
+
+resources:
+- config.yaml
+- api.yaml

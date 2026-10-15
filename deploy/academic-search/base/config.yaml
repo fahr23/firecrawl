@@ -1,0 +1,14 @@
+# Non-secret settings. Provider API keys (SEMANTIC_SCHOLAR_API_KEY, SERPER_API_KEY,
+# ELSEVIER_API_KEY, CLARIVATE_API_KEY, OPENAI/ANTHROPIC_API_KEY, ACADEMIC_SEARCH_EMAIL)
+# go in the optional `academic-search-secrets` Secret, created out of band.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: academic-search-config
+data:
+  # Firecrawl research is off: the API searches scholarly providers directly and
+  # this workspace runs no Firecrawl. Enabling it needs a reachable FIRECRAWL_API_URL.
+  ACADEMIC_ENABLE_FIRECRAWL_RESEARCH: "false"
+  ACADEMIC_PROJECT_DB_PATH: "/data/projects.db"
+  ACADEMIC_CORS_ORIGINS: "*"
+  PYTHONUNBUFFERED: "1"
