@@ -2,7 +2,6 @@
 FastAPI application for Turkish Financial Data Scraper REST API
 """
 import logging
-import json
 import os
 import time
 from contextlib import asynccontextmanager
@@ -22,75 +21,21 @@ from utils.logger import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
 
-# Request/Response logging middleware
+# Request logging middleware
 class RequestResponseLoggerMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # Log request
-        logger.info(f"\n{'='*80}")
-        logger.info(f"📥 INCOMING REQUEST")
-        logger.info(f"   Method: {request.method}")
-        logger.info(f"   Path: {request.url.path}")
-        logger.info(f"   Query: {request.url.query}")
-        
-        # Log request body if present
-        if request.method in ["POST", "PUT", "PATCH"]:
-            try:
-                body = await request.body()
-                if body:
-                    try:
-                        body_json = json.loads(body)
-                        logger.info(f"   Payload: {json.dumps(body_json, indent=6)}")
-                    except:
-                        logger.info(f"   Body: {body.decode()}")
-            except:
-                pass
-        
-        # Measure response time
         start_time = time.time()
-        
-        # Get response
         response = await call_next(request)
-        
         process_time = time.time() - start_time
 
-        # One self-contained line per request: the multi-line block below interleaves
-        # across concurrent requests, so its Path and Process Time can't be paired.
+        # One self-contained line per request. Bodies are deliberately not logged:
+        # buffering every response (several copies once parsed and pretty-printed)
+        # spiked memory into OOMKills and wrote ~100KB of log per large read.
         query = f"?{request.url.query}" if request.url.query else ""
         logger.info(
             f"ACCESS {request.method} {request.url.path}{query} "
             f"{response.status_code} {process_time:.3f}s"
         )
-
-        # Log response
-        logger.info(f"\n📤 OUTGOING RESPONSE")
-        logger.info(f"   Status Code: {response.status_code}")
-        logger.info(f"   Process Time: {process_time:.3f}s")
-        
-        # Try to read response body
-        try:
-            body = b""
-            async for chunk in response.body_iterator:
-                body += chunk
-            
-            try:
-                body_json = json.loads(body)
-                logger.info(f"   Payload: {json.dumps(body_json, indent=6)}")
-            except:
-                logger.info(f"   Body: {body.decode()[:500]}")
-            
-            # Return response with body
-            from starlette.responses import Response
-            return Response(
-                content=body,
-                status_code=response.status_code,
-                headers=dict(response.headers),
-                media_type=response.media_type
-            )
-        except Exception as e:
-            logger.info(f"   (Response body logging skipped)")
-        
-        logger.info(f"{'='*80}")
-        
         return response
 
 @asynccontextmanager

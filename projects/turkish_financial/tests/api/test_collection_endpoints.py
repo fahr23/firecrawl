@@ -35,6 +35,10 @@ class FakeDB:
             return self.queue_rows
         return []
 
+    def execute(self, sql, params=None):
+        self.queries.append((sql, params))
+        return True
+
     def upsert_isyatirim_market_history(self, ticker, series):
         self.market_upserts.append((ticker, series))
         return True

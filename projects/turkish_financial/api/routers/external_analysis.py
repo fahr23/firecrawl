@@ -941,7 +941,8 @@ _kap_fundamental_collection_state = {"status": "idle", "total": 0, "completed": 
 
 
 def _fundamental_collection_queue(db_manager: DatabaseManager, limit: int) -> List[str]:
-    """Never-collected tickers first, then the stalest."""
+    """Never-tried tickers first, then the stalest. A failed attempt counts as
+    "tried" so a ticker that never yields a statement doesn't lead every run."""
     try:
         rows = db_manager.query(
             """
@@ -951,8 +952,9 @@ def _fundamental_collection_queue(db_manager: DatabaseManager, limit: int) -> Li
                 SELECT stock_code, MAX(effective_at) AS last_at
                 FROM kap_fundamentals GROUP BY stock_code
             ) f ON f.stock_code = b.code
+            LEFT JOIN kap_fundamental_attempts a ON a.stock_code = b.code
             WHERE b.is_active = TRUE
-            ORDER BY f.last_at ASC NULLS FIRST, b.code
+            ORDER BY GREATEST(f.last_at, a.last_attempt_at) ASC NULLS FIRST, b.code
             LIMIT %s
             """,
             (limit,),
@@ -972,18 +974,32 @@ async def _collect_kap_fundamentals(db_manager: DatabaseManager, tickers: List[s
     for idx, ticker in enumerate(tickers):
         if idx:
             await asyncio.sleep(scraper.KAP_PAGE_DELAY_S)  # KAP anti-bot is rate-based
+        outcome = "error"
         try:
             if resolve_member_oid(ticker, db_manager=db_manager) is None:
                 # member/filter POST is dead (live 404); GET resolution only.
                 await scraper.refresh_member_oids_via_get(instruments=[ticker])
             result = await scraper.scrape_financial_statements(instruments=[ticker])
             if result.get("processed"):
+                outcome = "fetched"
                 _kap_fundamental_collection_state["fetched"] += 1
             else:
+                reasons = sorted({f.get("reason") or "unknown" for f in result.get("failed") or []}) or ["nothing_processed"]
+                outcome = ",".join(reasons)[:40]
+                logger.warning("KAP fundamental collection got nothing for %s: %s", ticker, outcome)
                 _kap_fundamental_collection_state["failed"] += 1
         except Exception as exc:  # noqa: BLE001 - one ticker must not stop the run
             logger.warning("KAP fundamental collection failed for %s: %s", ticker, exc)
             _kap_fundamental_collection_state["failed"] += 1
+        db_manager.execute(
+            """
+            INSERT INTO kap_fundamental_attempts (stock_code, last_attempt_at, last_outcome)
+            VALUES (%s, NOW(), %s)
+            ON CONFLICT (stock_code) DO UPDATE
+            SET last_attempt_at = EXCLUDED.last_attempt_at, last_outcome = EXCLUDED.last_outcome
+            """,
+            (ticker, outcome),
+        )
         _kap_fundamental_collection_state["completed"] += 1
     _kap_fundamental_collection_state.update({"status": "completed", "finished_at": datetime.now(timezone.utc).isoformat()})
 

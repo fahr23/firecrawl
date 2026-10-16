@@ -88,7 +88,7 @@ spec:
         - name: SENTIMENT_PROVIDER
           value: "keyword"
         - name: YOUTUBE_CHANNELS
-          value: "https://www.youtube.com/@bistyatirimcipsikolojisi/videos,https://www.youtube.com/@kanalfinans/videos,https://www.youtube.com/channel/UCIju0kyYHAqQePXdGFjhLdA/videos,https://www.youtube.com/@GedikYatirim/videos,https://www.youtube.com/@ZiraatYatirim/videos,https://www.youtube.com/@MeseleEkonomi/videos,https://www.youtube.com/@EkoTurkTV/videos,https://www.youtube.com/@infoyatirim/videos,https://www.youtube.com/@TacirlerYatirimMenkulDegerler/videos,https://www.youtube.com/@A1Capital/videos"
+          value: "https://www.youtube.com/@bistyatirimcipsikolojisi/videos,https://www.youtube.com/@kanalfinans/videos,https://www.youtube.com/channel/UCIju0kyYHAqQePXdGFjhLdA/videos,https://www.youtube.com/@GedikYatirim/videos,https://www.youtube.com/@ZiraatYatirim/videos,https://www.youtube.com/@MeseleEkonomi/videos,https://www.youtube.com/@EkoTurkTV/videos,https://www.youtube.com/@infoyatirim/videos,https://www.youtube.com/@TacirlerYatirim/videos,https://www.youtube.com/@A1CapitalYatirim/videos"
         - name: PYTHONUNBUFFERED
           value: "1"
         resources:
@@ -96,7 +96,9 @@ spec:
             memory: "160Mi"
             cpu: "25m"
           limits:
-            memory: "512Mi"
+            # Importing the app alone is ~190Mi and it idles near 320Mi;
+            # 512Mi OOMKilled it on 2026-10-15 during a collection run.
+            memory: "768Mi"
             cpu: "500m"
         readinessProbe:
           httpGet:
