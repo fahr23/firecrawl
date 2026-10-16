@@ -729,7 +729,8 @@ def _run_private(coro):
 
 
 class TestBistDirectoryCache:
-    """The company list is rendered once per run, not once per ticker."""
+    """The company list is rendered once per run, not once per ticker (Firecrawl
+    fallback path: the direct GET is patched to fail)."""
 
     def setup_method(self):
         from scrapers.kap_scraper import KAPScraper
@@ -742,7 +743,8 @@ class TestBistDirectoryCache:
 
         page = "[THYAO](https://www.kap.org.tr/tr/sirket-bilgileri/ozet/1-thy)"
         scrape = AsyncMock(return_value=page)
-        with patch.object(KAPScraper, "_scrape_kap_page", scrape):
+        with patch.object(KAPScraper, "_scrape_kap_page", scrape), \
+                patch.object(KAPScraper, "_get_kap_html_direct", return_value=None):
             first = _run_private(KAPScraper(db_manager=None).list_bist_companies_via_get())
             second = _run_private(KAPScraper(db_manager=None).list_bist_companies_via_get())
         assert first == second == {"THYAO": {"url": "https://www.kap.org.tr/tr/sirket-bilgileri/ozet/1-thy", "name": ""}}
@@ -754,7 +756,8 @@ class TestBistDirectoryCache:
         from scrapers.kap_scraper import KAPScraper
 
         scrape = AsyncMock(side_effect=[None, "[THYAO](https://www.kap.org.tr/tr/sirket-bilgileri/ozet/1-thy)"])
-        with patch.object(KAPScraper, "_scrape_kap_page", scrape):
+        with patch.object(KAPScraper, "_scrape_kap_page", scrape), \
+                patch.object(KAPScraper, "_get_kap_html_direct", return_value=None):
             assert _run_private(KAPScraper(db_manager=None).list_bist_companies_via_get()) == {}
             assert "THYAO" in _run_private(KAPScraper(db_manager=None).list_bist_companies_via_get())
         assert scrape.await_count == 2

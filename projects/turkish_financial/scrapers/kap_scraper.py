@@ -2058,7 +2058,11 @@ class KAPScraper(BaseScraper):
     # on a self-hosted Firecrawl without rotating proxies. Crank up via KAP_PAGE_DELAY_S.
     KAP_PAGE_DELAY_S = float(os.getenv("KAP_PAGE_DELAY_S", "4.0"))
     # Tolerant of JSON-in-HTML escaping: the key appears as  mkkMemberOid\":\"<32hex>\"
-    _MEMBER_OID_RE = re.compile(r'mkkMemberOid[\\":\s]{1,10}([0-9a-f]{32})')
+    # KAP issues both cases (4028e4a2... and 1DE05DAA...); keep the OID as given.
+    _MEMBER_OID_RE = re.compile(r'mkkMemberOid[\\":\s]{1,10}([0-9A-Fa-f]{32})')
+    # The directory page embeds one JSON object per company, with its OID and its
+    # stock code(s) ("A1CAP, ACP" for companies with more than one code).
+    _DIRECTORY_JSON_RE = re.compile(r'\{[^{}]*"stockCode":"[^"]*"[^{}]*\}')
 
     _BIST_DIRECTORY_CACHE: Dict[str, Any] = {"at": 0.0, "data": {}}
     BIST_DIRECTORY_TTL_S = float(os.getenv("KAP_DIRECTORY_TTL_S", "21600"))
@@ -2079,18 +2083,63 @@ class KAPScraper(BaseScraper):
         if cache["data"] and time.monotonic() - cache["at"] < self.BIST_DIRECTORY_TTL_S:
             return dict(cache["data"])
 
-        result = await self._scrape_kap_page("https://www.kap.org.tr/tr/bist-sirketler")
-        md = result or ""
-        companies: Dict[str, Dict[str, str]] = {}
-        for text, url in self._OZET_LINK_RE.findall(md):
-            code = text.strip().upper()
-            if not self._TICKER_RE.match(code):
-                continue
-            companies.setdefault(code, {"url": url, "name": ""})
-        logger.info(f"Discovered {len(companies)} BIST tickers via GET page")
+        # Plain HTTP first: the raw page carries every company's OID, so no browser
+        # render and no per-company page fetch are needed (works with Firecrawl asleep).
+        raw = await asyncio.to_thread(self._get_kap_html_direct, f"{self.BASE_URL}/tr/bist-sirketler")
+        companies = self.parse_bist_directory_json(raw or "")
+        if companies:
+            logger.info(f"Discovered {len(companies)} BIST tickers (with OIDs) via direct GET")
+        else:
+            result = await self._scrape_kap_page("https://www.kap.org.tr/tr/bist-sirketler")
+            for text, url in self._OZET_LINK_RE.findall(result or ""):
+                for code in self._split_stock_codes(text):
+                    companies.setdefault(code, {"url": url, "name": ""})
+            logger.info(f"Discovered {len(companies)} BIST tickers via GET page")
         if companies:
             cache.update({"at": time.monotonic(), "data": dict(companies)})
         return companies
+
+    @classmethod
+    def _split_stock_codes(cls, text: str) -> List[str]:
+        """'A1CAP, ACP' -> ['A1CAP', 'ACP']; drops anything that isn't a ticker."""
+        codes = (c.strip().upper() for c in (text or "").split(","))
+        return [c for c in codes if cls._TICKER_RE.match(c)]
+
+    @classmethod
+    def parse_bist_directory_json(cls, raw_html: str) -> Dict[str, Dict[str, str]]:
+        """Company objects embedded in the directory page -> {ticker: {url, name, oid}}."""
+        companies: Dict[str, Dict[str, str]] = {}
+        for blob in cls._DIRECTORY_JSON_RE.findall(raw_html.replace('\\"', '"')):
+            try:
+                item = _json_lib.loads(blob)
+            except ValueError:
+                continue
+            oid = str(item.get("mkkMemberOid") or "")
+            if not re.fullmatch(r"[0-9A-Fa-f]{32}", oid):
+                continue
+            for code in cls._split_stock_codes(item.get("stockCode") or ""):
+                companies.setdefault(code, {"url": "", "name": item.get("kapMemberTitle") or "", "oid": oid})
+        return companies
+
+    def _get_kap_html_direct(self, url: str) -> Optional[str]:
+        """GET a KAP page's raw HTML with browser-like headers; None on failure."""
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "tr",
+        }
+        try:
+            resp = _requests.get(url, headers=headers, timeout=60)
+            if resp.status_code != 200:
+                logger.warning(f"KAP GET {url} -> HTTP {resp.status_code}")
+                return None
+            return resp.text
+        except Exception as e:
+            logger.warning(f"KAP GET {url} failed: {e}")
+            return None
 
     async def resolve_member_oid_via_get(self, company_url: str) -> Optional[str]:
         """Read a company's `mkkMemberOid` (32-hex) off its summary page (GET)."""
@@ -2170,9 +2219,11 @@ class KAPScraper(BaseScraper):
             if not entry:
                 missing.append(code)
                 continue
-            if idx:
-                await asyncio.sleep(self.KAP_PAGE_DELAY_S)  # pace; KAP anti-bot is rate-based
-            oid = await self.resolve_member_oid_via_get(entry["url"])
+            oid = entry.get("oid")
+            if not oid:
+                if idx:
+                    await asyncio.sleep(self.KAP_PAGE_DELAY_S)  # pace; KAP anti-bot is rate-based
+                oid = await self.resolve_member_oid_via_get(entry["url"])
             if not oid:
                 missing.append(code)
                 continue
