@@ -565,21 +565,51 @@ async def _collect_all_isyatirim_fundamentals(db_manager: DatabaseManager, force
     _fundamental_collection_state.update({"status": "running", "total": len(tickers), "completed": 0, "fetched": 0, "cached": 0, "failed": 0, "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
     ttl = max(300, int(os.getenv("ISYATIRIM_FUNDAMENTALS_CACHE_TTL_SECONDS", "21600")))
     delay = max(0.1, float(os.getenv("ISYATIRIM_FUNDAMENTALS_COLLECTION_DELAY_SECONDS", "0.5")))
+    async def collect_one(ticker: str) -> None:
+        cached = db_manager.get_isyatirim_fundamentals(ticker, ttl)
+        if cached["fresh"] and cached["payload"].get("one_year_statement_history") and not force:
+            _fundamental_collection_state["cached"] += 1
+        else:
+            payload = await asyncio.to_thread(fetch_fundamentals, ticker)
+            db_manager.upsert_isyatirim_fundamentals(ticker, payload)
+            _fundamental_collection_state["fetched"] += 1
+
+    await _run_paced_with_retry(tickers, collect_one, _fundamental_collection_state, delay, "İş Yatırım bulk fundamentals")
+    _fundamental_collection_state.update({"status": "completed", "finished_at": datetime.now(timezone.utc).isoformat()})
+
+
+def _is_transient(exc: Exception) -> bool:
+    return isinstance(exc, (requests.Timeout, requests.ConnectionError))
+
+
+async def _run_paced_with_retry(tickers, collect_one, state, delay: float, label: str) -> None:
+    """Run collect_one per ticker, paced. Tickers that failed on a timeout or a
+    dropped connection (İş Yatırım slows down under load) get one more try after
+    a pause, so a slow spell doesn't cost a whole day of data. `failed` counts
+    only what is still failing after that."""
+    retry: List[str] = []
     for ticker in tickers:
         try:
-            cached = db_manager.get_isyatirim_fundamentals(ticker, ttl)
-            if cached["fresh"] and cached["payload"].get("one_year_statement_history") and not force:
-                _fundamental_collection_state["cached"] += 1
-            else:
-                payload = await asyncio.to_thread(fetch_fundamentals, ticker)
-                db_manager.upsert_isyatirim_fundamentals(ticker, payload)
-                _fundamental_collection_state["fetched"] += 1
+            await collect_one(ticker)
         except Exception as exc:  # noqa: BLE001 - one unavailable company must not stop the collection
-            logger.warning("İş Yatırım bulk fundamentals failed for %s: %s", ticker, exc)
-            _fundamental_collection_state["failed"] += 1
-        _fundamental_collection_state["completed"] += 1
+            if _is_transient(exc):
+                retry.append(ticker)
+            else:
+                logger.warning("%s failed for %s: %s", label, ticker, exc)
+                state["failed"] += 1
+        state["completed"] += 1
         await asyncio.sleep(delay)
-    _fundamental_collection_state.update({"status": "completed", "finished_at": datetime.now(timezone.utc).isoformat()})
+    if not retry:
+        return
+    await asyncio.sleep(float(os.getenv("ISYATIRIM_RETRY_PAUSE_SECONDS", "60")))
+    logger.info("%s: retrying %d ticker(s) that timed out", label, len(retry))
+    for ticker in retry:
+        try:
+            await collect_one(ticker)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("%s failed for %s after retry: %s", label, ticker, exc)
+            state["failed"] += 1
+        await asyncio.sleep(delay * 2)
 
 
 @router.post("/isyatirim/fundamentals/collect")
@@ -1370,22 +1400,27 @@ async def _collect_all_ownership_snapshots(db_manager: DatabaseManager) -> None:
     tickers = _active_bist_tickers(db_manager)
     _ownership_collection_state.update({"status": "running", "total": len(tickers), "completed": 0, "fetched": 0, "failed": 0, "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
     delay = max(0.1, float(os.getenv("ISYATIRIM_OWNERSHIP_COLLECTION_DELAY_SECONDS", "0.5")))
+    # The ownership % comes from the same company card the fundamentals run saves;
+    # reuse a same-day copy instead of downloading every card a second time.
+    ttl = max(300, int(os.getenv("ISYATIRIM_FUNDAMENTALS_CACHE_TTL_SECONDS", "21600")))
     today = _date.today()
-    for ticker in tickers:
-        try:
+
+    async def collect_one(ticker: str) -> None:
+        cached = db_manager.get_isyatirim_fundamentals(ticker, ttl)
+        if cached["fresh"] and cached["payload"]:
+            payload = cached["payload"]
+        else:
             payload = await asyncio.to_thread(fetch_fundamentals, ticker)
-            current = payload.get("current_valuation", {})
-            db_manager.upsert_isyatirim_ownership_snapshot(
-                ticker, today,
-                current.get("foreign_ownership_percent"),
-                current.get("free_float_percent"),
-            )
-            _ownership_collection_state["fetched"] += 1
-        except Exception as exc:  # noqa: BLE001 - one unavailable company must not stop the collection
-            logger.warning("Ownership snapshot failed for %s: %s", ticker, exc)
-            _ownership_collection_state["failed"] += 1
-        _ownership_collection_state["completed"] += 1
-        await asyncio.sleep(delay)
+            db_manager.upsert_isyatirim_fundamentals(ticker, payload)
+        current = payload.get("current_valuation", {})
+        db_manager.upsert_isyatirim_ownership_snapshot(
+            ticker, today,
+            current.get("foreign_ownership_percent"),
+            current.get("free_float_percent"),
+        )
+        _ownership_collection_state["fetched"] += 1
+
+    await _run_paced_with_retry(tickers, collect_one, _ownership_collection_state, delay, "Ownership snapshot")
     _ownership_collection_state.update({"status": "completed", "finished_at": datetime.now(timezone.utc).isoformat()})
 
 
