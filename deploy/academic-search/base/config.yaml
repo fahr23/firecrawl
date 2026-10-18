@@ -9,6 +9,8 @@ data:
   # Firecrawl research is off: the API searches scholarly providers directly and
   # this workspace runs no Firecrawl. Enabling it needs a reachable FIRECRAWL_API_URL.
   ACADEMIC_ENABLE_FIRECRAWL_RESEARCH: "false"
+  # Web of Science; also needs CLARIVATE_API_KEY in academic-search-secrets.
+  ACADEMIC_ENABLE_CLARIVATE: "true"
   ACADEMIC_PROJECT_DB_PATH: "/data/projects.db"
   ACADEMIC_CORS_ORIGINS: "*"
   PYTHONUNBUFFERED: "1"

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from .engine import AcademicSearchEngine
 from .models import Article
-from .project_store import ProjectStore
+from .project_store import DuplicateProjectName, ProjectStore
 
 
 SERVICE_VERSION = "1.0"
@@ -352,7 +352,10 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
         if (payload.default_year_min is not None and payload.default_year_max is not None
                 and payload.default_year_min > payload.default_year_max):
             raise HTTPException(status_code=422, detail="default_year_min must be less than or equal to default_year_max")
-        return store.create_project(payload.model_dump())
+        try:
+            return store.create_project(payload.model_dump())
+        except DuplicateProjectName as exc:
+            raise HTTPException(status_code=409, detail=f'A project named "{exc}" already exists') from exc
 
     @app.get("/api/v1/projects/{project_id}")
     async def get_project(
@@ -376,7 +379,10 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
         year_max = changes.get("default_year_max")
         if year_min is not None and year_max is not None and year_min > year_max:
             raise HTTPException(status_code=422, detail="default_year_min must be less than or equal to default_year_max")
-        project = store.update_project(project_id, changes)
+        try:
+            project = store.update_project(project_id, changes)
+        except DuplicateProjectName as exc:
+            raise HTTPException(status_code=409, detail=f'A project named "{exc}" already exists') from exc
         if not project:
             raise HTTPException(status_code=404, detail="Research project not found")
         return project

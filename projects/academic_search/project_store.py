@@ -20,6 +20,13 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_NULLABLE_FIELDS = {"research_question", "default_year_min", "default_year_max"}
+
+
+class DuplicateProjectName(ValueError):
+    pass
+
+
 class ProjectStore:
     """SQLite persistence for essay/research-project search evidence."""
 
@@ -91,6 +98,12 @@ class ProjectStore:
             ).fetchone()
         return self._project(row) if row else None
 
+    def _ensure_unique_name(self, name: str, exclude_id: Optional[str] = None) -> None:
+        wanted = name.strip().casefold()
+        rows = self._connection.execute("SELECT id, name FROM research_projects").fetchall()
+        if any(row["id"] != exclude_id and row["name"].strip().casefold() == wanted for row in rows):
+            raise DuplicateProjectName(name.strip())
+
     def create_project(self, data: Dict[str, Any]) -> Dict[str, Any]:
         project_id, now = str(uuid.uuid4()), _now()
         values = {
@@ -102,6 +115,7 @@ class ProjectStore:
             "default_year_max": data.get("default_year_max"),
         }
         with self._lock, self._connection:
+            self._ensure_unique_name(values["name"])
             self._connection.execute(
                 """INSERT INTO research_projects
                    (id, name, research_question, default_category, default_providers,
@@ -116,16 +130,21 @@ class ProjectStore:
         existing = self.get_project(project_id)
         if not existing:
             return None
-        allowed = {key: value for key, value in changes.items() if value is not None}
+        allowed = {
+            key: value for key, value in changes.items()
+            if value is not None or key in _NULLABLE_FIELDS
+        }
         if "name" in allowed:
             allowed["name"] = str(allowed["name"]).strip()
-        if "research_question" in allowed:
+        if allowed.get("research_question") is not None:
             allowed["research_question"] = str(allowed["research_question"]).strip() or None
         if not allowed:
             return existing
         allowed["updated_at"] = _now()
         columns = ", ".join(f"{key} = :{key}" for key in allowed)
         with self._lock, self._connection:
+            if "name" in allowed:
+                self._ensure_unique_name(allowed["name"], exclude_id=project_id)
             self._connection.execute(
                 f"UPDATE research_projects SET {columns} WHERE id = :id",
                 {"id": project_id, **allowed},

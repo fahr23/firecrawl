@@ -15,11 +15,19 @@ const exportProjectButton = document.querySelector("#export-project");
 const projectDialog = document.querySelector("#project-dialog");
 const projectForm = document.querySelector("#project-form");
 const cancelProjectButton = document.querySelector("#cancel-project");
+const createProjectButton = projectForm.querySelector("button[type='submit']");
+const projectError = document.querySelector("#project-error");
 const historyPanel = document.querySelector("#history-panel");
 const searchHistory = document.querySelector("#search-history");
 const coverage = document.querySelector("#coverage");
 
 const state = { categories: new Map(), projects: new Map() };
+const PROVIDER_IDS = {
+  "openalex": "openalex",
+  "semantic scholar": "semantic-scholar",
+  "arxiv": "arxiv",
+  "web of science": "clarivate",
+};
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
@@ -84,11 +92,17 @@ function repeatSearch(search) {
   document.querySelector("#year-min").value = search.year_min || "";
   document.querySelector("#limit").value = search.limit_value || manifest.limit || "20";
   const requested = (search.providers || manifest.providers_requested || [])
-    .map((provider) => String(provider).toLowerCase().replace(" ", "-"));
+    .map((provider) => PROVIDER_IDS[String(provider).toLowerCase()] || String(provider).toLowerCase())
+    .sort()
+    .join(",");
   const option = [...providerSelect.options].find((candidate) =>
-    requested.length === 1 && candidate.value === requested[0]
+    candidate.value.split(",").sort().join(",") === requested
   );
-  if (option && !option.disabled) providerSelect.value = option.value;
+  if (!option || option.disabled) {
+    statusText.textContent = "That search's source is not available here; pick a source and search again.";
+    return;
+  }
+  providerSelect.value = option.value;
   runSearch();
 }
 
@@ -235,26 +249,40 @@ newProjectButton.addEventListener("click", () => projectDialog.showModal());
 cancelProjectButton.addEventListener("click", () => projectDialog.close());
 projectForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (createProjectButton.disabled) return;
+  createProjectButton.disabled = true;
+  projectError.hidden = true;
   const formData = new FormData(projectForm);
-  const response = await fetch("/api/v1/projects", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      name: formData.get("name"),
-      research_question: formData.get("research_question"),
-      default_category: categorySelect.value,
-      default_providers: providerSelect.value,
-      default_year_min: document.querySelector("#year-min").value || null,
-    }),
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    statusText.textContent = payload.detail || "Project could not be created";
-    return;
+  try {
+    const response = await fetch("/api/v1/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: formData.get("name"),
+        research_question: formData.get("research_question"),
+        default_category: categorySelect.value,
+        default_providers: providerSelect.value,
+        default_year_min: document.querySelector("#year-min").value || null,
+      }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      projectError.textContent = typeof payload.detail === "string"
+        ? payload.detail
+        : "Project could not be created";
+      projectError.hidden = false;
+      return;
+    }
+    projectForm.reset();
+    projectDialog.close();
+    localStorage.setItem("academic-search-current-project", payload.id);
+    await refreshProjects(payload.id);
+  } catch {
+    projectError.textContent = "Project could not be created";
+    projectError.hidden = false;
+  } finally {
+    createProjectButton.disabled = false;
   }
-  projectForm.reset();
-  projectDialog.close();
-  await refreshProjects(payload.id);
 });
 
 exportProjectButton.addEventListener("click", () => {

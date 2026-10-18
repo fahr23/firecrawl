@@ -31,8 +31,13 @@ Optional provider keys go in a Secret the deployment reads if present:
 
 ```
 kubectl --context orbstack -n academic-search create secret generic academic-search-secrets \
-  --from-literal=SEMANTIC_SCHOLAR_API_KEY=... --from-literal=ACADEMIC_SEARCH_EMAIL=...
+  --from-literal=CLARIVATE_API_KEY=... --from-literal=SEMANTIC_SCHOLAR_API_KEY=... \
+  --from-literal=ACADEMIC_SEARCH_EMAIL=...
 ```
+
+Web of Science also needs `ACADEMIC_ENABLE_CLARIVATE: "true"` in `base/config.yaml` (on by default).
+Without `SEMANTIC_SCHOLAR_API_KEY`, Semantic Scholar's shared anonymous quota often answers 429,
+which the API reports as `rate_limited`.
 
 ## Copy the project store from a previous namespace
 

@@ -771,10 +771,11 @@ class SemanticScholarSearcher(BaseSearcher):
             if year_min:
                 params['year'] = f"{year_min}-{year_max or 2030}"
             
-            response = requests.get(url, params=params, timeout=15)
-            
-            if response.status_code == 200:
-                data = response.json()
+            api_key = self.config.api.semantic_scholar_api_key
+            headers = {'x-api-key': api_key} if api_key else None
+            data = self._make_request(url, params, headers)
+
+            if data is not None:
                 total_found = data.get('total', 0)
                 papers = data.get('data', [])
                 

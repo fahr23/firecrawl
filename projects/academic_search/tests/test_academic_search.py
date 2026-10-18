@@ -22,7 +22,7 @@ from academic_search import (
     JSONExporter, MarkdownExporter, CSVExporter,
     BaseSearcher, BaseAbstractEnricher
 )
-from academic_search.providers import ClarivateSearcher
+from academic_search.providers import ClarivateSearcher, SemanticScholarSearcher
 
 
 class TestArticle(unittest.TestCase):
@@ -237,6 +237,41 @@ class TestClarivateProvider(unittest.TestCase):
         self.assertEqual(searcher._get_sort_field("relevance"), "RS D")
         self.assertEqual(searcher._get_sort_field("citations"), "TC D")
         self.assertEqual(searcher._get_sort_field("year_desc"), "PY D")
+
+
+class TestSemanticScholarProvider(unittest.TestCase):
+
+    def _response(self, status, payload=None):
+        response = Mock(status_code=status)
+        response.json.return_value = payload or {}
+        return response
+
+    @patch("requests.get")
+    def test_rate_limit_is_reported_not_empty(self, mock_get):
+        mock_get.return_value = self._response(429)
+        searcher = SemanticScholarSearcher(Config(api=APIConfig()))
+
+        result = searcher.search("agent based carbon", 5)
+
+        self.assertEqual(result.articles, [])
+        self.assertEqual(searcher.last_failure["code"], "rate_limited")
+        outcome = AcademicSearchEngine._outcome_from_failure(searcher.source_name, searcher.last_failure)
+        self.assertEqual(outcome.status, "rate_limited")
+
+    @patch("requests.get")
+    def test_sends_api_key_and_parses_results(self, mock_get):
+        mock_get.return_value = self._response(200, {
+            "total": 1,
+            "data": [{"paperId": "p1", "title": "Agent-based carbon market model", "year": 2024}],
+        })
+        searcher = SemanticScholarSearcher(Config(api=APIConfig(semantic_scholar_api_key="s2-key")))
+
+        result = searcher.search("agent based carbon", 5)
+
+        self.assertEqual(mock_get.call_args.kwargs["headers"], {"x-api-key": "s2-key"})
+        self.assertEqual(result.total_found, 1)
+        self.assertEqual(len(result.articles), 1)
+        self.assertIsNone(searcher.last_failure)
 
 
 class TestCustomComponents(unittest.TestCase):

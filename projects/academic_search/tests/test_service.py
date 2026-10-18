@@ -159,6 +159,31 @@ def test_project_keeps_search_defaults_history_and_exportable_evidence():
     assert history[0]["manifest"]["deduplication_version"] == "doi-or-title-author-year-v1"
 
 
+def test_project_names_are_unique_ignoring_case_and_spaces():
+    client, _ = make_client()
+
+    first = client.post("/api/v1/projects", json={"name": "Carbon mitigation study"})
+    again = client.post("/api/v1/projects", json={"name": "  carbon MITIGATION study "})
+    other = client.post("/api/v1/projects", json={"name": "Carbon pricing study"})
+    renamed = client.patch(f"/api/v1/projects/{other.json()['id']}", json={"name": "CARBON mitigation study"})
+
+    assert first.status_code == 201
+    assert again.status_code == 409
+    assert other.status_code == 201
+    assert renamed.status_code == 409
+    assert [p["name"] for p in client.get("/api/v1/projects").json()["projects"]].count("Carbon mitigation study") == 1
+
+
+def test_clearing_the_year_in_a_project_search_clears_the_project_default():
+    client, _ = make_client()
+    project = client.post("/api/v1/projects", json={"name": "Year reset"}).json()
+
+    client.get("/api/v1/search", params={"q": "energy", "project_id": project["id"], "year_min": 2020})
+    client.get("/api/v1/search", params={"q": "energy", "project_id": project["id"]})
+
+    assert client.get(f"/api/v1/projects/{project['id']}").json()["default_year_min"] is None
+
+
 def test_project_search_rejects_an_unknown_project():
     client, _ = make_client()
     response = client.get("/api/v1/search", params={"q": "energy", "project_id": "missing"})
