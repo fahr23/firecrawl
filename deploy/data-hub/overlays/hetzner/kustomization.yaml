@@ -19,16 +19,16 @@ resources:
 images:
 - name: data-hub-api
   newName: ghcr.io/fahr23/turkish-financial-api
-  newTag: 2f8e6576f
+  newTag: a1cc03511
 - name: firecrawl-api
   newName: ghcr.io/fahr23/firecrawl-api
-  newTag: 1eef6f7cf
+  newTag: a1cc03511
 - name: firecrawl-playwright-service
   newName: ghcr.io/fahr23/firecrawl-playwright-service
-  newTag: 1eef6f7cf
+  newTag: a1cc03511
 - name: firecrawl-go-html-to-md
   newName: ghcr.io/fahr23/firecrawl-go-html-to-md
-  newTag: 1eef6f7cf
+  newTag: a1cc03511
 - name: firecrawl-nuq-postgres
   newName: ghcr.io/fahr23/firecrawl-nuq-postgres
-  newTag: 1eef6f7cf
+  newTag: a1cc03511
