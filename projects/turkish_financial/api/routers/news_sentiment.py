@@ -549,6 +549,33 @@ async def combined_sentiment_history(
     )
 
 
+class CombinedSentimentBatchRequest(BaseModel):
+    """§4 batch body, as for the other kinds; a stored read only, never a collection."""
+
+    market: Market
+    instruments: List[str] = Field(..., min_length=1, max_length=200)
+    as_of: Optional[str] = None
+
+
+@router.post("/combined-sentiment/batch")
+async def combined_sentiment_batch(
+    request: CombinedSentimentBatchRequest,
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Latest combined (news + social + YouTube + KAP) envelope per instrument."""
+    repo = CombinedSentimentRepository(db_manager)
+    items = []
+    try:
+        for instrument in request.instruments:
+            items.append(repo.get_point(instrument, request.market.value, request.as_of))
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Combined sentiment batch failed: {e}", exc_info=True)
+        return _db_error(str(e))
+    return {"contract_version": CONTRACT_VERSION, "items": items}
+
+
 @router.get("/combined-sentiment/{instrument}")
 async def combined_sentiment_point(
     instrument: str,

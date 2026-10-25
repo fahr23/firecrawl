@@ -49,6 +49,12 @@ from infrastructure.repositories.dividend_repository import DividendRepository
 from infrastructure.repositories.news_repository import NewsRepository
 from infrastructure.contracts.instrument_identity_map import STATIC_BIST_CATALOG
 from scrapers.isyatirim_market_data import build_market_history_payload, fetch_market_history
+from infrastructure.repositories.index_repository import (
+    METHOD as INDEX_METHOD,
+    PROVIDER_ID as INDEX_PROVIDER_ID,
+    VERIFIED_CODES as INDEX_VERIFIED_CODES,
+    IndexRepository,
+)
 from scrapers.isyatirim_fundamentals import fetch_fundamentals
 
 logger = logging.getLogger(__name__)
@@ -1340,14 +1346,21 @@ async def market_point(
 # ════════════════════════════════════════════════════════════════════════════
 # Index kind (FA-05) — market-wide index series (XU100, XU030, XBANK, XUSIN)
 #
-# No confirmed public data source yet: İş Yatırım's per-ticker HisseTekil endpoint
-# returns ok:true with an empty series for every index-code variant tried
-# (XU100, XU100.E, BIST100, "XU 100") — it does not serve index-level OHLC series.
-# Until a verified source is wired in, every index request is an honest
-# `unavailable` rather than a guess (§3.4). Tracked as a FA-05 follow-up.
+# XU100 is served from the `END_DEGER` value İş Yatırım carries on every stock's
+# daily row (verified = BIST 100 close; see IndexRepository). İş Yatırım's
+# per-ticker endpoint returns empty series for the index codes themselves
+# (XU100, XU100.E, BIST100, "XU 100"), so XU030, XBANK and XUSIN stay an honest
+# `unavailable` until a verified source exists (§3.4).
 # ════════════════════════════════════════════════════════════════════════════
 
 _SUPPORTED_INDEX_CODES = {"XU100", "XU030", "XBANK", "XUSIN"}
+# Liquid BIST 100 members whose daily rows carry END_DEGER; the first that
+# answers backfills the index history.
+_INDEX_SOURCE_TICKERS = ("THYAO", "GARAN", "AKBNK", "ASELS")
+
+
+def _index_repo(db_manager: DatabaseManager) -> IndexRepository:
+    return IndexRepository(db_manager)
 
 
 @router.get("/index/{code}/history")
@@ -1355,25 +1368,76 @@ async def index_history(
     code: str,
     # Series scope ("bist"), not the instrument-market enum.
     market: str = Query("bist"),
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    limit: int = Query(300, ge=1, le=1000),
     contract_version: str = Query(CONTRACT_VERSION),
+    db_manager: DatabaseManager = Depends(get_db_manager),
 ):
     resolved_version = _resolve_contract_version(contract_version)
     index_code = code.strip().upper()
-    detail = (
-        "No verified İş Yatırım (or other) data source for index-level history yet."
-        if index_code in _SUPPORTED_INDEX_CODES
-        else f"Unsupported index code '{index_code}'."
-    )
-    return {
+    envelope = {
         "contract_version": resolved_version,
         "instrument": index_code,
         "market": market,
         "kind": "index",
         "items": [],
         "next_cursor": None,
-        "status": "unavailable",
-        "detail": detail,
     }
+    if index_code not in INDEX_VERIFIED_CODES:
+        detail = (
+            "No verified İş Yatırım (or other) data source for this index's history yet."
+            if index_code in _SUPPORTED_INDEX_CODES
+            else f"Unsupported index code '{index_code}'."
+        )
+        return {**envelope, "status": "unavailable", "detail": detail}
+    try:
+        data = _index_repo(db_manager).get_history(index_code, date_from, date_to, limit)
+    except DatabaseManager.PoolExhaustedError:
+        return _db_error("database temporarily unavailable")
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"Index history failed: {e}", exc_info=True)
+        return _db_error(str(e))
+    if not data["items"]:
+        return {**envelope, "status": "unavailable", "detail": "No stored BIST 100 levels yet; run /index/collect."}
+    return {
+        **envelope,
+        "status": "ok",
+        "provider": INDEX_PROVIDER_ID,
+        "method": INDEX_METHOD,
+        "items": data["items"],
+        "dropped_dates": data["dropped_dates"],
+    }
+
+
+class IndexCollectRequest(BaseModel):
+    # One request returns up to `days` sessions of index levels.
+    days: int = Field(730, ge=1, le=730)
+
+
+@router.post("/index/collect")
+async def collect_index_history(
+    request: IndexCollectRequest = IndexCollectRequest(),
+    db_manager: DatabaseManager = Depends(get_db_manager),
+):
+    """Backfill XU100 levels from one liquid member's İş Yatırım daily history
+    (a single upstream request; the rows are stored like any market collection)."""
+    last_error = None
+    for ticker in _INDEX_SOURCE_TICKERS:
+        try:
+            payload = await asyncio.to_thread(fetch_market_history, ticker, request.days)
+        except Exception as exc:  # noqa: BLE001 - try the next member
+            last_error = exc
+            logger.warning("Index backfill via %s failed: %s", ticker, exc)
+            continue
+        series = payload["series"]
+        db_manager.upsert_isyatirim_market_history(ticker, series)
+        with_index = sum(1 for row in series if row.get("index_value") is not None)
+        return {"status": "ok", "code": "XU100", "source_instrument": ticker,
+                "sessions": len(series), "sessions_with_index": with_index}
+    return JSONResponse(status_code=502, content={
+        "status": "unavailable", "code": "XU100",
+        "detail": f"No İş Yatırım member history could be fetched: {last_error}"})
 
 
 # ════════════════════════════════════════════════════════════════════════════
