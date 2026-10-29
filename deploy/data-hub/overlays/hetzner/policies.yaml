@@ -61,8 +61,9 @@ spec:
   - from:
     - podSelector: {}
 ---
-# Only F23's strategy-management (the provider's sole caller) reads the API;
-# no other pod outside this namespace can, including the rest of backtofuture-prod.
+# Only F23's strategy-management and market-brief-publish (the provider's
+# callers) read the API; no other pod outside this namespace can, including
+# the rest of backtofuture-prod.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -80,6 +81,16 @@ spec:
       podSelector:
         matchLabels:
           app: strategy-management
+    ports:
+    - protocol: TCP
+      port: 8000
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: backtofuture-prod
+      podSelector:
+        matchLabels:
+          app: market-brief-publish
     ports:
     - protocol: TCP
       port: 8000
