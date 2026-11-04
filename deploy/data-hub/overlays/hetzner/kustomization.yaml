@@ -19,7 +19,7 @@ resources:
 images:
 - name: data-hub-api
   newName: ghcr.io/fahr23/turkish-financial-api
-  newTag: a1cc03511
+  newTag: 26968b592
 - name: firecrawl-api
   newName: ghcr.io/fahr23/firecrawl-api
   newTag: a1cc03511
