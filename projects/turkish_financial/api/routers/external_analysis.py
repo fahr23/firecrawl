@@ -1054,7 +1054,9 @@ async def collect_kap_fundamentals(
         if request.tickers
         else _fundamental_collection_queue(db_manager, request.max_instruments)
     )
-    _kap_fundamental_collection_state.update({"status": "running", "total": len(tickers), "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
+    # Reset the counters too: the start response otherwise reports the
+    # previous run's completed/failed numbers as if they were this run's.
+    _kap_fundamental_collection_state.update({"status": "running", "total": len(tickers), "completed": 0, "fetched": 0, "failed": 0, "started_at": datetime.now(timezone.utc).isoformat(), "finished_at": None})
     _kap_fundamental_collection_task = asyncio.create_task(
         run_off_loop(lambda: _collect_kap_fundamentals(db_manager, tickers))
     )
