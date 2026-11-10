@@ -327,6 +327,7 @@ class SearchResult:
     year_max: Optional[int] = None
     limit: Optional[int] = None
     deduplication_version: str = "doi-or-title-author-year-v1"
+    ordering_version: str = "provider-rank-interleave-v1"
     raw_article_count: int = 0
     deduplicated_article_count: int = 0
     derived_outputs: List[Dict[str, Any]] = field(default_factory=list)
@@ -381,6 +382,7 @@ class SearchResult:
             "deduplicated_article_count": self.deduplicated_article_count or self.count,
             "pagination": {"per_provider_limit": self.limit},
             "deduplication_version": self.deduplication_version,
+            "ordering_version": self.ordering_version,
         }
     
     def filter_by_year(self, min_year: int, max_year: Optional[int] = None) -> "SearchResult":

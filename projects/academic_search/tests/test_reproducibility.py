@@ -75,6 +75,49 @@ def test_global_limit_and_conservative_deduplication_preserve_distinct_short_tit
     assert [article.title for article in result.articles].count("AI") == 2
 
 
+def test_merged_results_interleave_provider_ranks_instead_of_sorting_by_year():
+    config = Config()
+    first = FixtureSearcher(config, "First", [
+        Article("First source best match", "https://a1", year="2010"),
+        Article("First source second match", "https://a2", year="2026"),
+        Article("First source third match", "https://a3", year="2026"),
+    ])
+    second = FixtureSearcher(config, "Second", [
+        Article("Second source best match", "https://b1", year="2015"),
+    ])
+
+    result = fixture_engine(first, second).search("research", max_results=3, use_all_sources=True)
+
+    assert [article.title for article in result.articles] == [
+        "First source best match", "Second source best match", "First source second match",
+    ]
+    assert [outcome.provider for outcome in result.provider_outcomes] == ["First", "Second"]
+    assert result.search_time is not None
+    assert result.manifest()["ordering_version"] == "provider-rank-interleave-v1"
+
+
+def test_arxiv_query_requires_every_term_unless_user_wrote_operators():
+    from academic_search.providers import ArXivSearcher
+
+    assert ArXivSearcher._build_query("agent based electricity") == (
+        "all:agent AND all:based AND all:electricity"
+    )
+    assert ArXivSearcher._build_query("agent-based, electricity") == "all:agent-based AND all:electricity"
+    assert ArXivSearcher._build_query("ti:agent OR abs:market") == "ti:agent OR abs:market"
+
+
+def test_pubmed_errors_are_reported_as_failures_not_empty_results():
+    from academic_search.providers import PubMedSearcher
+
+    throttled = requests.exceptions.HTTPError(response=Mock(status_code=429))
+    engine = fixture_engine(PubMedSearcher(Config()))
+    with patch("requests.get", side_effect=throttled):
+        result = engine.search("agent based electricity", max_results=5, use_all_sources=True)
+
+    assert result.provider_outcomes[0].status == "rate_limited"
+    assert result.provider_outcomes[0].provider == "PubMed"
+
+
 def test_abstract_enrichment_preserves_original_record_and_provenance():
     article = Article("Paper", "https://example.org", source="OpenAlex", raw_data={"abstract": None})
     article.set_enriched_abstract("A newly retrieved abstract.", "Crossref")
