@@ -20,9 +20,12 @@ from scrapers.base_scraper import BaseScraper
 from domain.entities.youtube_video import YouTubeVideo, PLATFORM_YOUTUBE
 
 try:
-    from youtube_transcript_api import YouTubeTranscriptApi
+    from youtube_transcript_api import RequestBlocked, YouTubeTranscriptApi
 except ImportError:  # pragma: no cover — optional dep; error is logged at call site
     YouTubeTranscriptApi = None  # type: ignore[assignment,misc]
+
+    class RequestBlocked(Exception):  # type: ignore[no-redef]
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +123,8 @@ class YouTubeScraper(BaseScraper):
 
         Returns (text, lang) where `text` is the joined caption string and `lang` is
         the language code. Returns (None, None) when captions are disabled or unavailable
-        (logged, not fatal).
+        (logged, not fatal). Raises RequestBlocked when YouTube blocks this IP, so the
+        caller can stop instead of repeating a request that cannot succeed.
         """
         if YouTubeTranscriptApi is None:
             logger.error("youtube-transcript-api is not installed; cannot fetch transcripts")
@@ -171,6 +175,8 @@ class YouTubeScraper(BaseScraper):
             text = " ".join(parts)
             return text or None, used_lang
 
+        except RequestBlocked:
+            raise
         except Exception as e:
             logger.info(f"Transcript unavailable for {video_id}: {e}")
             return None, None
@@ -197,6 +203,9 @@ class YouTubeScraper(BaseScraper):
         by_channel: Dict[str, int] = {}
         seen_video_ids: set[str] = set()
         cache_hits = 0
+        # Cloud IPs (e.g. Hetzner) are usually blocked by YouTube; once one fetch
+        # is blocked the rest of this run would be too.
+        transcripts_blocked = False
 
         for channel_url in channel_urls or []:
             channel_videos: List[YouTubeVideo] = []
@@ -209,6 +218,8 @@ class YouTubeScraper(BaseScraper):
                         channel_videos.append(cached)
                         seen_video_ids.add(vid_id)
                         cache_hits += 1
+                        continue
+                    if transcripts_blocked:
                         continue
                     try:
                         transcript_text, lang = self.fetch_transcript(vid_id)
@@ -228,6 +239,12 @@ class YouTubeScraper(BaseScraper):
                             )
                         )
                         seen_video_ids.add(vid_id)
+                    except RequestBlocked:
+                        transcripts_blocked = True
+                        logger.warning(
+                            "YouTube is blocking transcript requests from this IP; "
+                            "skipping caption fetches for the rest of this run"
+                        )
                     except Exception as e:
                         logger.error(f"Error processing video {vid_id}: {e}", exc_info=True)
             except Exception as e:
@@ -250,6 +267,7 @@ class YouTubeScraper(BaseScraper):
             "success": True,
             "total": len(all_videos),
             "cached": cache_hits,
+            "transcripts_blocked": transcripts_blocked,
             "by_channel": by_channel,
             "videos": all_videos,
         }

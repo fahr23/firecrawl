@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 import logging
 
+import requests
+
 from .models import Article, SearchResult
 from .config import Config
 
@@ -46,6 +48,18 @@ class BaseSearcher(ABC):
 
     def clear_last_failure(self) -> None:
         self.last_failure = None
+
+    @staticmethod
+    def _failure_from_exception(exc: Exception) -> Dict[str, str]:
+        """Classify a provider exception so it is not reported as an empty result."""
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 429:
+            return {"code": "rate_limited", "message": "provider rate limit reached"}
+        if status in (401, 403):
+            return {"code": "authentication", "message": "authentication failed"}
+        if isinstance(exc, requests.exceptions.Timeout):
+            return {"code": "timeout", "message": "provider request timed out"}
+        return {"code": "request_error", "message": "provider request failed"}
     
     @abstractmethod
     def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:

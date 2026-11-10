@@ -200,3 +200,15 @@ def test_status_reads_running_immediately_after_post():
         client.post("/api/external/v1/fundamental/collect", json={})
         state = client.get("/api/external/v1/fundamental/collection-status").json()
     assert state["status"] == "running"
+
+
+def test_start_response_does_not_report_previous_run_counters():
+    """The collector logs the POST response; stale counters read as
+    '20 completed, 20 failed' for a run that had not started yet."""
+    external_analysis._kap_fundamental_collection_state.update(
+        {"status": "completed", "completed": 20, "fetched": 0, "failed": 20}
+    )
+    with patch.object(external_analysis, "_collect_kap_fundamentals", AsyncMock()):
+        client = make_client(FakeDB(queue_rows=[{"code": "THYAO"}]))
+        body = client.post("/api/external/v1/fundamental/collect", json={}).json()
+    assert (body["completed"], body["fetched"], body["failed"]) == (0, 0, 0)

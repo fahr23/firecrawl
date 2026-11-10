@@ -70,6 +70,34 @@ class ProjectStore:
                 );
                 CREATE INDEX IF NOT EXISTS search_runs_project_retrieved_idx
                   ON search_runs(project_id, retrieved_at DESC);
+                CREATE TABLE IF NOT EXISTS journal_search_runs (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL REFERENCES research_projects(id),
+                  journal_json TEXT NOT NULL,
+                  topics_json TEXT NOT NULL,
+                  query TEXT NOT NULL,
+                  year_min INTEGER,
+                  year_max INTEGER,
+                  limit_value INTEGER NOT NULL,
+                  retrieved_at TEXT NOT NULL,
+                  total_provider_matches INTEGER NOT NULL,
+                  provider_outcomes_json TEXT NOT NULL,
+                  profile_json TEXT NOT NULL,
+                  papers_json TEXT NOT NULL,
+                  manifest_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS journal_runs_project_retrieved_idx
+                  ON journal_search_runs(project_id, retrieved_at DESC);
+                CREATE TABLE IF NOT EXISTS journal_fit_runs (
+                  id TEXT PRIMARY KEY,
+                  project_id TEXT NOT NULL REFERENCES research_projects(id),
+                  journal_search_id TEXT NOT NULL REFERENCES journal_search_runs(id),
+                  manuscript_json TEXT NOT NULL,
+                  report_json TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS journal_fits_project_created_idx
+                  ON journal_fit_runs(project_id, created_at DESC);
                 """
             )
             columns = {
@@ -206,4 +234,133 @@ class ProjectStore:
             item["manifest"] = json.loads(item.pop("manifest_json"))
             item["results"] = json.loads(item.pop("results_json"))
             runs.append(item)
-        return {"project": project, "search_runs": runs}
+        with self._lock:
+            journal_rows = self._connection.execute(
+                "SELECT * FROM journal_search_runs WHERE project_id = ? ORDER BY retrieved_at DESC",
+                (project_id,),
+            ).fetchall()
+        return {
+            "project": project,
+            "search_runs": runs,
+            "journal_search_runs": [self._journal_run(row) for row in journal_rows],
+            "journal_fit_runs": self.list_journal_fits(project_id, 1000),
+        }
+
+    @staticmethod
+    def _journal_run(row: sqlite3.Row) -> Dict[str, Any]:
+        item = dict(row)
+        item["journal"] = json.loads(item.pop("journal_json"))
+        item["topics"] = json.loads(item.pop("topics_json"))
+        item["provider_outcomes"] = json.loads(item.pop("provider_outcomes_json"))
+        item["profile"] = json.loads(item.pop("profile_json"))
+        item["papers"] = json.loads(item.pop("papers_json"))
+        item["manifest"] = json.loads(item.pop("manifest_json"))
+        item["limit"] = item.pop("limit_value")
+        return item
+
+    def find_journal_search(
+        self,
+        project_id: str,
+        journal_id: str,
+        topics: List[str],
+        year_min: Optional[int],
+        year_max: Optional[int],
+        limit: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the newest exact saved snapshot for a repeatable request."""
+        topics_json = json.dumps(topics, ensure_ascii=False, separators=(",", ":"))
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM journal_search_runs
+                   WHERE project_id = ? AND topics_json = ? AND year_min IS ?
+                     AND year_max IS ? AND limit_value = ?
+                   ORDER BY retrieved_at DESC""",
+                (project_id, topics_json, year_min, year_max, limit),
+            ).fetchall()
+        for row in rows:
+            parsed = self._journal_run(row)
+            if parsed["journal"].get("id") == journal_id:
+                return parsed
+        return None
+
+    def record_journal_search(self, project_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        run_id = str(uuid.uuid4())
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO journal_search_runs
+                   (id, project_id, journal_json, topics_json, query, year_min, year_max,
+                    limit_value, retrieved_at, total_provider_matches,
+                    provider_outcomes_json, profile_json, papers_json, manifest_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id, project_id,
+                    json.dumps(payload["journal"], ensure_ascii=False),
+                    json.dumps(payload["topics"], ensure_ascii=False, separators=(",", ":")),
+                    payload["query"], payload.get("year_min"), payload.get("year_max"),
+                    payload["limit"], payload["retrieved_at"],
+                    payload.get("total_provider_matches", 0),
+                    json.dumps(payload.get("provider_outcomes", []), ensure_ascii=False),
+                    json.dumps(payload["profile"], ensure_ascii=False),
+                    json.dumps(payload["papers"], ensure_ascii=False),
+                    json.dumps(payload["manifest"], ensure_ascii=False),
+                ),
+            )
+        return self.get_journal_search(run_id)  # type: ignore[return-value]
+
+    def get_journal_search(self, run_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM journal_search_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        return self._journal_run(row) if row else None
+
+    def list_journal_searches(self, project_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM journal_search_runs WHERE project_id = ?
+                   ORDER BY retrieved_at DESC LIMIT ?""",
+                (project_id, limit),
+            ).fetchall()
+        summaries = []
+        for row in rows:
+            item = self._journal_run(row)
+            item["paper_count"] = len(item.pop("papers"))
+            summaries.append(item)
+        return summaries
+
+    def record_journal_fit(
+        self,
+        project_id: str,
+        journal_search_id: str,
+        manuscript: Dict[str, Any],
+        report: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        fit_id, created_at = str(uuid.uuid4()), _now()
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO journal_fit_runs
+                   (id, project_id, journal_search_id, manuscript_json, report_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    fit_id, project_id, journal_search_id,
+                    json.dumps(manuscript, ensure_ascii=False),
+                    json.dumps(report, ensure_ascii=False), created_at,
+                ),
+            )
+        return {"id": fit_id, "project_id": project_id,
+                "journal_search_id": journal_search_id, "created_at": created_at, **report}
+
+    def list_journal_fits(self, project_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM journal_fit_runs WHERE project_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (project_id, limit),
+            ).fetchall()
+        fits = []
+        for row in rows:
+            item = dict(row)
+            item["manuscript"] = json.loads(item.pop("manuscript_json"))
+            item.update(json.loads(item.pop("report_json")))
+            fits.append(item)
+        return fits

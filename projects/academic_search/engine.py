@@ -7,6 +7,7 @@ all search providers, enrichers, analyzers, and exporters.
 
 import logging
 import re
+import time
 from typing import List, Dict, Any, Optional, Type
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -82,7 +83,8 @@ class AcademicSearchEngine:
         """Set up default searchers, enrichers, and exporters."""
         # Elsevier searchers (requires API key)
         if self.config.enable_elsevier and self.config.api.elsevier_api_key:
-            self._searchers.append(ScienceDirectSearcher(self.config))  # Best for Elsevier content
+            if self.config.enable_sciencedirect:
+                self._searchers.append(ScienceDirectSearcher(self.config))  # Best for Elsevier content
             self._searchers.append(ScopusSearcher(self.config))         # Broad multi-publisher search
         
         # Clarivate
@@ -253,55 +255,73 @@ class AcademicSearchEngine:
     def _search_all_sources(self, query: str, max_results: int, year_min: Optional[int] = None,
                             year_max: Optional[int] = None, searchers: List[BaseSearcher] = None,
                             requested_names: Optional[List[str]] = None) -> SearchResult:
-        """Search all sources and merge results."""
+        """Search all sources in parallel and merge results by provider rank."""
         searchers = searchers or self._searchers
-        all_articles = []
+        start_time = time.time()
         total = 0
         raw_article_count = 0
         sources = []
-        seen_keys: Dict[str, Article] = {}
         outcomes: List[ProviderOutcome] = []
-        
+        ranked_lists: List[List[Article]] = []
+
+        available = [searcher for searcher in searchers if searcher.is_available]
+        futures = {}
+        if available:
+            with ThreadPoolExecutor(max_workers=len(available)) as executor:
+                for searcher in available:
+                    searcher.clear_last_failure()
+                    self.logger.info(f"Searching {searcher.source_name}...")
+                    futures[searcher] = executor.submit(
+                        searcher.search, query, max_results, year_min, year_max
+                    )
+
+        # Outcomes keep the requested provider order so manifests stay deterministic.
         for searcher in searchers:
-            if not searcher.is_available:
+            if searcher not in futures:
                 outcomes.append(ProviderOutcome(searcher.source_name, "unavailable", error_code="not_configured",
                                                 message="provider is not configured"))
                 continue
             try:
-                searcher.clear_last_failure()
-                self.logger.info(f"Searching {searcher.source_name}...")
-                result = searcher.search(query, max_results, year_min, year_max)
-                total += result.total_found
-                raw_article_count += len(result.articles)
-                if result.articles:
-                    sources.append(searcher.source_name)
-                    outcomes.append(ProviderOutcome(searcher.source_name, "responded", len(result.articles) > 0,
-                                                    len(result.articles), result.total_found))
-                else:
-                    outcomes.append(self._outcome_from_failure(searcher.source_name, searcher.last_failure))
-
-                for article in result.articles:
-                    key = self._deduplication_key(article)
-                    if key in seen_keys:
-                        seen_keys[key].add_provider_record(article)
-                        continue
-                    seen_keys[key] = article
-                    all_articles.append(article)
-                    
+                result = futures[searcher].result()
             except Exception as e:
                 self.logger.error(f"Error with {searcher.source_name}: {e}")
                 outcomes.append(self._outcome_from_exception(searcher.source_name, e))
-        
-        # Sort by year (newest first)
-        all_articles.sort(key=lambda a: int(a.year) if a.year and str(a.year).isdigit() else 0, reverse=True)
+                continue
+            total += result.total_found
+            raw_article_count += len(result.articles)
+            if result.articles:
+                sources.append(searcher.source_name)
+                outcomes.append(ProviderOutcome(searcher.source_name, "responded", True,
+                                                len(result.articles), result.total_found))
+                ranked_lists.append(result.articles)
+            else:
+                outcomes.append(self._outcome_from_failure(searcher.source_name, searcher.last_failure))
+
+        # Interleave by each provider's own relevance rank so no single source
+        # crowds out the others; duplicates merge into the first-seen record.
+        all_articles = []
+        seen_keys: Dict[str, Article] = {}
+        for rank in range(max((len(items) for items in ranked_lists), default=0)):
+            for items in ranked_lists:
+                if rank >= len(items):
+                    continue
+                article = items[rank]
+                key = self._deduplication_key(article)
+                if key in seen_keys:
+                    seen_keys[key].add_provider_record(article)
+                    continue
+                seen_keys[key] = article
+                all_articles.append(article)
+
         deduplicated_article_count = len(all_articles)
         all_articles = all_articles[:max_results]
-        
+
         return SearchResult(
             query=query,
             articles=all_articles,
             total_found=total,
             sources=sources,
+            search_time=round(time.time() - start_time, 2),
             requested_providers=requested_names or [s.source_name for s in searchers],
             provider_outcomes=outcomes,
             year_min=year_min,

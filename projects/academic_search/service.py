@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -16,11 +17,23 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .engine import AcademicSearchEngine
+from .config import Config
+from .journal_analysis import (
+    ARTICLE_ALIGNMENT_VERSION,
+    FIT_VERSION,
+    PROFILE_VERSION,
+    annotate_topic_alignment,
+    build_journal_profile,
+    manuscript_fit,
+)
+from .journal_catalog import CATALOG_PROVIDERS, JournalCatalogService
 from .models import Article
 from .project_store import DuplicateProjectName, ProjectStore
+from .providers import OpenAlexSearcher
+from .ubyt_catalog import UbytCatalog, article_issns
 
 
-SERVICE_VERSION = "1.0"
+SERVICE_VERSION = "1.3"
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
 # Categories are derived labels, not provider-supplied scholarly classifications.
@@ -85,6 +98,8 @@ PROVIDERS = {
     "openalex": "OpenAlex",
     "semantic-scholar": "Semantic Scholar",
     "arxiv": "arXiv",
+    "pubmed": "PubMed",
+    "core": "CORE",
     "firecrawl-research": "Firecrawl Research",
     "science-direct": "ScienceDirect",
     "scopus": "Scopus",
@@ -95,6 +110,8 @@ PROVIDER_SOURCE_NAMES = {
     "openalex": "openalex",
     "semantic-scholar": "semantic scholar",
     "arxiv": "arxiv",
+    "pubmed": "pubmed",
+    "core": "core",
     "firecrawl-research": "firecrawl research",
     "science-direct": "sciencedirect",
     "scopus": "scopus",
@@ -120,6 +137,45 @@ class ProjectUpdate(BaseModel):
     default_providers: Optional[str] = None
     default_year_min: Optional[int] = Field(default=None, ge=1800, le=2200)
     default_year_max: Optional[int] = Field(default=None, ge=1800, le=2200)
+
+
+class JournalIdentity(BaseModel):
+    id: str = Field(min_length=2, max_length=80)
+    display_name: str = Field(min_length=1, max_length=300)
+    issn_l: Optional[str] = Field(default=None, max_length=20)
+    issns: List[str] = Field(default_factory=list, max_length=20)
+    publisher: Optional[str] = Field(default=None, max_length=300)
+    works_count: Optional[int] = Field(default=None, ge=0)
+    is_oa: Optional[bool] = None
+    is_in_doaj: Optional[bool] = None
+    type: str = "journal"
+    source: str = "OpenAlex"
+    catalog_id: Optional[str] = None
+    catalog_provider: str = "openalex"
+    provider_id: Optional[str] = None
+    categories: List[Dict[str, Any]] = Field(default_factory=list, max_length=50)
+    identifiers: Dict[str, Any] = Field(default_factory=dict)
+    provider_records: List[Dict[str, Any]] = Field(default_factory=list, max_length=10)
+    search_supported: bool = True
+    source_url: Optional[str] = None
+    ubyt: Optional[Dict[str, Any]] = None
+
+
+class JournalSearchRequest(BaseModel):
+    project_id: Optional[str] = None
+    journal: JournalIdentity
+    topics: List[str] = Field(min_length=1, max_length=12)
+    year_min: Optional[int] = Field(default=None, ge=1800, le=2200)
+    year_max: Optional[int] = Field(default=None, ge=1800, le=2200)
+    limit: int = Field(default=20, ge=1, le=50)
+    refresh: bool = False
+
+
+class ManuscriptFitRequest(BaseModel):
+    project_id: str
+    title: str = Field(default="", max_length=500)
+    abstract: str = Field(default="", max_length=20000)
+    keywords: List[str] = Field(default_factory=list, max_length=30)
 
 
 def _cors_origins() -> List[str]:
@@ -240,7 +296,45 @@ def _markdown_evidence(evidence: Dict[str, Any]) -> str:
             lines.append(f"- [{title}]({url}) — {source}; {journal}; {year}")
         if not run["results"]:
             lines.append("- No linked results were saved for this run.")
+    for run in evidence.get("journal_search_runs", []):
+        journal = run["journal"]
+        lines.extend([
+            "", f"## Journal snapshot: {journal.get('display_name', 'Unknown journal')}",
+            f"Journal ID: {journal.get('id')}; ISSN-L: {journal.get('issn_l') or 'not supplied'}",
+            _markdown_ubyt(journal.get("ubyt")),
+            f"Topics: {', '.join(run['topics'])}",
+            f"Retrieved: {run['retrieved_at']}",
+            f"Profile provenance: {run['profile'].get('provenance')}",
+            "", "### Matching papers",
+        ])
+        for paper in run["papers"]:
+            lines.append(
+                f"- [{paper.get('title') or 'Untitled paper'}]({paper.get('url') or ''}) "
+                f"— {paper.get('year') or 'year not supplied'}; "
+                f"topic alignment {paper.get('alignment', {}).get('score', 0)}/100"
+            )
+        if not run["papers"]:
+            lines.append("- No linked results were saved for this journal snapshot.")
+    for fit in evidence.get("journal_fit_runs", []):
+        lines.extend([
+            "", f"## Manuscript fit: {fit.get('manuscript', {}).get('title') or 'Untitled manuscript'}",
+            f"Created: {fit.get('created_at')}",
+            f"Journal snapshot: {fit.get('journal_search_id')}",
+            f"Scope overlap: {fit.get('overall_score', 0)}/100",
+            f"Analysis provenance: {fit.get('provenance')}",
+            fit.get("disclaimer") or "",
+        ])
     return "\n".join(lines) + "\n"
+
+
+def _markdown_ubyt(entry: Optional[Dict[str, Any]]) -> str:
+    if not entry:
+        return "UBYT: journal not found on the bundled UBYT list"
+    indexes = ", ".join(entry.get("indexes") or []) or "no WoS index"
+    return (
+        f"{entry.get('list')}: payment {entry.get('payment_tl')} TL; "
+        f"MEP score {entry.get('mep_score')}; {indexes}; matched by {entry.get('matched_by')}"
+    )
 
 
 def _serialize_article(article: Article) -> Optional[Dict[str, Any]]:
@@ -265,6 +359,7 @@ def _serialize_article(article: Article) -> Optional[Dict[str, Any]]:
         "category_provenance": "derived:keyword-rules-v1",
         "field_provenance": article.field_provenance,
         "derived_outputs": article.derived_outputs,
+        "ubyt": get_ubyt_catalog().match(article_issns(article.raw_data), article.journal),
     }
 
 
@@ -275,7 +370,7 @@ def _provider_availability(engine: AcademicSearchEngine) -> Dict[str, bool]:
         if searcher.is_available
     }
     return {
-        slug: PROVIDER_SOURCE_NAMES[slug] in configured
+        slug: any(PROVIDER_SOURCE_NAMES[slug] in name for name in configured)
         for slug in PROVIDERS
     }
 
@@ -283,6 +378,41 @@ def _provider_availability(engine: AcademicSearchEngine) -> Dict[str, bool]:
 @lru_cache(maxsize=1)
 def get_search_engine() -> AcademicSearchEngine:
     return AcademicSearchEngine()
+
+
+@lru_cache(maxsize=1)
+def get_journal_searcher() -> OpenAlexSearcher:
+    return OpenAlexSearcher(Config())
+
+
+@lru_cache(maxsize=1)
+def get_ubyt_catalog() -> UbytCatalog:
+    return UbytCatalog()
+
+
+@lru_cache(maxsize=1)
+def get_journal_catalog_service() -> JournalCatalogService:
+    return JournalCatalogService(Config(), get_ubyt_catalog())
+
+
+def _refresh_recommended(retrieved_at: str) -> bool:
+    try:
+        value = retrieved_at.replace("Z", "+00:00")
+        retrieved = datetime.fromisoformat(value)
+        if retrieved.tzinfo is None:
+            retrieved = retrieved.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - retrieved).total_seconds() / 86400
+        return age_days >= max(1, int(os.getenv("ACADEMIC_JOURNAL_REFRESH_DAYS", "7")))
+    except (TypeError, ValueError):
+        return True
+
+
+def _journal_response(payload: Dict[str, Any], cache_status: str) -> Dict[str, Any]:
+    return {
+        **payload,
+        "cache_status": cache_status,
+        "refresh_recommended": _refresh_recommended(payload["retrieved_at"]),
+    }
 
 
 def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
@@ -309,6 +439,7 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
 
     app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
 
+    @app.get("/", include_in_schema=False)
     @app.get("/ui", include_in_schema=False)
     async def index() -> FileResponse:
         return FileResponse(WEB_DIR / "index.html")
@@ -321,6 +452,10 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             "service": "academic-search",
             "version": SERVICE_VERSION,
             "providers": _provider_availability(engine),
+            "ubyt": {
+                "list": get_ubyt_catalog().label,
+                "journals": len(get_ubyt_catalog().records),
+            },
         }
 
     @app.get("/api/v1/categories")
@@ -396,6 +531,24 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Research project not found")
         return {"searches": store.list_searches(project_id, limit)}
 
+    @app.get("/api/v1/projects/{project_id}/journal-searches")
+    async def project_journal_searches(
+        project_id: str, limit: int = Query(default=20, ge=1, le=100),
+        store: ProjectStore = Depends(get_project_store),
+    ) -> Dict[str, Any]:
+        if not store.get_project(project_id):
+            raise HTTPException(status_code=404, detail="Research project not found")
+        return {"searches": store.list_journal_searches(project_id, limit)}
+
+    @app.get("/api/v1/projects/{project_id}/journal-fits")
+    async def project_journal_fits(
+        project_id: str, limit: int = Query(default=20, ge=1, le=100),
+        store: ProjectStore = Depends(get_project_store),
+    ) -> Dict[str, Any]:
+        if not store.get_project(project_id):
+            raise HTTPException(status_code=404, detail="Research project not found")
+        return {"fits": store.list_journal_fits(project_id, limit)}
+
     @app.get("/api/v1/projects/{project_id}/evidence")
     async def project_evidence(
         project_id: str, format: str = Query(default="json", pattern="^(json|markdown)$"),
@@ -411,12 +564,240 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             )
         return evidence
 
+    @app.get("/api/v1/journals/suggest")
+    async def suggest_journals(
+        q: str = Query(min_length=2, max_length=200),
+        limit: int = Query(default=8, ge=1, le=20),
+        searcher: OpenAlexSearcher = Depends(get_journal_searcher),
+        ubyt: UbytCatalog = Depends(get_ubyt_catalog),
+    ) -> Dict[str, Any]:
+        journals = await run_in_threadpool(searcher.suggest_journals, q.strip(), limit)
+        for journal in journals:
+            journal["ubyt"] = ubyt.match(journal.get("issns") or [], journal.get("display_name"))
+        failure = getattr(searcher, "last_failure", None)
+        return {
+            "query": q.strip(),
+            "journals": journals,
+            "provenance": "provider:OpenAlex",
+            "provider_status": (
+                {"status": failure["code"], "message": failure["message"]}
+                if failure else {"status": "responded"}
+            ),
+        }
+
+    @app.get("/api/v1/ubyt/journals")
+    async def ubyt_journals(
+        q: str = Query(default="", max_length=200),
+        category: Optional[str] = Query(default=None, max_length=20),
+        limit: int = Query(default=25, ge=1, le=100),
+        page: int = Query(default=1, ge=1, le=10000),
+        sort: str = Query(default="mep", pattern="^(mep|payment|name)$"),
+        ubyt: UbytCatalog = Depends(get_ubyt_catalog),
+    ) -> Dict[str, Any]:
+        journals = ubyt.search(q, category, limit, (page - 1) * limit, sort)
+        return {
+            "list": ubyt.label,
+            "query": q.strip(),
+            "category": category,
+            "page": page,
+            "limit": limit,
+            "sort": sort,
+            "total": ubyt.last_total,
+            "journals": journals,
+        }
+
+    @app.get("/api/v1/ubyt/lookup")
+    async def ubyt_lookup(
+        issn: List[str] = Query(default=[], max_length=10),
+        name: Optional[str] = Query(default=None, max_length=300),
+        ubyt: UbytCatalog = Depends(get_ubyt_catalog),
+    ) -> Dict[str, Any]:
+        if not issn and not (name or "").strip():
+            raise HTTPException(status_code=422, detail="Provide an ISSN or a journal name")
+        return {"list": ubyt.label, "ubyt": ubyt.match(issn, name)}
+
+    @app.get("/api/v1/journal-catalog/providers")
+    async def journal_catalog_providers(
+        catalog: JournalCatalogService = Depends(get_journal_catalog_service),
+    ) -> Dict[str, Any]:
+        return {
+            "providers": catalog.providers(),
+            "identifier_note": (
+                "Journals use ISSN/ISSN-L and provider source IDs. DOI identifies an "
+                "article and appears in paper results."
+            ),
+        }
+
+    @app.get("/api/v1/journal-catalog/categories")
+    async def journal_catalog_categories(
+        provider: str = Query(default="openalex"),
+        q: str = Query(default="", max_length=200),
+        limit: int = Query(default=50, ge=1, le=100),
+        catalog: JournalCatalogService = Depends(get_journal_catalog_service),
+    ) -> Dict[str, Any]:
+        if provider not in CATALOG_PROVIDERS:
+            raise HTTPException(status_code=422, detail="Unknown journal catalog provider")
+        return await run_in_threadpool(catalog.categories, provider, q.strip(), limit)
+
+    @app.get("/api/v1/journal-catalog/journals")
+    async def journal_catalog_journals(
+        provider: str = Query(default="openalex"),
+        q: str = Query(default="", max_length=200),
+        category_id: Optional[str] = Query(default=None, max_length=100),
+        limit: int = Query(default=25, ge=1, le=100),
+        page: int = Query(default=1, ge=1, le=10000),
+        sort: Optional[str] = Query(default=None, pattern="^(mep|payment|name)$"),
+        catalog: JournalCatalogService = Depends(get_journal_catalog_service),
+    ) -> Dict[str, Any]:
+        if provider not in CATALOG_PROVIDERS:
+            raise HTTPException(status_code=422, detail="Unknown journal catalog provider")
+        return await run_in_threadpool(
+            catalog.journals, provider, q.strip(), category_id, limit, page, sort
+        )
+
+    @app.get("/api/v1/journal-catalog/resolve")
+    async def resolve_catalog_journal(
+        provider: str = Query(default="openalex"),
+        journal_id: str = Query(min_length=1, max_length=160),
+        catalog: JournalCatalogService = Depends(get_journal_catalog_service),
+    ) -> Dict[str, Any]:
+        if provider not in CATALOG_PROVIDERS:
+            raise HTTPException(status_code=422, detail="Unknown journal catalog provider")
+        payload = await run_in_threadpool(catalog.resolve, provider, journal_id)
+        if not payload.get("journal"):
+            status = payload.get("provider_status", {}).get("status")
+            raise HTTPException(
+                status_code=503 if status not in {"empty", "not_found"} else 404,
+                detail=payload.get("provider_status", {}).get("message") or "Journal could not be resolved",
+            )
+        return payload
+
+    @app.post("/api/v1/journals/search")
+    async def search_journal(
+        request: JournalSearchRequest,
+        searcher: OpenAlexSearcher = Depends(get_journal_searcher),
+        store: ProjectStore = Depends(get_project_store),
+    ) -> Dict[str, Any]:
+        if request.project_id and not store.get_project(request.project_id):
+            raise HTTPException(status_code=404, detail="Research project not found")
+        if request.year_min and request.year_max and request.year_min > request.year_max:
+            raise HTTPException(
+                status_code=422,
+                detail="year_min must be less than or equal to year_max",
+            )
+        if request.journal.type != "journal":
+            raise HTTPException(status_code=422, detail="Selected source is not a journal")
+        if not request.journal.search_supported:
+            raise HTTPException(
+                status_code=422,
+                detail="This catalog journal has no OpenAlex ISSN crosswalk for paper search",
+            )
+        stable_id = request.journal.id.rsplit("/", 1)[-1]
+        if not stable_id.startswith("S") or not stable_id[1:].isdigit():
+            raise HTTPException(status_code=422, detail="Invalid OpenAlex journal identifier")
+
+        topics: List[str] = []
+        seen_topics = set()
+        for topic in request.topics:
+            cleaned = " ".join(topic.split()).casefold()
+            if cleaned and cleaned not in seen_topics:
+                topics.append(cleaned)
+                seen_topics.add(cleaned)
+        if not topics:
+            raise HTTPException(status_code=422, detail="At least one topic is required")
+
+        if request.project_id and not request.refresh:
+            saved = store.find_journal_search(
+                request.project_id, stable_id, topics,
+                request.year_min, request.year_max, request.limit,
+            )
+            if saved:
+                return _journal_response(saved, "saved")
+
+        query = " ".join(topics)
+        result = await run_in_threadpool(
+            searcher.search_journal,
+            stable_id,
+            request.journal.display_name,
+            query,
+            request.limit,
+            request.year_min,
+            request.year_max,
+        )
+        serialized = [
+            item
+            for item in (_serialize_article(article) for article in result.articles)
+            if item is not None
+        ]
+        papers = annotate_topic_alignment(serialized, topics)
+        profile = build_journal_profile(papers)
+        journal = request.journal.model_dump()
+        journal["id"] = stable_id
+        retrieved_at = datetime.now(timezone.utc).isoformat()
+        provider_outcomes = [item.to_dict() for item in result.provider_outcomes]
+        manifest = {
+            **result.manifest(),
+            "retrieved_at": retrieved_at,
+            "journal": journal,
+            "topics": topics,
+            "article_alignment_version": ARTICLE_ALIGNMENT_VERSION,
+            "profile_version": PROFILE_VERSION,
+        }
+        payload = {
+            "id": None,
+            "project_id": request.project_id,
+            "journal": journal,
+            "topics": topics,
+            "query": query,
+            "year_min": request.year_min,
+            "year_max": request.year_max,
+            "limit": request.limit,
+            "retrieved_at": retrieved_at,
+            "total_provider_matches": result.total_found,
+            "provider_outcomes": provider_outcomes,
+            "papers": papers,
+            "profile": profile,
+            "manifest": manifest,
+        }
+        if request.project_id:
+            payload = store.record_journal_search(request.project_id, payload)
+        return _journal_response(payload, "refreshed" if request.refresh else "fresh")
+
+    @app.post("/api/v1/journal-searches/{journal_search_id}/fit", status_code=201)
+    async def fit_manuscript_to_journal(
+        journal_search_id: str,
+        request: ManuscriptFitRequest,
+        store: ProjectStore = Depends(get_project_store),
+    ) -> Dict[str, Any]:
+        project = store.get_project(request.project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Research project not found")
+        saved = store.get_journal_search(journal_search_id)
+        if not saved or saved["project_id"] != request.project_id:
+            raise HTTPException(status_code=404, detail="Saved journal search not found")
+        title = " ".join(request.title.split())
+        abstract = " ".join(request.abstract.split())
+        keywords = [" ".join(item.split()) for item in request.keywords if item.strip()]
+        if not title and not abstract and not keywords:
+            raise HTTPException(status_code=422, detail="Manuscript text is required")
+        report = manuscript_fit(title, abstract, keywords, saved["papers"])
+        report["journal"] = saved["journal"]
+        report["journal_snapshot_retrieved_at"] = saved["retrieved_at"]
+        report["analysis_version"] = FIT_VERSION
+        return store.record_journal_fit(
+            request.project_id,
+            journal_search_id,
+            {"title": title, "abstract": abstract, "keywords": keywords},
+            report,
+        )
+
     @app.get("/api/v1/search")
     async def search(
         q: str = Query(min_length=2, max_length=300),
         category: str = Query(default="all"),
         providers: Optional[str] = Query(default=None),
         limit: int = Query(default=20, ge=1, le=50),
+        page: int = Query(default=1, ge=1, le=10),
         year_min: Optional[int] = Query(default=None, ge=1800, le=2200),
         year_max: Optional[int] = Query(default=None, ge=1800, le=2200),
         project_id: Optional[str] = Query(default=None),
@@ -437,7 +818,13 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
         provider_names = _parse_providers(providers)
         if project_id and not store.get_project(project_id):
             raise HTTPException(status_code=404, detail="Research project not found")
-        candidate_limit = min(limit * 3 if category != "all" else limit, 100)
+        # Providers don't support an offset, so each page re-fetches candidates from
+        # the start and slices the window locally. One extra candidate is requested
+        # past the window edge so `has_more` can be determined without a separate
+        # count call; cap total candidates fetched.
+        window_end = page * limit
+        fetch_target = window_end + 1
+        candidate_limit = min(fetch_target * 3 if category != "all" else fetch_target, 300)
         result = await run_in_threadpool(
             engine.search,
             query,
@@ -457,7 +844,9 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             serialized = [
                 item for item in serialized if item["category"] == category
             ]
-        serialized = serialized[:limit]
+        window_start = (page - 1) * limit
+        has_more = len(serialized) > window_end
+        serialized = serialized[window_start:window_end]
 
         payload = {
             "query": query,
@@ -474,13 +863,15 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             "year_min": year_min,
             "year_max": year_max,
             "limit": limit,
+            "page": page,
+            "has_more": has_more,
             "provider_coverage": _provider_coverage(
                 provider_names, result.sources,
                 [outcome.to_dict() for outcome in result.provider_outcomes],
             ),
             "manifest": result.manifest(),
         }
-        if project_id:
+        if project_id and page == 1:
             store.update_project(project_id, {
                 "default_category": category,
                 "default_providers": providers or ",".join(DEFAULT_PROVIDERS),

@@ -20,6 +20,7 @@ class APIConfig:
     firecrawl_api_url: Optional[str] = "http://localhost:3002"
     serper_api_key: Optional[str] = None
     clarivate_api_key: Optional[str] = None
+    clarivate_journals_api_key: Optional[str] = None
     
     def __post_init__(self):
         """Load from environment if not provided."""
@@ -39,6 +40,8 @@ class APIConfig:
             
         if not self.clarivate_api_key:
             self.clarivate_api_key = os.getenv("CLARIVATE_API_KEY")
+        if not self.clarivate_journals_api_key:
+            self.clarivate_journals_api_key = os.getenv("CLARIVATE_JOURNALS_API_KEY")
 
 
 @dataclass
@@ -67,6 +70,8 @@ class Config:
     deduplicate_results: bool = True
     enable_firecrawl_research: bool = False
     enable_elsevier: bool = False
+    # ScienceDirect search needs an institutional entitlement beyond the Scopus key.
+    enable_sciencedirect: bool = True
     enable_clarivate: bool = False
     enable_serper: bool = False
     
@@ -115,6 +120,8 @@ class Config:
         ):
             self.enable_firecrawl_research = True
         self.enable_elsevier = self.enable_elsevier or os.getenv("ACADEMIC_ENABLE_ELSEVIER", "").lower() in ("true", "1", "yes")
+        if os.getenv("ACADEMIC_ENABLE_SCIENCEDIRECT", "").lower() in ("false", "0", "no"):
+            self.enable_sciencedirect = False
         self.enable_clarivate = self.enable_clarivate or os.getenv("ACADEMIC_ENABLE_CLARIVATE", "").lower() in ("true", "1", "yes")
         self.enable_serper = self.enable_serper or os.getenv("ACADEMIC_ENABLE_SERPER", "").lower() in ("true", "1", "yes")
     
@@ -156,6 +163,7 @@ class Config:
                 "semantic_scholar_api_key": "***" if self.api.semantic_scholar_api_key else None,
                 "firecrawl_api_key": "***" if self.api.firecrawl_api_key else None,
                 "clarivate_api_key": "***" if self.api.clarivate_api_key else None,
+                "clarivate_journals_api_key": "***" if self.api.clarivate_journals_api_key else None,
                 "serper_api_key": "***" if self.api.serper_api_key else None,
             },
             "max_results": self.max_results,

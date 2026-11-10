@@ -374,6 +374,13 @@ class NuQ<JobData = any, JobReturnValue = any> {
           });
         });
       }
+    } catch (err) {
+      // Callers handle a missing sender. Rejecting here would crash the worker
+      // loop, and the harness then stops the whole pod.
+      logger.warn("NuQ sender failed to start", {
+        module: "nuq/rabbitmq",
+        err,
+      });
     } finally {
       this.senderStarting = false;
     }

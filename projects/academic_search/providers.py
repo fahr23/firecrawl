@@ -11,7 +11,7 @@ import requests
 from typing import List, Optional, Dict, Any
 
 from .base import BaseSearcher, BaseAbstractEnricher
-from .models import Article, SearchResult
+from .models import Article, ProviderOutcome, SearchResult
 from .config import Config
 
 try:
@@ -342,10 +342,14 @@ class ScienceDirectSearcher(BaseSearcher):
                     if article:
                         articles.append(article)
                         
-            elif response.status_code == 401:
+            elif response.status_code in (401, 403):
                 self.logger.error("ScienceDirect: Authentication failed")
+                self.last_failure = {"code": "authentication", "message": "authentication failed"}
+            elif response.status_code == 429:
+                self.last_failure = {"code": "rate_limited", "message": "provider rate limit reached"}
             else:
                 self.logger.warning(f"ScienceDirect: Status {response.status_code}")
+                self.last_failure = {"code": "http_error", "message": "provider request failed"}
                 
         except Exception as e:
             self.logger.error(f"ScienceDirect search error: {e}")
@@ -412,6 +416,19 @@ class ScopusSearcher(BaseSearcher):
     
     SEARCH_URL = "https://api.elsevier.com/content/search/scopus"
     ABSTRACT_URL = "https://api.elsevier.com/content/abstract"
+    SERIAL_URL = "https://api.elsevier.com/content/serial/title"
+    SUBJECT_AREAS = {
+        "AGRI": "Agricultural and Biological Sciences", "ARTS": "Arts and Humanities",
+        "BIOC": "Biochemistry, Genetics and Molecular Biology", "BUSI": "Business, Management and Accounting",
+        "CENG": "Chemical Engineering", "CHEM": "Chemistry", "COMP": "Computer Science",
+        "DECI": "Decision Sciences", "DENT": "Dentistry", "EART": "Earth and Planetary Sciences",
+        "ECON": "Economics, Econometrics and Finance", "ENER": "Energy", "ENGI": "Engineering",
+        "ENVI": "Environmental Science", "HEAL": "Health Professions", "IMMU": "Immunology and Microbiology",
+        "MATE": "Materials Science", "MATH": "Mathematics", "MEDI": "Medicine",
+        "NEUR": "Neuroscience", "NURS": "Nursing", "PHAR": "Pharmacology, Toxicology and Pharmaceutics",
+        "PHYS": "Physics and Astronomy", "PSYC": "Psychology", "SOCI": "Social Sciences",
+        "VETE": "Veterinary", "MULT": "Multidisciplinary",
+    }
     
     def __init__(self, config: Config):
         super().__init__(config)
@@ -424,7 +441,7 @@ class ScopusSearcher(BaseSearcher):
     
     @property
     def source_name(self) -> str:
-        return "Scopus API"
+        return "Scopus"
     
     @property
     def is_available(self) -> bool:
@@ -502,11 +519,16 @@ class ScopusSearcher(BaseSearcher):
                     # Rate limit kindness
                     time.sleep(0.2)
                             
-                elif response.status_code == 401:
+                elif response.status_code in (401, 403):
                     self.logger.error("Scopus: Authentication failed")
+                    self.last_failure = {"code": "authentication", "message": "authentication failed"}
+                    break
+                elif response.status_code == 429:
+                    self.last_failure = {"code": "rate_limited", "message": "provider rate limit reached"}
                     break
                 else:
                     self.logger.warning(f"Scopus: Status {response.status_code}")
+                    self.last_failure = {"code": "http_error", "message": "provider request failed"}
                     break
                     
             except Exception as e:
@@ -569,6 +591,102 @@ class ScopusSearcher(BaseSearcher):
             pass
         return None
 
+    def journal_categories(self, query: str = "", limit: int = 50) -> List[Dict[str, Any]]:
+        wanted = query.strip().casefold()
+        categories = [
+            {"id": code, "label": label, "provider": "scopus"}
+            for code, label in self.SUBJECT_AREAS.items()
+            if not wanted or wanted in label.casefold() or wanted in code.casefold()
+        ]
+        return categories[:limit]
+
+    def journal_catalog(
+        self, query: str = "", category_id: Optional[str] = None, limit: int = 25, page: int = 1
+    ) -> List[Dict[str, Any]]:
+        self.last_total = None
+        if not self.is_available:
+            self.last_failure = {"code": "not_configured", "message": "Elsevier API key not configured"}
+            return []
+        count = min(max(limit, 1), 200)
+        params: Dict[str, Any] = {
+            "content": "journal",
+            "count": count,
+            "start": (max(page, 1) - 1) * count,
+            "view": "STANDARD",
+        }
+        if query.strip():
+            params["title"] = query.strip()
+        if category_id:
+            params["subj"] = category_id
+        data = self._make_request(self.SERIAL_URL, params, headers=self.headers)
+        response = (data or {}).get("serial-metadata-response", {})
+        entries = response.get("entry", [])
+        try:
+            self.last_total = int(response["opensearch:totalResults"])
+        except (KeyError, TypeError, ValueError):
+            self.last_total = None
+        return [
+            normalized
+            for normalized in (self._catalog_serial(entry) for entry in entries)
+            if normalized is not None
+        ]
+
+    def resolve_journal(self, journal_id: str) -> Optional[Dict[str, Any]]:
+        """Resolve a Scopus serial by ISSN (used as its portable catalog ID)."""
+        if not self.is_available:
+            self.last_failure = {"code": "not_configured", "message": "Elsevier API key not configured"}
+            return None
+        data = self._make_request(
+            self.SERIAL_URL,
+            {"issn": journal_id, "count": 1, "view": "STANDARD"},
+            headers=self.headers,
+        )
+        entries = (data or {}).get("serial-metadata-response", {}).get("entry", [])
+        return self._catalog_serial(entries[0]) if entries else None
+
+    def _catalog_serial(self, entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(entry, dict):
+            return None
+        title = entry.get("dc:title") or entry.get("prism:publicationName")
+        issn = entry.get("prism:issn") or entry.get("prism:eIssn")
+        if not title or not issn:
+            return None
+        e_issn = entry.get("prism:eIssn")
+        issns = list(dict.fromkeys(str(value) for value in (issn, e_issn) if value))
+        source_id = str(entry.get("source-id") or entry.get("dc:identifier") or "")
+        subject_value = entry.get("subject-area") or entry.get("subject-areas") or []
+        if isinstance(subject_value, dict):
+            subject_value = subject_value.get("subject-area") or []
+        if isinstance(subject_value, dict):
+            subject_value = [subject_value]
+        categories = []
+        for subject in subject_value if isinstance(subject_value, list) else []:
+            if not isinstance(subject, dict):
+                continue
+            code = subject.get("@abbrev") or subject.get("@code") or ""
+            label = subject.get("$") or subject.get("name") or self.SUBJECT_AREAS.get(code, code)
+            if code or label:
+                categories.append({"id": str(code), "label": str(label)})
+        return {
+            "id": str(issn),
+            "catalog_id": f"scopus:{issn}",
+            "catalog_provider": "scopus",
+            "provider_id": source_id or str(issn),
+            "display_name": str(title),
+            "issn_l": str(issn),
+            "issns": issns,
+            "publisher": entry.get("dc:publisher") or entry.get("publisher") or "",
+            "works_count": 0,
+            "is_oa": str(entry.get("openaccess") or "").lower() in {"1", "true", "yes"},
+            "is_in_doaj": False,
+            "type": "journal",
+            "source": self.source_name,
+            "categories": categories,
+            "identifiers": {"scopus": source_id or None, "issn_l": str(issn), "issns": issns},
+            "search_supported": False,
+            "source_url": entry.get("prism:url") or "",
+        }
+
 
 class OpenAlexSearcher(BaseSearcher):
     """
@@ -599,6 +717,232 @@ class OpenAlexSearcher(BaseSearcher):
         """Search specifically for Elsevier/ScienceDirect papers."""
         filter_str = "primary_location.source.publisher_lineage:P4310320595,has_abstract:true"
         return self._search_with_filter(query, max_results, filter_str)
+
+    def suggest_journals(self, query: str, limit: int = 8) -> List[Dict[str, Any]]:
+        """Resolve a user-entered journal name to stable OpenAlex/ISSN identity."""
+        self.clear_last_failure()
+        data = self._make_request(
+            f"{self.BASE_URL}/sources",
+            {
+                "search": query.strip(),
+                "filter": "type:journal",
+                "per_page": min(max(limit, 1), 20),
+                "mailto": self.email,
+            },
+        )
+        if not data:
+            return []
+        journals = []
+        for source in data.get("results", []):
+            if source.get("type") != "journal":
+                continue
+            normalized = self._catalog_source(source)
+            if normalized:
+                journals.append(normalized)
+        return journals
+
+    def journal_categories(self, query: str = "", limit: int = 50) -> List[Dict[str, Any]]:
+        """Return OpenAlex Fields used to categorize journal Sources."""
+        self.clear_last_failure()
+        params: Dict[str, Any] = {
+            "per_page": min(max(limit, 1), 100),
+            "sort": "works_count:desc",
+            "mailto": self.email,
+        }
+        if query.strip():
+            params["search"] = query.strip()
+        data = self._make_request(f"{self.BASE_URL}/fields", params)
+        if not data:
+            return []
+        return [
+            {
+                "id": str(item.get("id") or "").rsplit("/", 1)[-1],
+                "label": item.get("display_name") or "Unknown field",
+                "provider": "openalex",
+                "works_count": item.get("works_count") or 0,
+            }
+            for item in data.get("results", [])
+            if item.get("id")
+        ]
+
+    def journal_catalog(
+        self, query: str = "", category_id: Optional[str] = None, limit: int = 25, page: int = 1
+    ) -> List[Dict[str, Any]]:
+        """Browse or search journal Sources, optionally scoped to an OpenAlex Field."""
+        self.clear_last_failure()
+        self.last_total = None
+        filters = ["type:journal"]
+        if category_id:
+            stable_category = str(category_id).rsplit("/", 1)[-1]
+            filters.append(f"topics.field.id:{stable_category}")
+        params: Dict[str, Any] = {
+            "filter": ",".join(filters),
+            "per_page": min(max(limit, 1), 200),
+            "page": max(page, 1),
+            "sort": "works_count:desc",
+            "mailto": self.email,
+        }
+        if query.strip():
+            params["search"] = query.strip()
+        data = self._make_request(f"{self.BASE_URL}/sources", params)
+        if not data:
+            return []
+        self.last_total = (data.get("meta") or {}).get("count")
+        return [
+            normalized
+            for normalized in (self._catalog_source(item) for item in data.get("results", []))
+            if normalized is not None
+        ]
+
+    def resolve_journal(self, journal_id: str) -> Optional[Dict[str, Any]]:
+        """Resolve one OpenAlex Source ID to complete journal metadata."""
+        stable_id = str(journal_id).rsplit("/", 1)[-1]
+        if not re.fullmatch(r"S\d+", stable_id):
+            self.last_failure = {"code": "invalid_journal_id", "message": "invalid OpenAlex source"}
+            return None
+        data = self._make_request(
+            f"{self.BASE_URL}/sources/{stable_id}", {"mailto": self.email}
+        )
+        return self._catalog_source(data) if data else None
+
+    def resolve_journal_by_issn(self, issn: str) -> Optional[Dict[str, Any]]:
+        """Crosswalk an ISSN from another catalog to an OpenAlex Source."""
+        normalized_issn = str(issn or "").strip()
+        if not normalized_issn:
+            return None
+        data = self._make_request(
+            f"{self.BASE_URL}/sources",
+            {"filter": f"issn:{normalized_issn}", "per_page": 1, "mailto": self.email},
+        )
+        results = data.get("results", []) if data else []
+        return self._catalog_source(results[0]) if results else None
+
+    def _catalog_source(self, source: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(source, dict) or source.get("type") not in (None, "journal"):
+            return None
+        source_id = str(source.get("id") or "").rsplit("/", 1)[-1]
+        if not re.fullmatch(r"S\d+", source_id):
+            return None
+        categories = []
+        seen = set()
+        for topic in source.get("topics") or []:
+            field = topic.get("field") or {}
+            field_id = str(field.get("id") or "").rsplit("/", 1)[-1]
+            if field_id and field_id not in seen:
+                categories.append({"id": field_id, "label": field.get("display_name") or field_id})
+                seen.add(field_id)
+        issns = [str(value) for value in (source.get("issn") or []) if value]
+        issn_l = source.get("issn_l")
+        identifiers = {
+            "openalex": source_id,
+            "issn_l": issn_l,
+            "issns": issns,
+        }
+        return {
+            "id": source_id,
+            "catalog_id": f"openalex:{source_id}",
+            "catalog_provider": "openalex",
+            "provider_id": source_id,
+            "display_name": source.get("display_name") or "Unknown journal",
+            "issn_l": issn_l,
+            "issns": issns,
+            "publisher": source.get("host_organization_name") or "",
+            "works_count": source.get("works_count") or 0,
+            "is_oa": bool(source.get("is_oa")),
+            "is_in_doaj": bool(source.get("is_in_doaj")),
+            "type": "journal",
+            "source": self.source_name,
+            "categories": categories,
+            "identifiers": identifiers,
+            "search_supported": True,
+            "source_url": f"https://openalex.org/{source_id}",
+        }
+
+    def search_journal(
+        self,
+        journal_id: str,
+        journal_name: str,
+        query: str,
+        max_results: int = 25,
+        year_min: Optional[int] = None,
+        year_max: Optional[int] = None,
+    ) -> SearchResult:
+        """Search works scoped to one resolved OpenAlex journal source."""
+        self.clear_last_failure()
+        stable_id = str(journal_id).rsplit("/", 1)[-1]
+        if not re.fullmatch(r"S\d+", stable_id):
+            self.last_failure = {
+                "code": "invalid_journal_id",
+                "message": "journal identifier is not a valid OpenAlex source",
+            }
+            return SearchResult(
+                query=query,
+                requested_providers=[self.source_name],
+                provider_outcomes=[ProviderOutcome(
+                    self.source_name, "failed",
+                    error_code="invalid_journal_id",
+                    message="journal identifier is not a valid OpenAlex source",
+                )],
+                year_min=year_min,
+                year_max=year_max,
+                limit=max_results,
+            )
+
+        filters = [f"primary_location.source.id:{stable_id}", "has_abstract:true"]
+        if year_min or year_max:
+            filters.append(
+                f"publication_year:{year_min or 1800}-{year_max or 2200}"
+            )
+        data = self._make_request(
+            f"{self.BASE_URL}/works",
+            {
+                "search": query.strip(),
+                "filter": ",".join(filters),
+                "per_page": min(max(max_results, 1), 50),
+                "sort": "relevance_score:desc",
+                "mailto": self.email,
+            },
+        )
+        if data is None:
+            failure = self.last_failure or {
+                "code": "provider_error", "message": "journal search failed"
+            }
+            return SearchResult(
+                query=query,
+                requested_providers=[self.source_name],
+                provider_outcomes=[ProviderOutcome(
+                    self.source_name,
+                    "rate_limited" if failure["code"] == "rate_limited" else "failed",
+                    error_code=failure["code"],
+                    message=failure["message"],
+                )],
+                year_min=year_min,
+                year_max=year_max,
+                limit=max_results,
+            )
+
+        articles = [
+            article
+            for article in (self._parse_work(work) for work in data.get("results", []))
+            if article is not None
+        ]
+        total = int(data.get("meta", {}).get("count") or len(articles))
+        return SearchResult(
+            query=query,
+            articles=articles,
+            total_found=total,
+            sources=[self.source_name],
+            requested_providers=[self.source_name],
+            provider_outcomes=[ProviderOutcome(
+                self.source_name, "responded", returned_count=len(articles),
+                total_found=total,
+            )],
+            year_min=year_min,
+            year_max=year_max,
+            limit=max_results,
+            raw_article_count=len(articles),
+            deduplicated_article_count=len(articles),
+        )
     
     def _search_with_filter(self, query: str, max_results: int, 
                             filter_str: str) -> SearchResult:
@@ -840,7 +1184,15 @@ class ArXivSearcher(BaseSearcher):
     @property
     def source_name(self) -> str:
         return "arXiv"
-    
+
+    @staticmethod
+    def _build_query(query: str) -> str:
+        """Require every term; arXiv ORs bare terms after the first field prefix."""
+        if re.search(r"\b(AND|OR|ANDNOT)\b|\w+:", query):
+            return query
+        terms = [term for term in re.findall(r"[\w-]+", query) if term]
+        return " AND ".join(f"all:{term}" for term in terms) or f"all:{query}"
+
     def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, year_max: Optional[int] = None) -> SearchResult:
         """Search arXiv database."""
         articles = []
@@ -848,7 +1200,7 @@ class ArXivSearcher(BaseSearcher):
         
         try:
             params = {
-                'search_query': f'all:{query}',
+                'search_query': self._build_query(query),
                 'start': 0,
                 'max_results': min(max_results, 100),
                 'sortBy': 'relevance'
@@ -1139,10 +1491,12 @@ class ClarivateSearcher(BaseSearcher):
     
     SEARCH_URL = "https://api.clarivate.com/apis/wos-starter/v1/documents"
     DOCUMENT_URL = "https://api.clarivate.com/apis/wos-starter/v1/documents/{uid}"
+    JOURNALS_URL = "https://api.clarivate.com/apis/wos-journals/v1"
     
     def __init__(self, config: Config):
         super().__init__(config)
         self.api_key = config.api.clarivate_api_key
+        self.journal_api_key = config.api.clarivate_journals_api_key or self.api_key
         
     @property
     def source_name(self) -> str:
@@ -1151,6 +1505,117 @@ class ClarivateSearcher(BaseSearcher):
     @property
     def is_available(self) -> bool:
         return bool(self.api_key)
+
+    @property
+    def is_journal_catalog_available(self) -> bool:
+        return bool(self.journal_api_key)
+
+    def journal_categories(self, query: str = "", limit: int = 50) -> List[Dict[str, Any]]:
+        if not self.is_journal_catalog_available:
+            self.last_failure = {"code": "not_configured", "message": "Clarivate Journals API key not configured"}
+            return []
+        params: Dict[str, Any] = {"limit": min(max(limit, 1), 50), "page": 1}
+        if query.strip():
+            params["q"] = query.strip()
+        data = self._make_request(
+            f"{self.JOURNALS_URL}/categories",
+            params,
+            headers={"X-ApiKey": str(self.journal_api_key)},
+        )
+        return [
+            {
+                "id": str(item.get("id")),
+                "label": item.get("name") or str(item.get("id")),
+                "provider": "web-of-science",
+                "edition": item.get("edition"),
+            }
+            for item in (data or {}).get("hits", [])
+            if item.get("id")
+        ]
+
+    def journal_catalog(
+        self, query: str = "", category_id: Optional[str] = None, limit: int = 25, page: int = 1
+    ) -> List[Dict[str, Any]]:
+        self.last_total = None
+        if not self.is_journal_catalog_available:
+            self.last_failure = {"code": "not_configured", "message": "Clarivate Journals API key not configured"}
+            return []
+        params: Dict[str, Any] = {"limit": min(max(limit, 1), 50), "page": max(page, 1)}
+        if query.strip():
+            params["q"] = query.strip()
+        if category_id:
+            params["categoryCode"] = category_id
+        data = self._make_request(
+            f"{self.JOURNALS_URL}/journals",
+            params,
+            headers={"X-ApiKey": str(self.journal_api_key)},
+        )
+        self.last_total = ((data or {}).get("metadata") or {}).get("total")
+        return [
+            self._catalog_journal(item, detailed=False)
+            for item in (data or {}).get("hits", [])
+            if item.get("id") and item.get("name")
+        ]
+
+    def resolve_journal(self, journal_id: str) -> Optional[Dict[str, Any]]:
+        if not self.is_journal_catalog_available:
+            self.last_failure = {"code": "not_configured", "message": "Clarivate Journals API key not configured"}
+            return None
+        safe_id = str(journal_id).strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", safe_id):
+            self.last_failure = {"code": "invalid_journal_id", "message": "invalid Clarivate journal identifier"}
+            return None
+        data = self._make_request(
+            f"{self.JOURNALS_URL}/journals/{safe_id}",
+            {},
+            headers={"X-ApiKey": str(self.journal_api_key)},
+        )
+        return self._catalog_journal(data, detailed=True) if data else None
+
+    def _catalog_journal(self, item: Dict[str, Any], detailed: bool) -> Dict[str, Any]:
+        journal_id = str(item.get("id"))
+        issn = item.get("issn")
+        e_issn = item.get("eIssn")
+        issns = list(dict.fromkeys(str(value) for value in (issn, e_issn) if value))
+        publisher = item.get("publisher") or {}
+        if not isinstance(publisher, dict):
+            publisher = {"name": str(publisher)}
+        category_value = item.get("categories") or []
+        if isinstance(category_value, dict):
+            category_value = [category_value]
+        categories = [
+            {
+                "id": str(category.get("url") or category.get("id") or "").rsplit("/", 1)[-1],
+                "label": category.get("name") or "Unknown category",
+                "edition": category.get("edition"),
+            }
+            for category in category_value
+            if isinstance(category, dict)
+        ]
+        return {
+            "id": journal_id,
+            "catalog_id": f"web-of-science:{journal_id}",
+            "catalog_provider": "web-of-science",
+            "provider_id": journal_id,
+            "display_name": item.get("name") or journal_id,
+            "issn_l": str(issn or e_issn or "") or None,
+            "issns": issns,
+            "publisher": publisher.get("name") or "",
+            "works_count": 0,
+            "is_oa": bool(item.get("openAccess")),
+            "is_in_doaj": False,
+            "type": "journal",
+            "source": "Web of Science Journals API",
+            "categories": categories,
+            "identifiers": {
+                "web_of_science": journal_id,
+                "issn_l": str(issn or e_issn or "") or None,
+                "issns": issns,
+            },
+            "search_supported": False,
+            "source_url": "",
+            "details_loaded": detailed,
+        }
     
     def search(self, query: str, max_results: int = 25, year_min: Optional[int] = None, 
                year_max: Optional[int] = None, sort_by: str = "relevance",
@@ -1508,7 +1973,7 @@ class PubMedSearcher(BaseSearcher):
     
     @property
     def source_name(self) -> str:
-        return "pubmed"
+        return "PubMed"
         
     @property
     def is_available(self) -> bool:
@@ -1613,6 +2078,7 @@ class PubMedSearcher(BaseSearcher):
             
         except Exception as e:
             self.logger.warning(f"PubMed API error: {e}")
+            self.last_failure = self._failure_from_exception(e)
             return SearchResult(query=query, sources=[self.source_name])
 
 
@@ -1624,7 +2090,7 @@ class CoreSearcher(BaseSearcher):
     
     @property
     def source_name(self) -> str:
-        return "core"
+        return "CORE"
         
     @property
     def is_available(self) -> bool:
@@ -1689,5 +2155,6 @@ class CoreSearcher(BaseSearcher):
             
         except Exception as e:
             self.logger.warning(f"CORE API error: {e}")
+            self.last_failure = self._failure_from_exception(e)
             return SearchResult(query=query, sources=[self.source_name])
 

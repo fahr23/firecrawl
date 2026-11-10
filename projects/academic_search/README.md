@@ -13,6 +13,56 @@ A modular, extensible Python package for searching academic literature across mu
 - 🤖 **LLM Analysis Ready**: Extension point for AI-powered abstract analysis
 - 📤 **Multiple Export Formats**: JSON, Markdown, CSV, BibTeX, RIS
 - 🔧 **Extensible Architecture**: Easy to add new sources, analyzers, exporters
+- 📰 **Journal Explorer**: Resolve journals by OpenAlex source/ISSN, search their papers by topic, and save dated evidence snapshots
+- 🗂️ **Provider Journal Catalogs**: Browse OpenAlex Fields, Web of Science/JCR categories, or Scopus subject areas before searching by title, publisher, or ISSN
+- 🧭 **Manuscript Fit**: Compare a title, abstract, and keywords with an exact saved journal snapshot using transparent lexical scoring
+
+## Web workspace
+
+Run the Compose service and open `http://localhost:8010/`:
+
+```bash
+docker compose up -d academic-search-api
+```
+
+Journal searches belong to a research project. Repeating the same journal, topics,
+years, and limit loads the saved SQLite snapshot without another provider request.
+Use **Refresh from source** to retrieve and save a newer version. The UI always shows
+the retrieval time and flags snapshots older than `ACADEMIC_JOURNAL_REFRESH_DAYS`
+(seven days by default). Manuscript-fit reports are stored against the exact snapshot
+used for comparison and are included in project evidence exports.
+
+The journal profile, article alignment, and manuscript-fit values are derived outputs.
+They describe the retrieved sample and must not be interpreted as an editorial decision
+or acceptance prediction.
+
+Catalog provider access:
+
+- OpenAlex journal categories and source records work without a paid credential.
+- Web of Science journal/category browsing uses the dedicated Journals API. Configure
+  `CLARIVATE_JOURNALS_API_KEY`; `CLARIVATE_API_KEY` remains the Starter article-search
+  credential and is used as a compatibility fallback when it also has JCR entitlement.
+- Scopus journal/category browsing uses the Serial Title API and `ELSEVIER_API_KEY`.
+
+Journal records are normalized with ISSN/ISSN-L and provider source IDs. DOI is an
+article identifier, so it is displayed on paper results rather than represented as a
+journal identifier. Paid-provider journal selections are crosswalked by ISSN to an
+OpenAlex Source ID before journal-scoped article search.
+
+TÜBİTAK UBYT list:
+
+- The 2026 list (`data/ubyt_2026.csv`, converted from
+  `docs/ubyt_2026_liste_v3-08102026.xlsx`) is bundled; no credential is needed.
+- Choose **TÜBİTAK UBYT** as the catalog provider to search journals by name or ISSN
+  and filter by SCIE/SSCI/AHCI/Scopus; selections are crosswalked to OpenAlex by ISSN.
+- Every journal and paper result carries a `ubyt` entry (payment in TL, MEP score,
+  indexes) matched by ISSN first, then exact normalized title (`matched_by` says which),
+  or `null` when the journal is not listed.
+- `GET /api/v1/ubyt/journals?q=&category=` searches the list;
+  `GET /api/v1/ubyt/lookup?issn=&name=` returns one journal's entry.
+- To load a new release: `python -m academic_search.ubyt_catalog convert <new.xlsx>
+  data/ubyt_<year>.csv` (requires `openpyxl`) and point `ACADEMIC_UBYT_CATALOG_PATH`
+  at it, or replace the bundled file.
 
 ## Quick Start
 

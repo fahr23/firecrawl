@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Search and browse linked academic literature by category.">
     <title>Academic Search</title>
-    <link rel="stylesheet" href="/assets/styles.css">
-    <script src="/assets/app.js" defer></script>
+    <link rel="stylesheet" href="/assets/styles.css?v=1.4.0">
+    <script src="/assets/app.js?v=1.4.0" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -39,23 +39,177 @@
         </div>
       </section>
 
+      <section class="journal-panel" aria-labelledby="journal-title">
+        <div class="section-intro">
+          <p class="eyebrow">Journal explorer</p>
+          <h2 id="journal-title">See what a journal publishes</h2>
+          <p>
+            Browse the Journal catalog by provider and category, resolve ISSN-backed
+            journal identities, reuse saved snapshots, and compare your manuscript.
+          </p>
+        </div>
+
+        <form id="journal-form">
+          <p class="step-title"><span class="step-num">1</span> Find a journal</p>
+          <div class="journal-find">
+            <label>
+              Catalog
+              <select id="journal-provider">
+                <option value="openalex">OpenAlex</option>
+              </select>
+            </label>
+            <label>
+              Category
+              <select id="journal-category">
+                <option value="">All categories</option>
+              </select>
+            </label>
+            <label class="journal-name-field">
+              Journal name or ISSN
+              <input id="journal-name" type="search" maxlength="200" placeholder="e.g. Energy Economics or 0140-9883" autocomplete="off" required>
+            </label>
+          </div>
+
+          <section id="journal-catalog-card" class="catalog-card" aria-label="Journal list">
+            <div class="catalog-toolbar">
+              <p id="journal-catalog-status" class="catalog-status" aria-live="polite">Loading journal catalog…</p>
+              <div class="catalog-controls">
+                <label class="inline-field" id="journal-sort-field">
+                  Sort
+                  <select id="journal-sort">
+                    <option value="mep">MEP score</option>
+                    <option value="payment">Payment</option>
+                    <option value="name">Name A–Z</option>
+                  </select>
+                </label>
+                <label class="inline-field">
+                  Rows
+                  <select id="journal-page-size">
+                    <option>25</option>
+                    <option selected>50</option>
+                    <option>100</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <div class="catalog-scroll">
+              <div class="catalog-head" aria-hidden="true">
+                <span>Journal</span><span>Index</span><span class="num">MEP</span><span class="num">Payment</span>
+              </div>
+              <div id="journal-suggestions" class="journal-suggestions" role="listbox" aria-label="Matching journals"></div>
+            </div>
+            <nav id="journal-pager" class="journal-pager" aria-label="Journal list pages" hidden>
+              <button id="journal-first" type="button" class="pager-button" aria-label="First page">«</button>
+              <button id="journal-prev" type="button" class="pager-button" aria-label="Previous page">‹</button>
+              <label class="page-jump">
+                <span class="page-word">Page</span>
+                <input id="journal-page-input" type="number" min="1" inputmode="numeric" aria-label="Page number">
+                <span id="journal-page-label"></span>
+              </label>
+              <button id="journal-next" type="button" class="pager-button" aria-label="Next page">›</button>
+              <button id="journal-last" type="button" class="pager-button" aria-label="Last page">»</button>
+            </nav>
+          </section>
+
+          <div id="selected-journal" class="selected-journal" hidden></div>
+
+          <p class="step-title"><span class="step-num">2</span> Search inside the journal</p>
+          <div class="journal-scope">
+            <label>
+              Topics
+              <input id="journal-topics" maxlength="500" placeholder="machine learning, energy forecasting" required>
+              <span class="field-help">Separate topics with commas.</span>
+            </label>
+            <label>
+              From year
+              <input id="journal-year-min" type="number" min="1800" max="2200" placeholder="Any">
+            </label>
+            <label>
+              To year
+              <input id="journal-year-max" type="number" min="1800" max="2200" placeholder="Any">
+            </label>
+          </div>
+          <div class="journal-actions">
+            <button type="submit">Search journal</button>
+            <button id="refresh-journal" type="button" class="secondary" disabled>Refresh from source</button>
+          </div>
+          <p id="journal-status" class="status">Select a research project to save journal evidence.</p>
+        </form>
+
+        <section id="journal-results" class="journal-results" hidden aria-live="polite">
+          <div class="snapshot-heading">
+            <div>
+              <p id="journal-snapshot-status" class="status"></p>
+              <h3 id="journal-result-title">Journal snapshot</h3>
+            </div>
+            <span id="journal-refresh-badge" class="snapshot-badge"></span>
+          </div>
+          <div id="journal-profile" class="journal-profile"></div>
+          <ol id="journal-papers" class="results"></ol>
+        </section>
+
+        <section id="manuscript-panel" class="manuscript-panel" hidden>
+          <div class="section-intro compact">
+            <p class="eyebrow">Manuscript fit</p>
+            <h3>Compare with this saved snapshot</h3>
+            <p>This estimates scope overlap only; it does not predict acceptance.</p>
+          </div>
+          <form id="manuscript-form">
+            <label>Manuscript title <input id="manuscript-title" maxlength="500" placeholder="Your working title"></label>
+            <label>Abstract <textarea id="manuscript-abstract" maxlength="20000" placeholder="Paste the manuscript abstract"></textarea></label>
+            <label>Keywords <input id="manuscript-keywords" maxlength="500" placeholder="forecasting, energy markets, machine learning"></label>
+            <button type="submit">Check alignment</button>
+          </form>
+          <div id="fit-report" class="fit-report" hidden></div>
+        </section>
+
+        <section id="journal-history-panel" class="journal-history" hidden>
+          <div class="snapshot-heading">
+            <h3>Saved journal snapshots</h3>
+          </div>
+          <ol id="journal-history" class="search-history"></ol>
+        </section>
+      </section>
+
       <section class="search-panel" aria-labelledby="search-title">
-        <h2 id="search-title" class="sr-only">Search papers</h2>
+        <div class="section-intro">
+          <p class="eyebrow">Paper search</p>
+          <h2 id="search-title">Search across scholarly sources</h2>
+          <p>
+            One query goes to every source you select. Results are merged, de-duplicated
+            by DOI, and ranked by each source's own relevance.
+          </p>
+        </div>
+
         <form id="search-form">
-          <label for="query">What are you researching?</label>
-          <div class="search-row">
+          <label class="query-label" for="query">What are you researching?</label>
+          <div class="search-field">
+            <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="11" cy="11" r="7"></circle>
+              <path d="m20 20-3.6-3.6"></path>
+            </svg>
             <input
               id="query"
               name="q"
               type="search"
               minlength="2"
               maxlength="300"
-              placeholder="e.g. agent-based models for carbon mitigation"
+              placeholder="e.g. agent-based electricity market"
               autocomplete="off"
               required
             >
             <button type="submit">Search</button>
           </div>
+          <p class="field-hint">Short keyword phrases match best across sources.</p>
+
+          <fieldset class="source-picker">
+            <div class="source-picker-head">
+              <legend>Sources <span id="source-count" class="source-count"></span></legend>
+              <button id="select-all-sources" class="link-button" type="button">Select all</button>
+            </div>
+            <div id="providers" class="source-options"></div>
+            <p id="sources-unavailable" class="source-note" hidden></p>
+          </fieldset>
 
           <div class="filters">
             <label>
@@ -65,18 +219,12 @@
               </select>
             </label>
             <label>
-              Source
-              <select id="providers" name="providers">
-                <option value="openalex">OpenAlex</option>
-                <option value="semantic-scholar">Semantic Scholar</option>
-                <option value="arxiv">arXiv</option>
-                <option value="clarivate" disabled>Web of Science (Clarivate · key required)</option>
-                <option value="openalex,semantic-scholar,arxiv">All free sources</option>
-              </select>
-            </label>
-            <label>
               From year
               <input id="year-min" name="year_min" type="number" min="1800" max="2200" placeholder="Any">
+            </label>
+            <label>
+              To year
+              <input id="year-max" name="year_max" type="number" min="1800" max="2200" placeholder="Any">
             </label>
             <label>
               Results
@@ -89,6 +237,17 @@
             </label>
           </div>
         </form>
+
+        <section id="history-panel" class="history-panel" hidden aria-labelledby="history-title">
+          <button id="history-toggle" type="button" class="history-toggle" aria-expanded="false" aria-controls="search-history">
+            <span>
+              <span id="history-title">Recent searches</span>
+              <span id="history-count" class="history-count"></span>
+            </span>
+            <span class="history-chevron" aria-hidden="true">▾</span>
+          </button>
+          <ol id="search-history" class="search-history" hidden></ol>
+        </section>
       </section>
 
       <section class="results-section" aria-live="polite" aria-busy="false">
@@ -106,17 +265,19 @@
           Results include their source, DOI link when available, and a transparent
           keyword-derived category.
         </div>
+        <nav id="results-pager" class="journal-pager" aria-label="Result pages" hidden>
+          <button id="results-first" type="button" class="pager-button" aria-label="First page">«</button>
+          <button id="results-prev" type="button" class="pager-button" aria-label="Previous page">‹</button>
+          <label class="page-jump">
+            <span class="page-word">Page</span>
+            <input id="results-page-input" type="number" min="1" inputmode="numeric" aria-label="Page number">
+            <span id="results-page-label"></span>
+          </label>
+          <button id="results-next" type="button" class="pager-button" aria-label="Next page">›</button>
+          <button id="results-last" type="button" class="pager-button" aria-label="Last page">»</button>
+        </nav>
       </section>
 
-      <section id="history-panel" class="history-panel" hidden aria-labelledby="history-title">
-        <div class="results-heading">
-          <div>
-            <p class="status">Saved for the selected project</p>
-            <h2 id="history-title">Recent searches</h2>
-          </div>
-        </div>
-        <ol id="search-history" class="search-history"></ol>
-      </section>
     </main>
 
     <dialog id="project-dialog">
