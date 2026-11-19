@@ -302,3 +302,44 @@ class TestYouTubeScraperScrapeAll:
 
         assert result["videos"] == [cached]
         assert result["cached"] == 1
+
+
+class TestYouTubeScraperRequestBlocked:
+
+    def _make_scraper(self):
+        with patch("scrapers.base_scraper.BaseScraper.__init__", return_value=None):
+            from scrapers.youtube_scraper import YouTubeScraper
+            scraper = YouTubeScraper.__new__(YouTubeScraper)
+            scraper.config = MagicMock()
+            scraper.firecrawl = MagicMock()
+            scraper.db_manager = None
+        return scraper
+
+    def test_fetch_transcript_reraises_request_blocked(self):
+        from scrapers.youtube_scraper import RequestBlocked
+
+        scraper = self._make_scraper()
+        mock_instance = MagicMock()
+        mock_instance.list.side_effect = RequestBlocked("v1")
+        with patch("scrapers.youtube_scraper.YouTubeTranscriptApi", return_value=mock_instance):
+            with pytest.raises(RequestBlocked):
+                scraper.fetch_transcript("v1")
+
+    def test_scrape_all_stops_fetching_after_first_block(self):
+        from scrapers.youtube_scraper import RequestBlocked
+
+        scraper = self._make_scraper()
+        metas = [
+            {"video_id": f"v{i}", "title": f"Vid {i}", "url": f"u{i}",
+             "published_at": None, "duration": None}
+            for i in range(3)
+        ]
+        fetch = MagicMock(side_effect=RequestBlocked("v0"))
+        with patch.object(scraper, "list_channel_videos", return_value=metas), \
+                patch.object(scraper, "fetch_transcript", fetch):
+            result = run(scraper.scrape_all(["https://a", "https://b"], days_back=7))
+
+        assert fetch.call_count == 1
+        assert result["transcripts_blocked"] is True
+        assert result["total"] == 0
+        assert result["success"] is True

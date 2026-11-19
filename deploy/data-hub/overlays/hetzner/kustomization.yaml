@@ -1,7 +1,7 @@
 # Production workspace on the Hetzner k3s node (f23).
 #
 # Not exposed to the internet: no Ingress, no NodePort. Only `app: strategy-management`
-# pods in the `backtofuture-prod` namespace may call the API:
+# and `app: market-brief-publish` pods in the `backtofuture-prod` namespace may call the API:
 #   http://data-hub-api.data-hub.svc.cluster.local:8000/api/external/v1
 #
 # One-time setup and deploy: see ../../README.md.
@@ -19,16 +19,16 @@ resources:
 images:
 - name: data-hub-api
   newName: ghcr.io/fahr23/turkish-financial-api
-  newTag: 1eef6f7cf
+  newTag: 26968b592
 - name: firecrawl-api
   newName: ghcr.io/fahr23/firecrawl-api
-  newTag: 1eef6f7cf
+  newTag: a1cc03511
 - name: firecrawl-playwright-service
   newName: ghcr.io/fahr23/firecrawl-playwright-service
-  newTag: 1eef6f7cf
+  newTag: a1cc03511
 - name: firecrawl-go-html-to-md
   newName: ghcr.io/fahr23/firecrawl-go-html-to-md
-  newTag: 1eef6f7cf
+  newTag: a1cc03511
 - name: firecrawl-nuq-postgres
   newName: ghcr.io/fahr23/firecrawl-nuq-postgres
-  newTag: 1eef6f7cf
+  newTag: a1cc03511

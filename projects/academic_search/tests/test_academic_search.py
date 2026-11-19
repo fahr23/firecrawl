@@ -224,7 +224,7 @@ class TestCreateEngine(unittest.TestCase):
     def test_create_engine_with_elsevier_key(self):
         """Test creating engine with Elsevier key."""
         engine = create_engine(elsevier_api_key="test-key")
-        self.assertIn("Scopus API", engine.available_sources)
+        self.assertIn("Scopus", engine.available_sources)
 
 
 class TestClarivateProvider(unittest.TestCase):

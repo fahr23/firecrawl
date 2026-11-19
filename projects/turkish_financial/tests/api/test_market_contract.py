@@ -8,7 +8,7 @@ Drives the market endpoints end-to-end through FastAPI with a mocked database:
   - open_try is always unavailable (no upstream source for it)
   - point / history (pagination) / batch endpoints
   - honest unavailable for unknown ticker / unsupported market
-  - the index kind is an explicit unavailable stub (no verified data source yet)
+  - index codes without a verified source stay an explicit unavailable (XU100: test_index_contract.py)
 """
 from datetime import date
 
@@ -201,7 +201,7 @@ class TestBatch:
 class TestIndexStub:
     def test_known_code_is_unavailable_not_error(self):
         client = make_client(FakeDB())
-        body = client.get("/api/external/v1/index/XU100/history").json()
+        body = client.get("/api/external/v1/index/XU030/history").json()
         assert body["status"] == "unavailable"
         assert body["items"] == []
         assert "data source" in body["detail"]

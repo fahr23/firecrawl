@@ -2,7 +2,8 @@
 # Deploy the Data Hub workspace to the Hetzner k3s node (f23).
 # Idempotent: safe to re-run after changing manifests or image tags.
 #
-# Prerequisite: images pushed with ./build-push.sh <tag>, and the same tag set
+# Prerequisite: images pushed with ./build-push.sh <tag> (or, when GHCR limits
+# are reached, built locally and imported with ./build-import.sh <tag>), and the same tag set
 # in overlays/hetzner/kustomization.yaml.
 set -euo pipefail
 

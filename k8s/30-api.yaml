@@ -17,6 +17,8 @@ spec:
         app: firecrawl-api
         component: api
     spec:
+      # IS_KUBERNETES adds a 60s drain on SIGTERM before the API shuts down.
+      terminationGracePeriodSeconds: 90
       containers:
       - name: api
         image: ghcr.io/firecrawl/firecrawl:latest

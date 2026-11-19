@@ -571,6 +571,33 @@ Latest blended sentiment for one ticker.
 
 Time series. Same params as other history endpoints.
 
+#### `POST /combined-sentiment/batch`
+
+Fetch combined sentiment for multiple tickers in one call. `market` is required (no default) — a request body missing it returns 422.
+
+```json
+// Request
+{
+  "market": "bist",
+  "instruments": ["THYAO", "AKBNK", "GARAN"],
+  "as_of": "2026-06-28"
+}
+
+// Response
+{
+  "contract_version": "1.0",
+  "items": [ { /* point envelope */ }, ... ]
+}
+```
+
+#### `GET /combined-sentiment/ranking?market=bist&sort=desc&window_days=7&limit=25`
+
+Sample-weighted combined scores across a recent window, ranked. `market` defaults to `bist`; any other market currently returns an empty `items` list.
+
+#### `GET /combined-sentiment/{instrument}/evidence`
+
+Per-source counts and raw contributions backing the combined score for one ticker.
+
 ---
 
 ## Proposed Endpoints (Roadmap)

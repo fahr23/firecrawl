@@ -17,6 +17,7 @@ import { initializeEngineForcing } from "../scraper/WebScraper/utils/engine-forc
 import {
   consumeExtractJobs,
   consumeExtractDLQ,
+  keepConsumingExtractQueues,
   shutdownExtractQueue,
   ExtractJobData,
 } from "./extract-queue";
@@ -243,11 +244,14 @@ if (require.main === module) {
 
   _logger.info("Starting extract worker with RabbitMQ...");
 
-  // Start consuming from both the main queue and the DLQ
-  await Promise.all([
-    consumeExtractJobs(processExtractJob),
-    consumeExtractDLQ(processDLQJob),
-  ]);
+  // Start consuming from both the main queue and the DLQ. A RabbitMQ outage
+  // must not end this process: the harness stops the whole pod if it does.
+  await keepConsumingExtractQueues(async () => {
+    await Promise.all([
+      consumeExtractJobs(processExtractJob),
+      consumeExtractDLQ(processDLQJob),
+    ]);
 
-  _logger.info("Extract worker started, consuming from RabbitMQ");
+    _logger.info("Extract worker started, consuming from RabbitMQ");
+  });
 })();

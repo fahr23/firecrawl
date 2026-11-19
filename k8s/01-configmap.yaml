@@ -15,9 +15,12 @@ data:
   REDIS_URL: "redis://redis:6379"
   REDIS_RATE_LIMIT_URL: "redis://redis:6379"
   
-  # Service URLs
-  PLAYWRIGHT_MICROSERVICE_URL: "http://playwright-service:3000/scrape"
-  HTML_TO_MARKDOWN_SERVICE_URL: "http://go-html-to-md-service:8080"
+  # Service URLs. Fully qualified on purpose: Firecrawl's HTTP agents resolve hosts
+  # with cacheable-lookup (dns.resolve4), which ignores the pod's search domains, so a
+  # bare name reaches the upstream resolver and can get a router's catch-all answer.
+  # Overlays use another namespace and name prefix, so they must override both URLs.
+  PLAYWRIGHT_MICROSERVICE_URL: "http://playwright-service.firecrawl.svc.cluster.local:3000/scrape"
+  HTML_TO_MARKDOWN_SERVICE_URL: "http://go-html-to-md-service.firecrawl.svc.cluster.local:8080"
   
   # RabbitMQ
   NUQ_RABBITMQ_URL: "amqp://rabbitmq:5672"
@@ -34,7 +37,11 @@ data:
   EXTRACT_WORKER_PORT: "3004"
   WORKER_PORT: "3005"
   ENV: "production"
-  NUQ_WORKER_COUNT: "0"
+  # The harness starts this many queue workers in each API pod. There is no
+  # separate nuq-worker deployment, so 0 leaves crawls and batch jobs unprocessed.
+  NUQ_WORKER_COUNT: "1"
+  # Measure memory and CPU against this pod's limits, not the whole node.
+  IS_KUBERNETES: "true"
   HARNESS_STARTUP_TIMEOUT_MS: "60000"
   
   # Logging
