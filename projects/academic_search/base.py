@@ -8,6 +8,7 @@ This allows for easy extension with new sources.
 from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 import logging
+from threading import local
 
 import requests
 
@@ -15,7 +16,33 @@ from .models import Article, SearchResult
 from .config import Config
 
 
-class BaseSearcher(ABC):
+class ProviderRequestState:
+    """Keep diagnostics for cached adapters local to the request's worker thread."""
+
+    def __init__(self) -> None:
+        self._request_state = local()
+
+    @property
+    def last_failure(self) -> Optional[Dict[str, str]]:
+        return getattr(self._request_state, "failure", None)
+
+    @last_failure.setter
+    def last_failure(self, value: Optional[Dict[str, str]]) -> None:
+        self._request_state.failure = value
+
+    @property
+    def last_total(self) -> Optional[int]:
+        return getattr(self._request_state, "total", None)
+
+    @last_total.setter
+    def last_total(self, value: Optional[int]) -> None:
+        self._request_state.total = value
+
+    def clear_last_failure(self) -> None:
+        self.last_failure = None
+
+
+class BaseSearcher(ProviderRequestState, ABC):
     """
     Abstract base class for all search providers.
     
@@ -42,12 +69,9 @@ class BaseSearcher(ABC):
         Args:
             config: Configuration object with API keys and settings.
         """
+        super().__init__()
         self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.last_failure: Optional[Dict[str, str]] = None
-
-    def clear_last_failure(self) -> None:
-        self.last_failure = None
 
     @staticmethod
     def _failure_from_exception(exc: Exception) -> Dict[str, str]:
@@ -93,7 +117,7 @@ class BaseSearcher(ABC):
         return True
     
     def _make_request(self, url: str, params: Dict[str, Any], 
-                      headers: Optional[Dict[str, str]] = None) -> Optional[Dict]:
+                      headers: Optional[Dict[str, str]] = None, *, post: bool = False) -> Optional[Dict]:
         """
         Make an HTTP request with error handling.
         
@@ -105,38 +129,31 @@ class BaseSearcher(ABC):
         Returns:
             JSON response data or None if request failed.
         """
-        import requests
-        
         try:
-            response = requests.get(
-                url, 
-                params=params, 
-                headers=headers,
-                timeout=self.config.timeout
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-            elif response.status_code == 401:
-                self.logger.warning(f"{self.source_name}: Authentication failed")
-                self.last_failure = {"code": "authentication", "message": "authentication failed"}
-            elif response.status_code == 429:
-                self.logger.warning(f"{self.source_name}: Rate limited")
-                self.last_failure = {"code": "rate_limited", "message": "provider rate limit reached"}
+            if post:
+                response = requests.post(url, data=params, headers=headers, timeout=self.config.timeout)
             else:
-                self.logger.warning(
-                    f"{self.source_name}: Request failed with status {response.status_code}"
-                )
-                self.last_failure = {"code": "http_error", "message": "provider request failed"}
-                
-        except requests.exceptions.Timeout:
-            self.logger.warning(f"{self.source_name}: Request timeout")
-            self.last_failure = {"code": "timeout", "message": "provider request timed out"}
-        except requests.exceptions.RequestException as e:
-            self.logger.warning(f"{self.source_name}: Request error - {e}")
-            self.last_failure = {"code": "request_error", "message": "provider request failed"}
-        
-        return None
+                response = requests.get(url, params=params, headers=headers, timeout=self.config.timeout)
+        except requests.exceptions.RequestException as exc:
+            self.last_failure = self._failure_from_exception(exc)
+            return None
+        if response.status_code != 200:
+            self.last_failure = self._failure_from_exception(requests.HTTPError(response=response))
+            if self.last_failure["code"] == "request_error":
+                self.last_failure["code"] = "http_error"
+            self.logger.warning("%s: HTTP %s", self.source_name, response.status_code)
+            return None
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            self._invalid_response()
+            return None
+        return data
+
+    def _invalid_response(self) -> None:
+        self.last_failure = {"code": "invalid_response", "message": "invalid provider response"}
 
 
 class BaseAbstractEnricher(ABC):

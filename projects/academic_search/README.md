@@ -25,6 +25,144 @@ Run the Compose service and open `http://localhost:8010/`:
 docker compose up -d academic-search-api
 ```
 
+Create or switch between saved research projects from the **Topics** sidebar.
+Each topic reopens its latest saved paper search, journal snapshot, and any fit
+report for that snapshot. Open older runs from **Saved searches** or **Saved journal
+snapshots**. Use **Temporary search** for paper searches outside a saved topic.
+
+The publishing tabs use the same project store:
+
+- **Discover** compares an OpenAlex topic's share across two completed publication
+  years. Save recent papers or representative papers to your shortlist and turn
+  documented limitations and conflicting evidence into research questions.
+- **Submissions** finds related journals from an OpenAlex publication sample and
+  checks supported official pages for submission status. Save regular routes or
+  individual calls with dates, fees, article types, and indexing evidence. Use
+  manual checks when a publisher's notice is unavailable to the service.
+- **Manuscript** starts an outline from the chosen article type and research
+  question. Link claims to shortlist papers, record journal requirements, and
+  export the draft, evidence log, and checklist as Markdown or its references as
+  BibTeX or RIS. Saving creates a version in project history.
+- **Dossier** records a doçentlik or professorship target, the official criteria
+  for that application, and dated evidence for each activity. Reviewed statuses
+  reflect the researcher's assessment and the export retains the source clauses.
+
+Configure `OPENALEX_API_KEY` for the optional OpenAlex cursor and a larger request
+budget. Set `SEMANTIC_SCHOLAR_API_KEY` or `CORE_API_KEY` for authenticated requests
+to their respective sources. The workspace shows source failures alongside any
+partial results. Paper searches expose up to ten pages per query.
+
+In **Papers**, **Live + saved** shows a saved preview when available and checks
+the selected APIs each time you submit a search. Saved copies are identified
+when a provider is unavailable. **Saved only** searches your local library by
+keywords, quoted phrases, or DOI without calling any provider. The library
+includes papers retrieved in saved topics and temporary searches. Use
+**Save to shortlist** to add a library paper to the active topic.
+
+See [the database guide](DATABASE.md) for cache behavior, the schema, and backups.
+
+### Monitor a topic and revisit papers
+
+Open a topic and select **Watch this search** in Papers. Use **Inbox** to check
+manually or set a daily or weekly schedule. Automatic checks run while the
+local service is running, even when the browser is closed. Each check compares
+up to 50 returned matches with the watch's history. OpenAlex, arXiv, and PubMed
+use date ordering for watches. Other providers use their normal ordering.
+The inbox shows papers dated in the last 30 days, older or undated papers new
+to your library, and related papers already in the library. A partial check
+lists its provider failures and preserves the last fully successful check.
+
+Paper cards show opens and a **Mark read** action. **Inbox → Reading activity**
+lists which paper URLs or DOI links you opened in the app, the count for each
+address, and the last open. Read markers are shared across topics.
+
+### Follow journals
+
+In **Journals**, search for and select a journal, then choose **Follow journal**.
+Followed journals are shared across topics. **Journals** shows the recent
+publications and **Today** shows how many papers are new for each journal.
+Opening a paper, marking it read, or using **Mark all seen** clears its new badge.
+Each check uses up to 30 of the latest OpenAlex records for that journal and
+keeps earlier results in the local library. Journals without an OpenAlex match
+can still be followed for submission information.
+
+Check **Submission opportunities** for author guidelines, article types, fees,
+submission links, and verified open special issues with deadlines where the
+publisher supplies them. Unknown regular submission status is shown as
+unverified. Journals refresh daily while the app is running. You can refresh
+manually, and the saved feed stays available if a source fails.
+
+### Set up daily reading
+
+In **Daily reading**, select a topic and choose keywords, paper sources, a start
+date, the local time and time zone, and one to ten papers per day. Each topic
+has its own schedule. Use **Get today’s papers** for an on-demand edition or turn
+on automatic checks. The local service builds the current day’s edition when
+the schedule is due, including when it resumes later that day.
+
+The app looks for recent papers and fills available slots with unopened matches
+from the local library when appropriate. A work recommended by Daily reading
+stays in its original edition across topics and dates. **Mark read** updates the
+edition and the shared library, and the **Edition** menu opens previous lists.
+The **All topics** view shows daily progress and trend highlights across schedules.
+
+Trend suggestions use OpenAlex to compare a subtopic’s share of matching articles
+and reviews across two complete 30-day publication windows. The app shows the
+dates and counts, flags limited samples, and reports source failures. The comparison
+describes the indexed sample.
+
+### Deadlines and promotion evidence
+
+In **Submissions**, track a manuscript through submission, revision, acceptance,
+and publication. A revision can include a deadline, reviewer comments, and the
+editorial reference. The calendar lists dated open or upcoming calls and pending
+revisions across topics. Download the `.ics` file to add reminders one week and
+one day before due dates to your calendar. Import a fresh export when dates change.
+
+In **Dossier**, add academic evidence to **Shared evidence** once and link it to
+criteria for any topic's application target. Earlier topic activities are copied
+into the shared portfolio. Each target retains its official criteria and review
+status. Edits to shared evidence return linked, previously reviewed criteria to
+**In review** so you can check the updated evidence.
+
+### Move from reading to a manuscript
+
+- Open **Today** to see reading progress, upcoming calls and revisions, and
+  manuscript actions across topics. Open a draft directly from its action card.
+- From a paper or daily trend, use **Start research brief**. In **Discover**,
+  compare saved study notes by method, dataset, findings, limitations, and source
+  location. Record data access and the next investigation step in the brief,
+  then open a manuscript outline from that brief.
+- In **Manuscript**, assign a stage, next action, and due date. Each draft keeps
+  a local server autosave and a browser recovery copy during editing. **Save version
+  and review** creates a named point in the revision history. Insert inline
+  citations from the topic shortlist and **Download Word** to export numbered
+  citations and references from the latest autosave.
+- In **Submissions**, **Find special issues** searches supported official listings
+  by call keywords, journal or ISSN, and full-manuscript deadline. **Verify an
+  official call by URL** checks a supported public page directly. Save a call to
+  a topic or attach it to a draft. The local service rechecks saved calls and
+  shows changes in **Today**. Some publishers require a visit to their own listing
+  when the public page is unavailable to the service.
+
+### Optional model assistance
+
+The assistant can compare selected study records, suggest next steps for a saved
+brief, review saved manuscript sections, or assess a draft abstract against a
+publisher call. Choose a provider and click **Run assistant** to send the selected
+saved material. Suggestions cite the supplied records and leave drafts and evidence
+editable by the researcher.
+
+Configure a key and a model ID in the local service environment:
+
+| Provider | Environment variables |
+| --- | --- |
+| OpenAI | `OPENAI_API_KEY`, `ACADEMIC_OPENAI_MODEL` |
+| Anthropic | `ANTHROPIC_API_KEY`, `ACADEMIC_ANTHROPIC_MODEL` |
+
+See the [local deployment guide](../../deploy/academic-search/README.md) for Compose
+and OrbStack configuration.
+
 Journal searches belong to a research project. Repeating the same journal, topics,
 years, and limit loads the saved SQLite snapshot without another provider request.
 Use **Refresh from source** to retrieve and save a newer version. The UI always shows

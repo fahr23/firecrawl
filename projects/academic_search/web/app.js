@@ -4,28 +4,50 @@ const categorySelect = document.querySelector("#category");
 const providerOptions = document.querySelector("#providers");
 const selectAllSourcesButton = document.querySelector("#select-all-sources");
 const unavailableSources = document.querySelector("#sources-unavailable");
+const unavailableSourceList = document.querySelector("#unavailable-source-list");
+const unavailableSourceSummary = document.querySelector("#unavailable-source-summary");
 const sourceCount = document.querySelector("#source-count");
+const onlineSources = document.querySelector("#online-sources");
+const libraryCount = document.querySelector("#library-count");
+const watchSearchButton = document.querySelector("#watch-search");
+const watchSearchStatus = document.querySelector("#watch-search-status");
+const inboxCount = document.querySelector("#inbox-count");
 const statusText = document.querySelector("#status");
 const resultTitle = document.querySelector("#result-title");
 const resultsList = document.querySelector("#results");
 const emptyState = document.querySelector("#empty-state");
-const categoryStrip = document.querySelector("#category-strip");
 const resultsSection = document.querySelector(".results-section");
 const submitButton = form.querySelector("button[type='submit']");
-const projectSelect = document.querySelector("#project-select");
+const topicList = document.querySelector("#topic-list");
+const topicFilter = document.querySelector("#topic-filter");
+const topicMessage = document.querySelector("#topic-message");
+const topicToggle = document.querySelector("#topic-toggle");
+const topicMenu = document.querySelector("#topic-menu");
+const temporaryTopic = document.querySelector("#temporary-topic");
+const retryTopicsButton = document.querySelector("#retry-topics");
+const workspaceTitle = document.querySelector("#workspace-title");
+const workspaceLabel = document.querySelector("#workspace-label");
+const workspaceQuestion = document.querySelector("#workspace-question");
+const workspaceActions = document.querySelector("#workspace-actions");
+const workspaceTabs = [...document.querySelectorAll(".workspace-tabs [role='tab']")];
+const compactWorkspace = window.matchMedia("(max-width: 960px)");
+const savedTopicKey = "academic-search-current-project";
 const newProjectButton = document.querySelector("#new-project");
+const editProjectButton = document.querySelector("#edit-project");
 const exportProjectButton = document.querySelector("#export-project");
 const projectDialog = document.querySelector("#project-dialog");
 const projectForm = document.querySelector("#project-form");
 const cancelProjectButton = document.querySelector("#cancel-project");
 const createProjectButton = projectForm.querySelector("button[type='submit']");
 const projectError = document.querySelector("#project-error");
+const projectDialogTitle = document.querySelector("#project-dialog-title");
 const historyPanel = document.querySelector("#history-panel");
 const historyToggle = document.querySelector("#history-toggle");
 const historyCount = document.querySelector("#history-count");
 const searchHistory = document.querySelector("#search-history");
 const coverage = document.querySelector("#coverage");
 const journalForm = document.querySelector("#journal-form");
+const journalSubmitButton = journalForm.querySelector("button[type='submit']");
 const journalProviderSelect = document.querySelector("#journal-provider");
 const journalCategorySelect = document.querySelector("#journal-category");
 const journalCatalogStatus = document.querySelector("#journal-catalog-status");
@@ -43,6 +65,10 @@ const journalProfile = document.querySelector("#journal-profile");
 const journalPapers = document.querySelector("#journal-papers");
 const manuscriptPanel = document.querySelector("#manuscript-panel");
 const manuscriptForm = document.querySelector("#manuscript-form");
+const manuscriptSubmitButton = manuscriptForm.querySelector("button[type='submit']");
+const manuscriptTitle = document.querySelector("#manuscript-title");
+const manuscriptAbstract = document.querySelector("#manuscript-abstract");
+const manuscriptKeywords = document.querySelector("#manuscript-keywords");
 const fitReport = document.querySelector("#fit-report");
 const journalHistoryPanel = document.querySelector("#journal-history-panel");
 const journalHistory = document.querySelector("#journal-history");
@@ -63,7 +89,6 @@ const resultsPager = document.querySelector("#results-pager");
 const resultsFirstButton = document.querySelector("#results-first");
 const resultsPrevButton = document.querySelector("#results-prev");
 const resultsNextButton = document.querySelector("#results-next");
-const resultsLastButton = document.querySelector("#results-last");
 const resultsPageInput = document.querySelector("#results-page-input");
 const resultsPageLabel = document.querySelector("#results-page-label");
 
@@ -73,6 +98,10 @@ const state = {
   catalogPages: null,
   categories: new Map(),
   projects: new Map(),
+  unreadByTopic: new Map(),
+  projectId: null,
+  manuscriptDrafts: new Map(),
+  requests: new Map(),
   selectedJournal: null,
   journalSnapshot: null,
   journalProviders: new Map(),
@@ -120,6 +149,131 @@ function element(tag, className, text) {
   return node;
 }
 
+function jsonOptions(data, method = "POST", signal) {
+  return { method, signal, headers: { "content-type": "application/json" }, body: JSON.stringify(data) };
+}
+
+const paperActivityQueue = [];
+let paperActivityScheduled = false;
+
+function paperRef(paper) {
+  return { url: paper.url, doi: paper.doi || null };
+}
+
+function paperKey(paper) {
+  return paper.doi?.trim().toLowerCase().replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi:\s*)/, "") || paper.url;
+}
+
+function updatePaperActivity(control, activity) {
+  if (!activity) return;
+  if (control.updatedAt && (!activity.updated_at || activity.updated_at < control.updatedAt)) return;
+  control.updatedAt = activity.updated_at;
+  control.libraryId = activity.library_id;
+  control.read = Boolean(activity.read_at);
+  control.dataset.read = String(control.read);
+  const label = control.querySelector("span");
+  label.textContent = [
+    control.read ? "Read" : null,
+    activity.open_count ? `Opened ${activity.open_count}×` : "Unopened",
+  ].filter(Boolean).join(" · ");
+  label.title = activity.last_opened_at ? `Last opened ${new Date(activity.last_opened_at).toLocaleString()}` : "";
+  control.querySelector("button").textContent = control.read ? "Mark unread" : "Mark read";
+  control.hidden = false;
+}
+
+function handlePaperActivity(paper, activity) {
+  const key = paperKey(paper);
+  for (const control of document.querySelectorAll(".paper-activity")) {
+    if (control.libraryId === activity.library_id || control.paperKey === key) {
+      control.changed = true;
+      updatePaperActivity(control, activity);
+    }
+  }
+  void refreshWatchCounts();
+  document.dispatchEvent(new CustomEvent("academic-paper-activity", { detail: activity }));
+}
+
+async function loadPaperActivity() {
+  paperActivityScheduled = false;
+  const pending = paperActivityQueue.splice(0);
+  for (let i = 0; i < pending.length; i += 100) {
+    const batch = pending.slice(i, i + 100).filter(({ control }) => control.isConnected);
+    if (!batch.length) continue;
+    try {
+      const { items } = await requestJson("/api/v1/library/activity/lookup",
+        jsonOptions({ papers: batch.map(({ paper }) => paperRef(paper)) }), "Reading activity unavailable.");
+      batch.forEach(({ control }, index) => {
+        if (!control.changed) updatePaperActivity(control, items[index]);
+      });
+    } catch {
+      // Paper links remain usable when the activity service is unavailable.
+    }
+  }
+}
+
+function trackPaperLink(link, paper, control) {
+  const record = (event) => {
+    if (event.defaultPrevented || (event.type === "auxclick" && event.button !== 1)) return;
+    const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const eventId = [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-");
+    const opts = jsonOptions({ ...paperRef(paper), event_id: eventId });
+    requestJson("/api/v1/library/activity/open", { ...opts, keepalive: true }, "Open could not be recorded.")
+      .then((activity) => handlePaperActivity(paper, activity))
+      .catch(() => {
+        if (control?.isConnected && !control.hidden) control.querySelector("span").textContent = "Open could not be recorded";
+      });
+  };
+  link.addEventListener("click", record);
+  link.addEventListener("auxclick", record);
+}
+
+function paperActivityControls(paper, link) {
+  const control = element("div", "paper-activity");
+  control.paperKey = paperKey(paper);
+  control.hidden = true;
+  const label = element("span");
+  label.setAttribute("aria-live", "polite");
+  const action = element("button", "link-button", "Mark read");
+  action.type = "button";
+  action.addEventListener("click", async () => {
+    action.disabled = true;
+    try {
+      const status = await requestJson("/api/v1/library/activity/read",
+        jsonOptions({ ...paperRef(paper), read: !control.read }), "Reading status could not be saved.");
+      handlePaperActivity(paper, status);
+    } catch (error) {
+      label.textContent = error.message;
+    } finally {
+      action.disabled = false;
+    }
+  });
+  control.append(label, action);
+  trackPaperLink(link, paper, control);
+  paperActivityQueue.push({ paper, control });
+  if (!paperActivityScheduled) {
+    paperActivityScheduled = true;
+    queueMicrotask(loadPaperActivity);
+  }
+  return control;
+}
+
+function startRequest(key) {
+  state.requests.get(key)?.abort();
+  const controller = new AbortController();
+  state.requests.set(key, controller);
+  return controller.signal;
+}
+
+async function requestJson(url, options, fallback) {
+  const response = await fetch(url, options);
+  const payload = await response.json();
+  if (!response.ok) throw new Error(typeof payload.detail === "string" ? payload.detail : fallback);
+  return payload;
+}
+
 const tryFormatter = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", maximumFractionDigits: 0 });
 const numberFormatter = new Intl.NumberFormat("tr-TR", { maximumFractionDigits: 3 });
 
@@ -165,9 +319,6 @@ function populateCategories(payload) {
     option.value = category.id;
     categorySelect.append(option);
 
-    const chip = element("span", "category-chip", category.label);
-    chip.title = category.description;
-    categoryStrip.append(chip);
   }
 }
 
@@ -198,7 +349,10 @@ function setSelectedProviders(value) {
   for (const checkbox of sourceCheckboxes()) {
     checkbox.checked = wanted.has(checkbox.value) && !checkbox.disabled;
   }
-  if (!selectedProviders().length) setSelectedProviders("openalex");
+  if (!selectedProviders().length) {
+    const enabled = sourceCheckboxes().find((checkbox) => !checkbox.disabled);
+    if (enabled) enabled.checked = true;
+  }
   updateSelectAllLabel();
 }
 
@@ -212,8 +366,9 @@ function applyProviderAvailability(payload) {
     checkbox.closest(".source-option").hidden = !enabled;
     if (!enabled) missing.push(`${source.label} (${source.missing || "not configured"})`);
   }
-  unavailableSources.textContent = missing.length ? `Not set up on this server: ${missing.join(", ")}.` : "";
-  unavailableSources.hidden = !missing.length;
+  unavailableSources.textContent = missing.join(" · ");
+  unavailableSourceSummary.textContent = `${missing.length} ${missing.length === 1 ? "source needs" : "sources need"} setup`;
+  unavailableSourceList.hidden = !missing.length;
   if (!selectedProviders().length) setSelectedProviders("openalex");
   updateSelectAllLabel();
 }
@@ -221,53 +376,191 @@ function applyProviderAvailability(payload) {
 function updateSelectAllLabel() {
   const enabled = sourceCheckboxes().filter((checkbox) => !checkbox.disabled);
   const allSelected = enabled.every((checkbox) => checkbox.checked);
+  selectAllSourcesButton.disabled = !enabled.length;
   selectAllSourcesButton.textContent = allSelected ? "Reset to OpenAlex" : "Select all";
   sourceCount.textContent = `${selectedProviders().length} of ${enabled.length} selected`;
 }
 
 function selectedProjectId() {
-  return projectSelect.value || null;
+  return state.projectId;
 }
 
-function applyProjectDefaults(project) {
-  categorySelect.value = project.default_category || "all";
-  setSelectedProviders(project.default_providers);
-  document.querySelector("#year-min").value = project.default_year_min || "";
-  document.querySelector("#year-max").value = project.default_year_max || "";
+function applySearchSettings(query, category, providers, yearMin, yearMax, limit = 20) {
+  queryInput.value = query || "";
+  form.elements.mode.value = "online";
+  updatePaperScope();
+  categorySelect.value = state.categories.has(category) ? category : "all";
+  setSelectedProviders(providers);
+  form.elements.year_min.value = yearMin ?? "";
+  form.elements.year_max.value = yearMax ?? "";
+  const limitSelect = form.elements.limit;
+  limitSelect.querySelector("[data-saved-limit]")?.remove();
+  if (![...limitSelect.options].some((option) => option.value === String(limit))) {
+    const option = element("option", "", String(limit));
+    option.dataset.savedLimit = "";
+    limitSelect.append(option);
+  }
+  limitSelect.value = String(limit);
+}
+
+function setTopicMenu(expanded) {
+  topicToggle.setAttribute("aria-expanded", String(expanded));
+  topicMenu.hidden = !expanded;
+}
+
+function selectView(selected, focus = false) {
+  for (const tab of workspaceTabs) {
+    const active = tab === selected;
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+    document.getElementById(tab.getAttribute("aria-controls")).hidden = !active;
+  }
+  if (focus) selected.focus();
+  document.dispatchEvent(new Event("academic-workspace-change"));
+}
+
+for (const [index, tab] of workspaceTabs.entries()) {
+  tab.addEventListener("click", () => selectView(tab));
+  tab.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const last = workspaceTabs.length - 1;
+    const direction = event.key === "ArrowLeft" ? -1 : 1;
+    const next = event.key === "Home" ? 0 : event.key === "End" ? last
+      : (index + direction + workspaceTabs.length) % workspaceTabs.length;
+    selectView(workspaceTabs[next], true);
+  });
+}
+
+function renderActiveTopic() {
+  const project = state.projects.get(selectedProjectId());
+  workspaceLabel.textContent = project ? "Research topic" : "Temporary workspace";
+  workspaceTitle.textContent = project?.name || "Search the literature";
+  workspaceQuestion.textContent = project
+    ? project.research_question || ""
+    : "Create a topic to keep your searches and journal evidence together.";
+  workspaceQuestion.hidden = !workspaceQuestion.textContent;
+  workspaceActions.hidden = !project;
+  for (const button of topicList.querySelectorAll("button")) {
+    button.setAttribute("aria-current", String(button.dataset.projectId === project?.id));
+  }
+  temporaryTopic.setAttribute("aria-current", String(!project));
+}
+
+function renderTopics() {
+  const query = topicFilter.value.trim().toLocaleLowerCase();
+  const visible = [...state.projects.values()].filter((project) =>
+    `${project.name} ${project.research_question || ""}`.toLocaleLowerCase().includes(query)
+  );
+  topicList.replaceChildren(...visible.map((project) => {
+    const item = element("li");
+    const button = element("button", "topic-button", project.name);
+    button.type = "button";
+    button.dataset.projectId = project.id;
+    const unread = state.unreadByTopic.get(project.id);
+    if (unread) {
+      const count = element("span", "unread-badge", String(unread));
+      count.setAttribute("aria-label", `${unread} new papers`);
+      button.append(count);
+    }
+    button.addEventListener("click", () => chooseTopic(project.id));
+    item.append(button);
+    return item;
+  }));
+  topicMessage.textContent = visible.length ? "" : query ? "No topics match your filter." : "Create your first research topic.";
+  topicMessage.hidden = Boolean(visible.length);
+  renderActiveTopic();
+}
+
+async function refreshWatchCounts() {
+  try {
+    const { unread_by_topic: counts } = await requestJson("/api/v1/watches", { cache: "no-store" }, "Inbox count unavailable.");
+    state.unreadByTopic = new Map(Object.entries(counts));
+    const total = [...state.unreadByTopic.values()].reduce((sum, count) => sum + count, 0);
+    inboxCount.hidden = !total;
+    inboxCount.textContent = String(total);
+    inboxCount.setAttribute("aria-label", `${total} new papers`);
+    for (const item of topicList.querySelectorAll(".topic-button")) {
+      const count = state.unreadByTopic.get(item.dataset.projectId);
+      item.querySelector(".unread-badge")?.remove();
+      if (count) {
+        const badge = element("span", "unread-badge", String(count));
+        badge.setAttribute("aria-label", `${count} new papers`);
+        item.append(badge);
+      }
+    }
+  } catch {
+    // A temporary failure leaves the last known counts visible.
+  }
+}
+
+function chooseTopic(projectId) {
+  switchTopic(projectId);
+  if (compactWorkspace.matches) {
+    setTopicMenu(false);
+    workspaceTitle.focus();
+  }
+}
+
+async function loadProjects() {
+  retryTopicsButton.hidden = true;
+  topicMessage.hidden = false;
+  topicMessage.textContent = "Loading topics…";
+  try {
+    const { projects } = await requestJson("/api/v1/projects", {}, "Topics could not be loaded.");
+    state.projects = new Map(projects.map((project) => [project.id, project]));
+    renderTopics();
+    const savedId = localStorage.getItem(savedTopicKey);
+    const projectId = savedId === null ? projects[0]?.id : savedId;
+    switchTopic(state.projects.has(projectId) ? projectId : null);
+  } catch {
+    topicMessage.textContent = "Topics could not be loaded.";
+    retryTopicsButton.hidden = false;
+  }
+}
+
+function switchTopic(projectId) {
+  if (projectId === selectedProjectId()) return;
+  for (const controller of state.requests.values()) controller.abort();
+  state.requests.clear();
+  state.projectId = projectId;
+  state.paperSearch = null;
+  state.paperFormEdited = false;
+  state.journalFormEdited = false;
+  localStorage.setItem(savedTopicKey, projectId || "");
+  renderActiveTopic();
+
+  const project = state.projects.get(projectId);
+  applySearchSettings("", project?.default_category, project?.default_providers,
+    project?.default_year_min, project?.default_year_max);
+  setPaperLoading(project ? "Loading saved papers…" : "Enter a query to begin.", false);
+  emptyState.hidden = Boolean(project);
+  emptyState.textContent = "Enter a query to see papers and source links.";
+  resetJournalWorkspace();
+
+  setHistoryExpanded(false);
+  searchHistory.replaceChildren();
+  historyPanel.hidden = true;
+  if (project) {
+    void refreshHistory(true);
+    void refreshJournalHistory(true);
+  }
+  document.dispatchEvent(new Event("academic-workspace-change"));
 }
 
 function historyItem(search) {
   const item = element("li", "history-item");
   const title = element("strong", "", search.query);
+  const category = state.categories.get(search.category)?.label || "All fields";
   const detail = element(
     "span", "",
-    `${search.returned_count} linked result${search.returned_count === 1 ? "" : "s"} · ${search.category} · ${new Date(search.retrieved_at).toLocaleString()}`
+    `${search.returned_count} linked ${search.returned_count === 1 ? "paper" : "papers"} · ${category} · ${new Date(search.retrieved_at).toLocaleString()}`
   );
-  const repeat = element("button", "secondary", "Repeat search");
-  repeat.type = "button";
-  repeat.addEventListener("click", () => repeatSearch(search));
-  item.append(title, detail, repeat);
+  const open = element("button", "secondary", "Open saved results");
+  open.type = "button";
+  open.addEventListener("click", () => loadSavedSearch(search.id));
+  item.append(title, detail, open);
   return item;
-}
-
-function repeatSearch(search) {
-  const manifest = search.manifest || {};
-  queryInput.value = search.query || "";
-  categorySelect.value = search.category || "all";
-  document.querySelector("#year-min").value = search.year_min || "";
-  document.querySelector("#year-max").value = search.year_max || "";
-  document.querySelector("#limit").value = search.limit_value || manifest.limit || "20";
-  const requested = (search.providers || manifest.providers_requested || [])
-    .map((provider) => PROVIDER_IDS[String(provider).toLowerCase()] || String(provider).toLowerCase());
-  const available = new Set(
-    sourceCheckboxes().filter((checkbox) => !checkbox.disabled).map((checkbox) => checkbox.value)
-  );
-  if (!requested.length || requested.some((provider) => !available.has(provider))) {
-    statusText.textContent = "That search's source is not available here; pick a source and search again.";
-    return;
-  }
-  setSelectedProviders(requested.join(","));
-  runSearch();
 }
 
 function setHistoryExpanded(expanded) {
@@ -275,44 +568,39 @@ function setHistoryExpanded(expanded) {
   searchHistory.hidden = !expanded;
 }
 
-async function refreshHistory() {
+async function refreshHistory(restore = false) {
   const projectId = selectedProjectId();
-  searchHistory.replaceChildren();
-  historyPanel.hidden = !projectId;
   if (!projectId) return;
-  const response = await fetch(`/api/v1/projects/${projectId}/searches?limit=50`);
-  if (!response.ok) return;
-  const payload = await response.json();
-  for (const search of payload.searches) searchHistory.append(historyItem(search));
-  historyCount.textContent = payload.searches.length
-    ? `(${payload.searches.length})`
-    : "";
-  setHistoryExpanded(false);
+  const signal = startRequest("paper-history");
+  try {
+    const { searches } = await requestJson(
+      `/api/v1/projects/${projectId}/searches?limit=50`, { signal }, "Saved searches could not be loaded."
+    );
+    if (signal.aborted) return;
+    searchHistory.replaceChildren(...searches.map(historyItem));
+    historyPanel.hidden = !searches.length;
+    historyCount.textContent = String(searches.length);
+    if (restore && !state.requests.has("papers")) {
+      if (searches.length) await loadSavedSearch(searches[0].id, true);
+      else showPaperMessage("No saved searches", "Search for papers to start building this topic’s evidence.");
+    }
+  } catch (error) {
+    if (!signal.aborted && restore && !state.requests.has("papers")) {
+      showPaperMessage("Saved searches unavailable", error.message);
+    }
+  }
 }
 
 historyToggle.addEventListener("click", () => {
   setHistoryExpanded(historyToggle.getAttribute("aria-expanded") !== "true");
 });
 
-async function refreshProjects(preferredId) {
-  const response = await fetch("/api/v1/projects");
-  if (!response.ok) throw new Error("Projects could not be loaded");
-  const payload = await response.json();
-  state.projects = new Map(payload.projects.map((project) => [project.id, project]));
-  const savedId = preferredId || localStorage.getItem("academic-search-current-project");
-  projectSelect.replaceChildren(element("option", "", "No project — temporary search"));
-  projectSelect.firstChild.value = "";
-  for (const project of payload.projects) {
-    const option = element("option", "", project.name);
-    option.value = project.id;
-    projectSelect.append(option);
-  }
-  if (savedId && state.projects.has(savedId)) projectSelect.value = savedId;
-  exportProjectButton.disabled = !selectedProjectId();
-  if (selectedProjectId()) applyProjectDefaults(state.projects.get(selectedProjectId()));
-  await refreshHistory();
-  await refreshJournalHistory();
-}
+topicFilter.addEventListener("input", renderTopics);
+temporaryTopic.addEventListener("click", () => chooseTopic(null));
+retryTopicsButton.addEventListener("click", loadProjects);
+topicToggle.addEventListener("click", () => setTopicMenu(topicMenu.hidden));
+compactWorkspace.addEventListener("change", () => setTopicMenu(!compactWorkspace.matches));
+setTopicMenu(!compactWorkspace.matches);
 
 function renderCoverage(entries, outcomes) {
   coverage.replaceChildren();
@@ -332,7 +620,7 @@ function renderCoverage(entries, outcomes) {
   coverage.hidden = !entries?.length;
 }
 
-function paperCard(paper) {
+function paperCard(paper, origin) {
   const item = element("li", "paper");
   const content = element("article");
   const source = element(
@@ -343,11 +631,15 @@ function paperCard(paper) {
   source.title = `Paper record from ${paper.source || "an unknown source"}. `
     + "The category is derived from keyword rules, not supplied by the provider.";
   const title = element("h3", "", paper.title || "Untitled paper");
-  const metaParts = [paper.authors, paper.journal, paper.year, paper.doi ? `DOI ${paper.doi}` : null].filter(Boolean);
+  const metaParts = [paper.authors, paper.journal, paper.publication_date || paper.year, paper.doi ? `DOI ${paper.doi}` : null].filter(Boolean);
   const meta = element("p", "meta", metaParts.join(" · "));
 
   content.append(source, title);
   if (metaParts.length) content.append(meta);
+  if (paper.retrieval_kind === "saved") {
+    const date = paper.library_observed_at && new Date(paper.library_observed_at).toLocaleDateString();
+    content.append(element("span", "library-paper-tag", date ? `Saved copy · ${date}` : "Saved copy"));
+  }
   const ubyt = ubytBadge(paper.ubyt);
   if (ubyt) content.append(ubyt);
   if (paper.abstract) {
@@ -355,6 +647,8 @@ function paperCard(paper) {
       ? `${paper.abstract.slice(0, 357)}…`
       : paper.abstract;
     content.append(element("p", "abstract", abstract));
+  } else if (paper.search_snippet) {
+    content.append(element("p", "abstract", `Search snippet · ${paper.search_snippet}`));
   }
   if (paper.alignment) {
     const matched = paper.alignment.matched_terms?.length
@@ -365,12 +659,38 @@ function paperCard(paper) {
     ));
   }
 
-  const link = element("a", "paper-link", paper.doi ? "Open DOI ↗" : "Open paper ↗");
+  const label = /^https?:\/\/(?:dx\.)?doi\.org\//i.test(paper.url) ? "Open DOI ↗" : "Open paper ↗";
+  const link = element("a", "paper-link", label);
   link.href = paper.url;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
   link.setAttribute("aria-label", `Open ${paper.title || "paper"} in a new tab`);
-  item.append(content, link);
+  const actions = element("div", "paper-actions");
+  actions.append(link);
+  const doi = paperKey(paper);
+  if (paper.doi && /^10\.\d{4,9}\/\S+$/.test(doi) && !/^https?:\/\/(?:dx\.)?doi\.org\//i.test(paper.url)) {
+    const alternate = element("a", "paper-link", "DOI ↗");
+    alternate.href = `https://doi.org/${doi.split("/").map(encodeURIComponent).join("/")}`;
+    alternate.target = "_blank";
+    alternate.rel = "noopener noreferrer";
+    alternate.setAttribute("aria-label", `Open DOI for ${paper.title || "paper"}`);
+    trackPaperLink(alternate, { ...paper, url: alternate.href });
+    actions.append(alternate);
+  }
+  content.append(paperActivityControls(paper, link));
+  if (origin && typeof window.shortlistWorkspacePaper === "function") {
+    const button = element("button", "secondary save-paper", "Save to shortlist");
+    button.type = "button";
+    button.addEventListener("click", () => window.shortlistWorkspacePaper(origin, paper, button));
+    actions.append(button);
+    if (typeof window.startWorkspaceBrief === "function") {
+      const develop = element("button", "link-button", "Start research brief");
+      develop.type = "button";
+      develop.addEventListener("click", () => window.startWorkspaceBrief(origin, paper, develop));
+      actions.append(develop);
+    }
+  }
+  item.append(content, actions);
   return item;
 }
 
@@ -379,24 +699,26 @@ function renderResultsPager(payload) {
   const hasMore = Boolean(payload.has_more);
   state.resultsPage = page;
   state.resultsHasMore = hasMore;
+  state.resultsMaxPage = payload.pagination?.max_page || 10;
   resultsPager.hidden = page <= 1 && !hasMore;
   resultsFirstButton.disabled = resultsPrevButton.disabled = page <= 1;
-  resultsNextButton.disabled = resultsLastButton.disabled = !hasMore;
+  resultsNextButton.disabled = !hasMore;
   resultsPageInput.value = page;
-  resultsPageInput.removeAttribute("max");
+  resultsPageInput.max = hasMore ? state.resultsMaxPage : page;
   resultsPageLabel.textContent = "";
 }
 
 function goToResultsPage(page) {
-  const target = Math.max(1, Math.trunc(page) || 1);
-  if (target !== state.resultsPage) runSearch(target);
+  if (!state.paperSearch) return;
+  const max = state.resultsHasMore ? state.resultsMaxPage : state.resultsPage;
+  const target = Math.min(max, Math.max(1, Math.trunc(page) || 1));
+  if (target !== state.resultsPage) runSearch(target, state.paperSearch);
   else resultsPageInput.value = target;
 }
 
 resultsFirstButton.addEventListener("click", () => goToResultsPage(1));
 resultsPrevButton.addEventListener("click", () => goToResultsPage(state.resultsPage - 1));
 resultsNextButton.addEventListener("click", () => goToResultsPage(state.resultsPage + 1));
-resultsLastButton.addEventListener("click", () => goToResultsPage(state.resultsPage + 1));
 resultsPageInput.addEventListener("change", () => goToResultsPage(Number(resultsPageInput.value)));
 resultsPageInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
@@ -405,68 +727,213 @@ resultsPageInput.addEventListener("keydown", (event) => {
   }
 });
 
-async function runSearch(page = 1) {
-  const formData = new FormData(form);
-  const params = new URLSearchParams();
-  for (const [key, value] of formData.entries()) {
-    if (String(value).trim()) params.set(key, value);
-  }
-  const providers = selectedProviders();
-  if (!providers.length) {
-    statusText.textContent = "Pick at least one source.";
-    return;
-  }
-  params.set("providers", providers.join(","));
-  params.set("page", String(page));
-  if (selectedProjectId()) params.set("project_id", selectedProjectId());
-
-  resultsSection.setAttribute("aria-busy", "true");
-  submitButton.disabled = true;
-  statusText.textContent = `Searching ${providers.length} source${providers.length === 1 ? "" : "s"}…`;
+function setPaperLoading(message, busy = true) {
+  resultsSection.setAttribute("aria-busy", String(busy));
+  submitButton.disabled = busy;
+  statusText.textContent = message;
+  resultTitle.textContent = "Papers";
   coverage.hidden = true;
-  resultTitle.textContent = "Paper links";
   resultsList.replaceChildren();
   emptyState.hidden = true;
-  resultsPager.hidden = true;
+  renderResultsPager({});
+}
 
-  try {
-    const response = await fetch(`/api/v1/search?${params.toString()}`);
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.detail || "Search request failed");
-    }
+function showPaperMessage(status, message) {
+  statusText.textContent = status;
+  emptyState.hidden = false;
+  emptyState.textContent = message;
+}
 
-    const category = state.categories.get(payload.category);
-    resultTitle.textContent = category ? category.label : "Paper links";
-    const answered = payload.sources_responded.length;
-    const asked = payload.provider_coverage.length;
-    const rangeStart = payload.results.length ? (payload.page - 1) * payload.limit + 1 : 0;
-    const rangeEnd = rangeStart ? rangeStart + payload.results.length - 1 : 0;
-    statusText.textContent = [
-      rangeEnd ? `${rangeStart}–${rangeEnd} linked result${rangeEnd === 1 ? "" : "s"}` : "0 linked results",
-      asked > 1 ? `${answered} of ${asked} sources answered` : null,
-      payload.search_time ? `${payload.search_time.toFixed(1)} s` : null,
-    ].filter(Boolean).join(" · ");
-    renderCoverage(payload.provider_coverage, payload.provider_outcomes);
-
-    for (const paper of payload.results) {
-      resultsList.append(paperCard(paper));
-    }
-    if (!payload.results.length) {
-      emptyState.hidden = false;
-      emptyState.textContent = page > 1
-        ? "No more results on this page. Go back to the previous page."
-        : "No linked papers matched this query and category. Try All fields, another source, or a broader query.";
-    }
-    renderResultsPager(payload);
-    if (payload.project_id) await refreshProjects(payload.project_id);
-  } catch (error) {
-    statusText.textContent = "Search unavailable";
+function showPaperResults(payload, saved = false, preview = false) {
+  const page = payload.page || 1;
+  const rangeStart = payload.results.length ? (page - 1) * payload.limit + 1 : 0;
+  const rangeEnd = rangeStart ? rangeStart + payload.results.length - 1 : 0;
+  const count = payload.results.length;
+  const paperCount = !count || saved ? String(count) : `${rangeStart}–${rangeEnd}`;
+  const delivery = payload.cache || payload.manifest?.delivery;
+  const label = preview ? "Saved results · checking live sources…"
+    : delivery?.kind === "local" ? "Saved library"
+    : delivery?.kind === "mixed" ? "Live + saved results"
+    : delivery?.kind === "fallback" ? "Saved results · live sources unavailable"
+    : delivery?.kind === "live" && !payload.pagination?.partial ? "Live results"
+    : null;
+  resultTitle.textContent = payload.query || "Papers";
+  statusText.textContent = [
+    saved ? `Saved ${new Date(payload.retrieved_at).toLocaleString()}` : null,
+    label,
+    `${paperCount} linked ${count === 1 ? "paper" : "papers"}`,
+    payload.provider_coverage.length > 1 ? `${payload.sources_responded.length} sources returned results` : null,
+    payload.pagination?.partial ? "Some source results unavailable" : null,
+    payload.pagination?.window_limited ? "Search window limit reached" : null,
+  ].filter(Boolean).join(" · ");
+  renderCoverage(payload.provider_coverage, payload.provider_outcomes || payload.manifest?.provider_outcomes);
+  const runId = saved ? payload.id : payload.search_run_id || payload.reading_source_id;
+  const origin = runId ? { kind: payload.reading_source_id ? "search-page" : "search", run_id: runId } : null;
+  resultsList.replaceChildren(...payload.results.map((paper) => paperCard(paper,
+    selectedProjectId() && paper.retrieval_kind === "saved" && paper.library_id
+      ? { kind: "library", run_id: paper.library_id }
+      : origin)));
+  emptyState.hidden = Boolean(count);
+  if (!count) {
+    const failed = payload.provider_coverage.some((entry) => ["failed", "rate_limited", "unavailable"].includes(entry.status));
     emptyState.hidden = false;
-    emptyState.textContent = error.message;
+    emptyState.textContent = failed ? "Some sources could not be searched. Check coverage or try again."
+      : page > 1 ? "This page has no linked papers. Use the pager to go back."
+      : delivery?.kind === "local" ? "No saved papers match. Try different keywords or switch to Live + saved."
+      : "No linked papers matched. Broaden the query, change the field, or try another source.";
+  }
+  if (!preview) renderResultsPager(payload);
+}
+
+function updatePaperScope() {
+  const savedOnly = form.elements.mode.value === "local";
+  onlineSources.hidden = savedOnly;
+  queryInput.placeholder = savedOnly ? "Search saved papers by keywords or DOI" : "Search by topic, method, or keywords";
+  updateWatchButton();
+}
+
+function updateWatchButton() {
+  watchSearchButton.hidden = !selectedProjectId() || form.elements.mode.value === "local" || queryInput.value.trim().length < 2;
+  watchSearchStatus.hidden = true;
+}
+
+watchSearchButton.addEventListener("click", async () => {
+  const projectId = selectedProjectId();
+  if (!projectId || !form.reportValidity()) return;
+  const providers = selectedProviders();
+  if (!providers.length) {
+    watchSearchStatus.textContent = "Pick a source to watch this search.";
+    watchSearchStatus.hidden = false;
+    return;
+  }
+  const fields = Object.fromEntries(new FormData(form));
+  watchSearchButton.disabled = true;
+  try {
+    await requestJson(`/api/v1/projects/${projectId}/watches`, jsonOptions({
+      q: fields.q, category: fields.category, providers: providers.join(","), limit: Number(fields.limit),
+      year_min: fields.year_min ? Number(fields.year_min) : null, year_max: fields.year_max ? Number(fields.year_max) : null,
+    }), "The search could not be saved.");
+    watchSearchStatus.textContent = "Saved to Inbox.";
+    void refreshWatchCounts();
+  } catch (error) {
+    watchSearchStatus.textContent = error.message;
   } finally {
-    submitButton.disabled = false;
-    resultsSection.setAttribute("aria-busy", "false");
+    watchSearchButton.disabled = false;
+    if (selectedProjectId() === projectId) watchSearchStatus.hidden = false;
+  }
+});
+
+async function refreshLibraryCount() {
+  try {
+    const { works } = await requestJson("/api/v1/library/status", { cache: "no-store" }, "Library count unavailable.");
+    libraryCount.textContent = `${works.toLocaleString()} saved ${works === 1 ? "paper" : "papers"}`;
+  } catch {
+    libraryCount.textContent = "";
+  }
+}
+
+function finishPaperRequest(signal) {
+  if (signal.aborted) return;
+  submitButton.disabled = false;
+  resultsSection.setAttribute("aria-busy", "false");
+}
+
+async function loadSavedSearch(runId, restoring = false) {
+  const projectId = selectedProjectId();
+  if (!projectId) return;
+  state.paperSearch = null;
+  const signal = startRequest("papers");
+  setPaperLoading("Loading saved papers…");
+  try {
+    const saved = await requestJson(
+      `/api/v1/projects/${projectId}/searches/${runId}`, { signal }, "Saved results could not be loaded."
+    );
+    if (signal.aborted) return;
+    if (!restoring || !state.paperFormEdited) {
+      const requested = saved.providers_requested.map((source) => PROVIDER_IDS[String(source).toLowerCase()] || source);
+      applySearchSettings(saved.query, saved.category, requested.join(","), saved.year_min, saved.year_max, saved.limit_value);
+    }
+    showPaperResults(saved, true);
+    if (!restoring) {
+      setHistoryExpanded(false);
+      resultTitle.focus();
+    }
+  } catch (error) {
+    if (!signal.aborted) showPaperMessage("Saved results unavailable", error.message);
+  } finally {
+    finishPaperRequest(signal);
+  }
+}
+
+async function runSearch(page = 1, previous = null) {
+  let search = previous;
+  if (!search) {
+    const params = new URLSearchParams();
+    for (const [key, value] of new FormData(form)) {
+      if (String(value).trim()) params.set(key, value);
+    }
+    const mode = params.get("mode") || "online";
+    if (mode === "online") {
+      const providers = selectedProviders();
+      if (!providers.length) {
+        statusText.textContent = "Pick at least one source.";
+        return;
+      }
+      params.set("providers", providers.join(","));
+    }
+    const projectId = selectedProjectId();
+    if (projectId) params.set("project_id", projectId);
+    search = { params, mode, pages: new Map() };
+  }
+  const cached = search.pages.get(page);
+  if (cached) {
+    emptyState.hidden = true;
+    showPaperResults(cached);
+    return;
+  }
+  const priorPage = state.resultsPage;
+  const params = new URLSearchParams(search.params);
+  params.set("page", String(page));
+  const signal = startRequest("papers");
+  const local = search.mode === "local";
+  setPaperLoading(previous ? `Loading page ${page}…` : local ? "Searching saved papers…" : "Checking live sources…");
+  let liveSettled = false;
+  const request = (searchParams) => requestJson(
+    `/api/v1/search?${searchParams}`, { signal, cache: "no-store" }, "Search request failed."
+  );
+  const cachePreview = !local && !previous
+    ? request(new URLSearchParams({ ...Object.fromEntries(params), mode: "cache" }))
+        .then((payload) => {
+          if (!signal.aborted && !liveSettled && payload.results.length) showPaperResults(payload, false, true);
+          return payload;
+        }).catch(() => null)
+    : null;
+  try {
+    const payload = await request(params);
+    liveSettled = true;
+    if (signal.aborted) return;
+    if (!payload.pagination?.partial) search.pages.set(page, payload);
+    state.paperSearch = search;
+    showPaperResults(payload);
+    if (!local) void refreshLibraryCount();
+    if (payload.search_run_id) void refreshHistory();
+  } catch (error) {
+    liveSettled = true;
+    const preview = await cachePreview;
+    if (!signal.aborted) {
+      const prior = previous?.pages.get(priorPage);
+      if (preview?.results.length) {
+        showPaperResults(preview, false, true);
+        statusText.textContent = "Saved results · live search unavailable";
+      } else if (prior) {
+        showPaperResults(prior);
+        statusText.textContent += ` · Page ${page} could not be loaded`;
+      } else {
+        showPaperMessage("Search unavailable", error.message);
+      }
+    }
+  } finally {
+    finishPaperRequest(signal);
   }
 }
 
@@ -512,9 +979,7 @@ function selectJournal(journal) {
   const change = element("button", "link-button", "Change journal");
   change.type = "button";
   change.addEventListener("click", () => {
-    state.selectedJournal = null;
-    selectedJournalBox.hidden = true;
-    journalCatalogCard.hidden = false;
+    clearJournalSelection();
     journalNameInput.focus();
   });
   const details = element("div", "selected-details");
@@ -524,12 +989,15 @@ function selectJournal(journal) {
     identifierChips(journal),
     ubytBadge(journal.ubyt, { showMissing: true }),
   );
-  selectedJournalBox.replaceChildren(details, change);
+  const actions = element("div", "work-actions journal-selection-actions");
+  if (window.journalFollowAction) actions.append(window.journalFollowAction(journal));
+  actions.append(change);
+  selectedJournalBox.replaceChildren(details, actions);
   selectedJournalBox.title = journalOriginText(journal);
   selectedJournalBox.hidden = false;
   journalCatalogCard.hidden = true;
   const supported = journal.search_supported !== false;
-  journalForm.querySelector("button[type='submit']").disabled = !supported;
+  updateJournalControls();
   journalStatus.textContent = supported
     ? "Journal resolved by ISSN/source ID. Add topics and search."
     : journal.resolution_note || "Journal metadata resolved, but paper search is unavailable without an OpenAlex ISSN crosswalk.";
@@ -539,18 +1007,18 @@ let suggestionTimer;
 let suggestionController;
 
 async function resolveCatalogJournal(journal) {
+  clearJournalSelection();
+  const signal = startRequest("journal-identity");
   journalStatus.textContent = "Resolving journal identifiers and paper-search support…";
   const params = new URLSearchParams({
     provider: journal.catalog_provider || journalProviderSelect.value,
     journal_id: journal.provider_id || journal.id,
   });
   try {
-    const response = await fetch(`/api/v1/journal-catalog/resolve?${params}`);
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.detail || "Journal identity could not be resolved");
-    selectJournal(payload.journal);
+    const payload = await requestJson(`/api/v1/journal-catalog/resolve?${params}`, { signal }, "Journal identity could not be resolved.");
+    if (!signal.aborted) selectJournal(payload.journal);
   } catch (error) {
-    journalStatus.textContent = error.message;
+    if (!signal.aborted) journalStatus.textContent = error.message;
   }
 }
 
@@ -607,7 +1075,7 @@ function renderCatalogJournals(payload) {
   const providerLabel = state.journalProviders.get(payload.provider)?.label || payload.provider;
   journalSuggestions.replaceChildren(...(payload.journals || []).map((journal) => catalogRow(journal, providerLabel)));
   journalSuggestions.parentElement.scrollTop = 0;
-  journalCatalogCard.hidden = false;
+  journalCatalogCard.hidden = Boolean(state.selectedJournal);
   renderJournalPager(payload);
   const providerStatus = payload.provider_status?.status;
   const count = payload.journals?.length || 0;
@@ -656,7 +1124,8 @@ journalPageSizeSelect.addEventListener("change", () => loadCatalogJournals(state
 
 async function loadCatalogJournals(query = "", page = 1) {
   suggestionController?.abort();
-  suggestionController = new AbortController();
+  const controller = new AbortController();
+  suggestionController = controller;
   state.catalogQuery = query;
   state.catalogPage = page;
   const params = new URLSearchParams({
@@ -671,15 +1140,15 @@ async function loadCatalogJournals(query = "", page = 1) {
   journalCatalogCard.classList.add("loading");
   try {
     const response = await fetch(`/api/v1/journal-catalog/journals?${params}`, {
-      signal: suggestionController.signal,
+      signal: controller.signal,
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Journal catalog failed");
-    renderCatalogJournals(payload);
+    if (!controller.signal.aborted) renderCatalogJournals(payload);
   } catch (error) {
     if (error.name !== "AbortError") journalCatalogStatus.textContent = error.message;
   } finally {
-    journalCatalogCard.classList.remove("loading");
+    if (controller === suggestionController) journalCatalogCard.classList.remove("loading");
   }
 }
 
@@ -729,23 +1198,18 @@ function syncSortField() {
 journalProviderSelect.addEventListener("change", () => {
   syncSortField();
   journalProviderSelect.title = state.journalProviders.get(journalProviderSelect.value)?.access_note || "";
-  state.selectedJournal = null;
-  selectedJournalBox.hidden = true;
+  clearJournalSelection();
   journalNameInput.value = "";
   loadJournalCategories();
 });
 
 journalCategorySelect.addEventListener("change", () => {
-  state.selectedJournal = null;
-  selectedJournalBox.hidden = true;
+  clearJournalSelection();
   loadCatalogJournals(journalNameInput.value.trim());
 });
 
 journalNameInput.addEventListener("input", () => {
-  state.selectedJournal = null;
-  state.journalSnapshot = null;
-  selectedJournalBox.hidden = true;
-  refreshJournalButton.disabled = true;
+  clearJournalSelection();
   clearTimeout(suggestionTimer);
   const query = journalNameInput.value.trim();
   if (query.length === 1) {
@@ -770,22 +1234,85 @@ function ubytProfileCard(ubyt) {
   return card;
 }
 
+function updateJournalControls(busy = false) {
+  journalSubmitButton.disabled = busy || !selectedProjectId() || !state.selectedJournal
+    || state.selectedJournal.search_supported === false;
+  refreshJournalButton.disabled = busy || !state.journalSnapshot?.project_id;
+}
+
+function clearJournalSelection() {
+  state.journalFormEdited = true;
+  for (const key of ["journal-identity", "journal", "fit"]) state.requests.get(key)?.abort();
+  state.selectedJournal = null;
+  state.journalSnapshot = null;
+  selectedJournalBox.hidden = true;
+  journalResults.hidden = true;
+  journalCatalogCard.hidden = false;
+  journalStatus.textContent = selectedProjectId()
+    ? "Choose a journal from the catalog." : "Choose a topic to save journal evidence.";
+  updateJournalControls();
+}
+
+function applyManuscript(manuscript) {
+  manuscriptTitle.value = manuscript?.title || "";
+  manuscriptAbstract.value = manuscript?.abstract || "";
+  const keywords = manuscript?.keywords;
+  manuscriptKeywords.value = Array.isArray(keywords) ? keywords.join(", ") : keywords || "";
+}
+
+function manuscriptInput() {
+  return {
+    title: manuscriptTitle.value,
+    abstract: manuscriptAbstract.value,
+    keywords: manuscriptKeywords.value,
+  };
+}
+
+function resetJournalWorkspace() {
+  state.selectedJournal = null;
+  state.journalSnapshot = null;
+  journalNameInput.value = "";
+  journalTopicsInput.value = "";
+  document.querySelector("#journal-year-min").value = "";
+  document.querySelector("#journal-year-max").value = "";
+  selectedJournalBox.hidden = true;
+  journalCatalogCard.hidden = false;
+  if (state.catalogQuery) {
+    suggestionController?.abort();
+    state.catalogQuery = "";
+    journalSuggestions.replaceChildren();
+    journalPager.hidden = true;
+    journalCatalogStatus.textContent = "Search by journal name or ISSN.";
+  }
+  clearTimeout(suggestionTimer);
+  journalResults.hidden = true;
+  manuscriptPanel.hidden = true;
+  manuscriptSubmitButton.disabled = false;
+  fitReport.hidden = true;
+  applyManuscript(state.manuscriptDrafts.get(selectedProjectId()));
+  journalHistory.replaceChildren();
+  journalHistoryPanel.open = false;
+  journalHistoryPanel.hidden = true;
+  journalStatus.textContent = selectedProjectId()
+    ? "Loading saved journal evidence…" : "Choose a topic to save journal evidence.";
+  updateJournalControls();
+}
+
 function renderJournalSnapshot(snapshot) {
+  state.requests.get("fit")?.abort();
   state.journalSnapshot = snapshot;
-  state.selectedJournal = snapshot.journal;
   journalResults.hidden = false;
-  manuscriptPanel.hidden = !snapshot.id;
-  refreshJournalButton.disabled = !snapshot.project_id;
+  manuscriptPanel.hidden = !snapshot.id || !snapshot.papers.length;
+  manuscriptSubmitButton.disabled = false;
   journalResultTitle.textContent = snapshot.journal.display_name;
   const retrieved = new Date(snapshot.retrieved_at).toLocaleString();
   const sourceState = snapshot.cache_status === "saved"
-    ? "Loaded saved evidence"
-    : snapshot.cache_status === "refreshed" ? "Refreshed from OpenAlex" : "Saved new evidence";
+    ? "Saved snapshot" : snapshot.cache_status === "refreshed" ? "Refreshed from OpenAlex" : "New snapshot";
   journalSnapshotStatus.textContent = `${sourceState} · retrieved ${retrieved}`;
   journalRefreshBadge.textContent = snapshot.refresh_recommended ? "Refresh recommended" : "Snapshot current";
 
   const topics = (snapshot.profile.top_topics || []).slice(0, 8)
-    .map((item) => item.term).join(", ") || "Not enough keyword metadata";
+    .map((item) => item.term).join(", ") || "No topic metadata";
   const years = (snapshot.profile.publications_by_year || [])
     .map((item) => `${item.year}: ${item.count}`).join(" · ") || "No year metadata";
   journalProfile.replaceChildren(
@@ -794,154 +1321,185 @@ function renderJournalSnapshot(snapshot) {
     profileCard("Papers by year", years),
     ubytProfileCard(snapshot.journal.ubyt),
   );
-  journalPapers.replaceChildren();
-  for (const paper of snapshot.papers) journalPapers.append(paperCard(paper));
+  const origin = snapshot.id ? { kind: "journal", run_id: snapshot.id } : null;
+  journalPapers.replaceChildren(...snapshot.papers.map((paper) => paperCard(paper, origin)));
   if (!snapshot.papers.length) {
-    journalPapers.append(profileCard(
-      "No matching papers",
-      "The provider responded but returned no linked papers for this journal, topic, and year range.",
-    ));
+    const failed = snapshot.provider_outcomes?.some((outcome) => ["failed", "rate_limited"].includes(outcome.status));
+    journalPapers.append(element("li", "empty-state", failed
+      ? "The source could not be searched. Refresh from source to try again."
+      : "No linked papers matched this journal, topic, and year range."));
   }
+
   fitReport.hidden = true;
+  if (snapshot.latest_fit && snapshot.papers.length) {
+    const draft = state.manuscriptDrafts.get(selectedProjectId());
+    applyManuscript(draft || snapshot.latest_fit.manuscript);
+    renderFitReport(snapshot.latest_fit);
+  }
 }
 
 async function runJournalSearch(refresh = false) {
   const projectId = selectedProjectId();
-  if (!projectId) {
-    journalStatus.textContent = "Create or select a research project first so this evidence can be saved.";
-    newProjectButton.focus();
-    return;
-  }
-  if (!state.selectedJournal) {
-    journalStatus.textContent = "Choose a verified journal from the suggestions first.";
-    journalNameInput.focus();
-    return;
-  }
-  const topics = splitCommaValues(journalTopicsInput.value);
+  const previous = refresh ? state.journalSnapshot : null;
+  const journal = previous?.journal || state.selectedJournal;
+  if (!projectId || !journal) return;
+  const yearMin = previous ? previous.year_min : document.querySelector("#journal-year-min").value || null;
+  const yearMax = previous ? previous.year_max : document.querySelector("#journal-year-max").value || null;
+  const topics = previous?.topics || splitCommaValues(journalTopicsInput.value);
   if (!topics.length) {
     journalStatus.textContent = "Enter at least one topic.";
     journalTopicsInput.focus();
     return;
   }
-  const submit = journalForm.querySelector("button[type='submit']");
-  submit.disabled = true;
-  refreshJournalButton.disabled = true;
-  journalStatus.textContent = refresh ? "Refreshing from OpenAlex…" : "Checking saved evidence…";
+  const signal = startRequest("journal");
+  updateJournalControls(true);
+  journalStatus.textContent = refresh ? "Refreshing from OpenAlex…" : "Checking for saved evidence…";
   try {
-    const response = await fetch("/api/v1/journals/search", {
+    const payload = await requestJson("/api/v1/journals/search", {
       method: "POST",
+      signal,
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         project_id: projectId,
-        journal: state.selectedJournal,
+        journal,
         topics,
-        year_min: document.querySelector("#journal-year-min").value || null,
-        year_max: document.querySelector("#journal-year-max").value || null,
-        limit: 20,
+        year_min: yearMin,
+        year_max: yearMax,
+        limit: previous?.limit || 20,
         refresh,
       }),
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.detail || "Journal search failed");
+    }, "Journal search failed.");
+    if (signal.aborted) return;
     renderJournalSnapshot(payload);
-    journalStatus.textContent = payload.cache_status === "saved"
-      ? "Loaded without contacting the provider. Use Refresh when you want newer results."
-      : "Journal evidence saved to this project.";
-    await refreshJournalHistory();
+    journalStatus.textContent = payload.cache_status === "saved" ? "Saved journal evidence loaded." : "Journal evidence saved.";
+    void refreshJournalHistory();
   } catch (error) {
-    journalStatus.textContent = error.message;
+    if (!signal.aborted) journalStatus.textContent = error.message;
   } finally {
-    submit.disabled = false;
-    refreshJournalButton.disabled = !state.journalSnapshot?.project_id;
+    if (!signal.aborted) updateJournalControls();
   }
 }
 
+journalForm.addEventListener("input", () => { state.journalFormEdited = true; });
 journalForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  runJournalSearch(false);
+  runJournalSearch();
 });
 refreshJournalButton.addEventListener("click", () => runJournalSearch(true));
 
-function loadJournalHistory(search) {
-  selectJournal(search.journal);
-  journalTopicsInput.value = search.topics.join(", ");
-  document.querySelector("#journal-year-min").value = search.year_min || "";
-  document.querySelector("#journal-year-max").value = search.year_max || "";
-  runJournalSearch(false);
+async function loadJournalHistory(runId, restoring = false) {
+  const projectId = selectedProjectId();
+  if (!projectId) return;
+  const signal = startRequest("journal");
+  journalStatus.textContent = "Loading saved journal evidence…";
+  try {
+    const snapshot = await requestJson(
+      `/api/v1/projects/${projectId}/journal-searches/${runId}`, { signal }, "Saved journal snapshot could not be loaded."
+    );
+    if (signal.aborted || (restoring && state.journalFormEdited)) return;
+    selectJournal(snapshot.journal);
+    journalTopicsInput.value = snapshot.topics.join(", ");
+    document.querySelector("#journal-year-min").value = snapshot.year_min ?? "";
+    document.querySelector("#journal-year-max").value = snapshot.year_max ?? "";
+    renderJournalSnapshot(snapshot);
+    journalStatus.textContent = "Saved journal evidence loaded.";
+    if (!restoring) {
+      journalHistoryPanel.open = false;
+      journalResultTitle.focus();
+    }
+  } catch (error) {
+    if (!signal.aborted) journalStatus.textContent = error.message;
+  } finally {
+    if (!signal.aborted) updateJournalControls();
+  }
 }
 
-async function refreshJournalHistory() {
+async function refreshJournalHistory(restore = false) {
   const projectId = selectedProjectId();
-  journalHistory.replaceChildren();
-  journalHistoryPanel.hidden = !projectId;
-  if (!projectId) {
-    journalStatus.textContent = "Select a research project to save journal evidence.";
-    return;
-  }
-  const response = await fetch(`/api/v1/projects/${projectId}/journal-searches`);
-  if (!response.ok) return;
-  const payload = await response.json();
-  for (const search of payload.searches || []) {
-    const item = element("li", "history-item");
-    item.append(
-      element("strong", "", search.journal.display_name),
-      element("span", "", `${search.topics.join(", ")} · ${search.paper_count} papers · ${new Date(search.retrieved_at).toLocaleString()}`),
+  if (!projectId) return;
+  const signal = startRequest("journal-history");
+  try {
+    const { searches } = await requestJson(
+      `/api/v1/projects/${projectId}/journal-searches`, { signal }, "Saved journal history could not be loaded."
     );
-    const load = element("button", "secondary", "Load saved snapshot");
-    load.type = "button";
-    load.addEventListener("click", () => loadJournalHistory(search));
-    item.append(load);
-    journalHistory.append(item);
+    if (signal.aborted) return;
+    journalHistory.replaceChildren(...searches.map((search) => {
+      const item = element("li", "history-item");
+      const open = element("button", "secondary", "Open snapshot");
+      open.type = "button";
+      open.addEventListener("click", () => loadJournalHistory(search.id));
+      item.append(
+        element("strong", "", search.journal.display_name),
+        element("span", "", `${search.topics.join(", ")} · ${search.paper_count} papers · ${new Date(search.retrieved_at).toLocaleString()}`),
+        open,
+      );
+      return item;
+    }));
+    journalHistoryPanel.hidden = !searches.length;
+    if (restore && !state.requests.has("journal") && !state.journalFormEdited) {
+      if (searches.length) await loadJournalHistory(searches[0].id, true);
+      else journalStatus.textContent = "Choose a journal to start a snapshot for this topic.";
+    }
+  } catch (error) {
+    if (!signal.aborted && restore && !state.journalFormEdited) journalStatus.textContent = error.message;
   }
-  journalHistoryPanel.hidden = !payload.searches?.length;
 }
+
+function renderFitReport(report) {
+  fitReport.replaceChildren(
+    element("p", "fit-score", `${report.overall_score}/100`),
+    element("strong", "", report.summary),
+    element("p", "", `Matched terms · ${report.matched_terms.join(", ") || "none in this sample"}`),
+    element("p", "", `Potential vocabulary gaps · ${report.potential_gaps.join(", ") || "none identified"}`),
+    element("p", "", report.disclaimer),
+  );
+  if (report.manuscript) {
+    fitReport.prepend(element("p", "status", `Saved report · ${new Date(report.created_at).toLocaleString()}`));
+  }
+  const heading = element("h4", "", "Closest papers in the saved snapshot");
+  const list = element("ul");
+  for (const paper of report.closest_papers) {
+    const item = element("li");
+    const link = element("a", "paper-link", `${paper.title} — ${paper.score}/100`);
+    link.href = paper.url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    item.append(link, paperActivityControls(paper, link));
+    list.append(item);
+  }
+  fitReport.append(heading, list);
+  fitReport.hidden = false;
+}
+
+manuscriptForm.addEventListener("input", () => {
+  state.manuscriptDrafts.set(selectedProjectId(), manuscriptInput());
+});
 
 manuscriptForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (!state.journalSnapshot?.id || !selectedProjectId()) return;
-  const button = manuscriptForm.querySelector("button[type='submit']");
-  button.disabled = true;
+  const projectId = selectedProjectId();
+  const runId = state.journalSnapshot?.id;
+  if (!projectId || !runId) return;
+  const signal = startRequest("fit");
+  manuscriptSubmitButton.disabled = true;
   try {
-    const response = await fetch(
-      `/api/v1/journal-searches/${state.journalSnapshot.id}/fit`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          project_id: selectedProjectId(),
-          title: document.querySelector("#manuscript-title").value,
-          abstract: document.querySelector("#manuscript-abstract").value,
-          keywords: splitCommaValues(document.querySelector("#manuscript-keywords").value),
-        }),
-      },
-    );
-    const report = await response.json();
-    if (!response.ok) throw new Error(report.detail || "Fit analysis failed");
-    fitReport.replaceChildren(
-      element("p", "fit-score", `${report.overall_score}/100`),
-      element("strong", "", report.summary),
-      element("p", "", `Matched terms: ${report.matched_terms.join(", ") || "none in this sample"}`),
-      element("p", "", `Potential vocabulary gaps: ${report.potential_gaps.join(", ") || "none identified"}`),
-      element("p", "", report.disclaimer),
-    );
-    const heading = element("h4", "", "Closest papers in the saved snapshot");
-    const list = element("ul");
-    for (const paper of report.closest_papers) {
-      const item = element("li");
-      const link = element("a", "paper-link", `${paper.title} — ${paper.score}/100`);
-      link.href = paper.url;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      item.append(link);
-      list.append(item);
-    }
-    fitReport.append(heading, list);
-    fitReport.hidden = false;
+    const manuscript = manuscriptInput();
+    const report = await requestJson(`/api/v1/journal-searches/${runId}/fit`, {
+      method: "POST",
+      signal,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        project_id: projectId, ...manuscript, keywords: splitCommaValues(manuscript.keywords),
+      }),
+    }, "Fit analysis failed.");
+    if (!signal.aborted) renderFitReport(report);
   } catch (error) {
-    fitReport.replaceChildren(element("p", "", error.message));
-    fitReport.hidden = false;
+    if (!signal.aborted) {
+      fitReport.replaceChildren(element("p", "", error.message));
+      fitReport.hidden = false;
+    }
   } finally {
-    button.disabled = false;
+    if (!signal.aborted) manuscriptSubmitButton.disabled = false;
   }
 });
 
@@ -962,84 +1520,94 @@ form.addEventListener("submit", (event) => {
   runSearch();
 });
 
-projectSelect.addEventListener("change", async () => {
-  const projectId = selectedProjectId();
-  state.journalSnapshot = null;
-  journalResults.hidden = true;
-  manuscriptPanel.hidden = true;
-  fitReport.hidden = true;
-  refreshJournalButton.disabled = true;
-  if (projectId) {
-    localStorage.setItem("academic-search-current-project", projectId);
-    applyProjectDefaults(state.projects.get(projectId));
-  } else {
-    localStorage.removeItem("academic-search-current-project");
-  }
-  exportProjectButton.disabled = !projectId;
-  await refreshHistory();
-  await refreshJournalHistory();
-});
+function editTopic(project) {
+  projectForm.reset();
+  projectForm.dataset.projectId = project?.id || "";
+  projectForm.elements.name.value = project?.name || "";
+  projectForm.elements.research_question.value = project?.research_question || "";
+  projectDialogTitle.textContent = project ? "Edit topic" : "New topic";
+  createProjectButton.textContent = project ? "Save changes" : "Create topic";
+  projectError.hidden = true;
+  projectDialog.showModal();
+}
 
-newProjectButton.addEventListener("click", () => projectDialog.showModal());
+newProjectButton.addEventListener("click", () => editTopic());
+editProjectButton.addEventListener("click", () => editTopic(state.projects.get(selectedProjectId())));
 cancelProjectButton.addEventListener("click", () => projectDialog.close());
+
 projectForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (createProjectButton.disabled) return;
+  const nameField = projectForm.elements.name;
+  const name = nameField.value.trim();
+  if (!name) {
+    projectError.textContent = "Enter a topic name.";
+    projectError.hidden = false;
+    nameField.focus();
+    return;
+  }
   createProjectButton.disabled = true;
+  cancelProjectButton.disabled = true;
   projectError.hidden = true;
+  const projectId = projectForm.dataset.projectId;
   const formData = new FormData(projectForm);
+  const path = projectId ? `/api/v1/projects/${projectId}` : "/api/v1/projects";
+  const fallback = projectId ? "Topic could not be updated." : "Topic could not be created.";
   try {
-    const response = await fetch("/api/v1/projects", {
-      method: "POST",
+    const project = await requestJson(path, {
+      method: projectId ? "PATCH" : "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        name: formData.get("name"),
+        name,
         research_question: formData.get("research_question"),
-        default_category: categorySelect.value,
-        default_providers: selectedProviders().join(","),
-        default_year_min: document.querySelector("#year-min").value || null,
-        default_year_max: document.querySelector("#year-max").value || null,
       }),
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      projectError.textContent = typeof payload.detail === "string"
-        ? payload.detail
-        : "Project could not be created";
-      projectError.hidden = false;
-      return;
-    }
-    projectForm.reset();
+    }, fallback);
+    if (projectId) state.projects.set(project.id, project);
+    else state.projects = new Map([[project.id, project], ...state.projects]);
+    topicFilter.value = "";
+    renderTopics();
     projectDialog.close();
-    localStorage.setItem("academic-search-current-project", payload.id);
-    await refreshProjects(payload.id);
-  } catch {
-    projectError.textContent = "Project could not be created";
+    if (!projectId) {
+      selectView(workspaceTabs[0]);
+      chooseTopic(project.id);
+      queryInput.focus();
+    }
+  } catch (error) {
+    projectError.textContent = error.message;
     projectError.hidden = false;
   } finally {
     createProjectButton.disabled = false;
+    cancelProjectButton.disabled = false;
   }
+});
+
+projectDialog.addEventListener("cancel", (event) => {
+  if (createProjectButton.disabled) event.preventDefault();
 });
 
 exportProjectButton.addEventListener("click", () => {
   if (selectedProjectId()) window.location.href = `/api/v1/projects/${selectedProjectId()}/evidence?format=markdown`;
 });
 
+form.addEventListener("input", () => {
+  state.paperFormEdited = true;
+  updateWatchButton();
+});
+for (const mode of form.elements.mode) mode.addEventListener("change", updatePaperScope);
+
 renderSourceOptions();
+updateSelectAllLabel();
+updateJournalControls();
+updatePaperScope();
+void refreshLibraryCount();
+void refreshWatchCounts();
+window.setInterval(() => { if (!document.hidden) void refreshWatchCounts(); }, 45000);
 
-Promise.all([
-  fetch("/api/v1/categories").then((response) => response.json()),
-  fetch("/api/v1/health").then((response) => response.json()),
-  fetch("/api/v1/journal-catalog/providers").then((response) => response.json()),
-])
-  .then(async ([categories, health, journalCatalog]) => {
-    populateCategories(categories);
-    applyProviderAvailability(health);
-    initializeJournalCatalog(journalCatalog);
-    await refreshProjects();
-  })
-  .catch(() => {
-    statusText.textContent = "Categories could not be loaded.";
-  });
+Promise.allSettled([
+  requestJson("/api/v1/categories", {}, "Fields could not be loaded.").then(populateCategories),
+  requestJson("/api/v1/health", {}, "Source availability could not be loaded.").then(applyProviderAvailability),
+]).then(loadProjects);
 
-queryInput.focus();
+requestJson("/api/v1/journal-catalog/providers", {}, "Journal catalogs could not be loaded.")
+  .then(initializeJournalCatalog)
+  .catch((error) => { journalCatalogStatus.textContent = error.message; });

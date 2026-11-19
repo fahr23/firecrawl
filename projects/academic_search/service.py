@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager, suppress
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from functools import lru_cache
+from itertools import chain
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Literal, Optional
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
@@ -15,9 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from requests import RequestException
 
 from .engine import AcademicSearchEngine
 from .config import Config
+from .daily_api import daily_router, daily_scheduler
 from .journal_analysis import (
     ARTICLE_ALIGNMENT_VERSION,
     FIT_VERSION,
@@ -27,13 +32,20 @@ from .journal_analysis import (
     manuscript_fit,
 )
 from .journal_catalog import CATALOG_PROVIDERS, JournalCatalogService
-from .models import Article
+from .journal_favorites import journal_favorites_router, scheduler as journal_favorites_scheduler
+from .models import Article, ProviderOutcome, SearchResult
 from .project_store import DuplicateProjectName, ProjectStore
 from .providers import OpenAlexSearcher
+from .publishing_api import router_for_publishing
+from .research_workspace import account_router, workspace_router
+from .special_issues import scheduler as special_issue_scheduler
 from .ubyt_catalog import UbytCatalog, article_issns
+from .workflow_api import watch_scheduler, workflow_router
 
 
-SERVICE_VERSION = "1.3"
+SERVICE_VERSION = "2.1.1"
+MAX_SEARCH_PAGE = 10
+MAX_SEARCH_SIZE = 50
 WEB_DIR = Path(__file__).resolve().parent / "web"
 
 # Categories are derived labels, not provider-supplied scholarly classifications.
@@ -186,14 +198,18 @@ def _cors_origins() -> List[str]:
 
 def _safe_url(article: Article) -> Optional[str]:
     candidates = [article.url]
-    if article.doi:
+    if isinstance(article.doi, str) and article.doi_normalized:
         candidates.append(f"https://doi.org/{article.doi_normalized}")
     for candidate in candidates:
-        if not candidate:
+        if not isinstance(candidate, str) or not candidate.strip():
             continue
-        parsed = urlparse(candidate)
-        if parsed.scheme in {"http", "https"} and parsed.netloc:
-            return candidate
+        candidate = candidate.strip()
+        try:
+            parsed = urlparse(candidate)
+            if parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username and not parsed.password:
+                return candidate
+        except ValueError:
+            continue
     return None
 
 
@@ -203,7 +219,7 @@ def _article_text(article: Article) -> str:
             article.title or "",
             article.abstract or "",
             article.journal or "",
-            " ".join(article.keywords or []),
+            " ".join(keyword for keyword in (article.keywords or []) if isinstance(keyword, str)),
         ]
     ).lower()
 
@@ -342,6 +358,28 @@ def _serialize_article(article: Article) -> Optional[Dict[str, Any]]:
     if not url:
         return None
     category = derive_category(article)
+    snippet = (article.raw_data or {}).get("search_snippet") if article.source == "Google Scholar" else None
+    raw = article.raw_data or {}
+    date_keys = ("publication_date", "publicationDate", "publishedDate", "published_date", "prism:coverDate")
+    publication_date = None
+    for key in date_keys:
+        value = raw.get(key)
+        if isinstance(value, str) and len(value) >= 10 and value[4:5] == "-" and value[7:8] == "-":
+            try:
+                publication_date = date.fromisoformat(value[:10]).isoformat()
+                break
+            except ValueError:
+                continue
+    if not publication_date and article.source == "PubMed":
+        for key in ("epubdate", "pubdate"):
+            value = raw.get(key)
+            if not isinstance(value, str):
+                continue
+            try:
+                publication_date = datetime.strptime(value, "%Y %b %d").date().isoformat()
+                break
+            except ValueError:
+                continue
     return {
         "title": article.title,
         "url": url,
@@ -349,11 +387,14 @@ def _serialize_article(article: Article) -> Optional[Dict[str, Any]]:
         "authors": article.authors,
         "journal": article.journal,
         "year": article.year,
+        "publication_date": publication_date,
+        **({"is_retracted": True} if raw.get("is_retracted") is True else {}),
         "abstract": article.abstract,
+        **({"search_snippet": snippet} if snippet else {}),
         "source": article.source,
         "is_open_access": article.is_open_access,
         "citation_count": article.citation_count,
-        "keywords": article.keywords,
+        "keywords": [keyword for keyword in (article.keywords or []) if isinstance(keyword, str)],
         "category": category,
         "category_label": CATEGORIES[category]["label"],
         "category_provenance": "derived:keyword-rules-v1",
@@ -415,7 +456,201 @@ def _journal_response(payload: Dict[str, Any], cache_status: str) -> Dict[str, A
     }
 
 
+def _saved_response(library, query, category, provider_names, year_min, year_max, page, limit,
+                    *, cached=None):
+    if cached is not None:
+        papers = cached["results"]
+        source = "query_cache"
+        fetched_at = cached["cache_fetched_at"]
+        extra = cached.get("has_more", False)
+    else:
+        papers = library.search(query, category, provider_names, year_min, year_max, limit + 1, (page - 1) * limit)
+        source = "library"
+        fetched_at = max((paper["library_observed_at"] for paper in papers[:limit]), default=None)
+        extra = len(papers) > limit
+    results = [{**paper, "retrieval_kind": "saved"} for paper in papers[:limit]]
+    return {
+        "query": query, "category": category, "category_provenance": "derived:keyword-rules-v1",
+        "providers_requested": provider_names, "sources_responded": [], "provider_outcomes": [],
+        "provider_coverage": [], "retrieved_at": fetched_at, "search_time": None,
+        "total_provider_matches": None, "results": results, "returned": len(results),
+        "year_min": year_min, "year_max": year_max, "page": page, "limit": limit,
+        "has_more": page < MAX_SEARCH_PAGE and extra,
+        "pagination": {"max_page": MAX_SEARCH_PAGE, "partial": False, "window_limited": page == MAX_SEARCH_PAGE and extra},
+        "cache": {"kind": "local", "source": source, "fetched_at": fetched_at,
+                  "checked_at": None, "live_count": 0, "saved_count": len(results)},
+        "manifest": {"query": query, "source": source, "retrieved_at": fetched_at,
+                     "provider_attempt": False, "cached_manifest": cached.get("manifest") if cached is not None else None},
+    }
+
+
+def _add_saved_fallback(library, payload, signature, failed_providers):
+    if not failed_providers or len(payload["results"]) >= payload["limit"]:
+        return
+    query, category = payload["query"], payload["category"]
+    year_min, year_max = payload["year_min"], payload["year_max"]
+    page, limit = payload["page"], payload["limit"]
+    exact = library.cached_page(signature, page, limit)
+    failed = {provider.casefold() for provider in failed_providers}
+    cached_rows = [paper for paper in (exact or {}).get("results", [])
+                   if str(paper.get("source") or "").casefold() in failed]
+    seen = {paper.get("library_id") or paper["url"] for paper in payload["results"]}
+    candidates = [paper for paper in cached_rows if (paper.get("library_id") or paper["url"]) not in seen]
+    source = "query_cache"
+    fetched_at = exact["cache_fetched_at"] if exact else None
+    fallback_has_more = exact.get("has_more", False) if exact else False
+    if not candidates:
+        saved = _saved_response(library, query, category, failed_providers, year_min, year_max, page, limit)
+        candidates = saved["results"]
+        source = "library"
+        fetched_at = saved["cache"]["fetched_at"]
+        fallback_has_more = saved["has_more"]
+    live_count = len(payload["results"])
+    for paper in candidates:
+        key = paper.get("library_id") or paper["url"]
+        if key in seen:
+            continue
+        if len(payload["results"]) >= limit:
+            break
+        seen.add(key)
+        payload["results"].append({**paper, "retrieval_kind": "saved"})
+    saved_count = len(payload["results"]) - live_count
+    if saved_count:
+        payload["returned"] = len(payload["results"])
+        payload["has_more"] = page < MAX_SEARCH_PAGE and (payload["has_more"] or fallback_has_more)
+        payload["cache"].update(kind="mixed" if live_count else "fallback", source=source,
+                                fetched_at=fetched_at, saved_count=saved_count)
+
+
+def _search_filters(q, category, providers, year_min, year_max):
+    query = q.strip()
+    if len(query) < 2:
+        raise HTTPException(422, "Query is too short")
+    if category != "all" and category not in CATEGORIES:
+        raise HTTPException(422, "Unknown category")
+    if year_min is not None and year_max is not None and year_min > year_max:
+        raise HTTPException(422, "year_min must be less than or equal to year_max")
+    return query, _parse_providers(providers)
+
+
+async def fetch_literature(
+    store, engine, query, category, provider_names, year_min, year_max, page, limit, *, for_watch=False,
+):
+    library = store.literature
+    signature = library.signature(query, category, provider_names, year_min, year_max)
+    # Providers don't support an offset, so each page re-fetches candidates from
+    # the start and slices the window locally. One extra candidate is requested
+    # past the window edge so `has_more` can be determined without a separate
+    # count call; cap total candidates fetched.
+    window_end = page * limit
+    fetch_target = window_end + 1
+    max_candidates = MAX_SEARCH_PAGE * MAX_SEARCH_SIZE + 1
+    candidate_limit = min(fetch_target * 3 if category != "all" else fetch_target, max_candidates)
+    extra = {"prefer_recent": True} if for_watch and isinstance(engine, AcademicSearchEngine) else {}
+    try:
+        result = await run_in_threadpool(
+            engine.search, query, candidate_limit, False, year_min, year_max, provider_names, **extra,
+        )
+    except (RequestException, OSError):
+        result = SearchResult(
+            query=query, requested_providers=provider_names,
+            provider_outcomes=[ProviderOutcome(name, "failed", error_code="transport_error",
+                                               message="provider transport unavailable") for name in provider_names],
+        )
+
+    candidates = [
+        item
+        for item in (_serialize_article(article) for article in result.articles)
+        if item is not None
+    ]
+    serialized = candidates if category == "all" else [item for item in candidates if item["category"] == category]
+    window_start = (page - 1) * limit
+    extra_result = len(serialized) > window_end
+    has_more = page < MAX_SEARCH_PAGE and extra_result
+    serialized = serialized[window_start:window_end]
+    outcomes = [outcome.to_dict() for outcome in result.provider_outcomes]
+    coverage = _provider_coverage(provider_names, result.sources, outcomes)
+    failed_providers = [entry["provider"] for entry in coverage
+                        if entry["status"] in {"failed", "rate_limited", "unavailable"}]
+    payload = {
+        "query": query,
+        "category": category,
+        "category_provenance": "derived:keyword-rules-v1",
+        "providers_requested": provider_names,
+        "sources_responded": result.sources,
+        "provider_outcomes": outcomes,
+        "retrieved_at": result.timestamp,
+        "search_time": result.search_time,
+        "total_provider_matches": result.total_found,
+        "returned": len(serialized),
+        "results": serialized,
+        "year_min": year_min,
+        "year_max": year_max,
+        "limit": limit,
+        "page": page,
+        "has_more": has_more,
+        "pagination": {
+            "max_page": MAX_SEARCH_PAGE,
+            "candidate_limit": candidate_limit,
+            "window_limited": (page == MAX_SEARCH_PAGE and extra_result) or (
+                category != "all" and not extra_result and len(result.articles) >= max_candidates
+            ),
+            "partial": bool(failed_providers),
+        },
+        "provider_coverage": coverage,
+        "manifest": result.manifest(),
+        "cache": {"kind": "live", "source": "api", "fetched_at": None,
+                  "checked_at": result.timestamp, "live_count": len(serialized), "saved_count": 0},
+    }
+    additional_articles = result.provider_articles
+    if additional_articles:
+        # Keep the observations from each provider even when the online list
+        # merges a duplicate into a single ranked result.
+        shown = {id(article) for article in result.articles}
+        additional = (
+            paper for paper in (
+                _serialize_article(article) for article in additional_articles if id(article) not in shown
+            ) if paper is not None
+        )
+        observed = chain(additional, candidates)
+    else:
+        observed = candidates
+    new_work_ids = await run_in_threadpool(
+        library.save_search, signature, payload, observed, not failed_providers and not for_watch,
+    )
+    if for_watch:
+        payload["new_work_ids"] = new_work_ids
+    else:
+        await run_in_threadpool(_add_saved_fallback, library, payload, signature, failed_providers)
+    payload["manifest"]["delivery"] = dict(payload["cache"])
+    return payload
+
+
 def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app):
+        def engine():
+            return app.dependency_overrides.get(get_search_engine, get_search_engine)()
+
+        def openalex():
+            return app.dependency_overrides.get(get_journal_searcher, get_journal_searcher)()
+
+        store = app.state.project_store
+        tasks = [
+            asyncio.create_task(watch_scheduler(store, engine, fetch_literature)),
+            asyncio.create_task(daily_scheduler(store, engine, openalex, fetch_literature)),
+            asyncio.create_task(special_issue_scheduler(store)),
+            asyncio.create_task(journal_favorites_scheduler(store, openalex, _serialize_article)),
+        ]
+        try:
+            yield
+        finally:
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with suppress(asyncio.CancelledError):
+                    await task
+
     app = FastAPI(
         title="Academic Search Service",
         description=(
@@ -425,6 +660,7 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
         version=SERVICE_VERSION,
         docs_url="/docs",
         redoc_url="/redoc",
+        lifespan=lifespan,
     )
 
     origins = _cors_origins()
@@ -432,12 +668,19 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
         CORSMiddleware,
         allow_origins=origins,
         allow_credentials="*" not in origins,
-        allow_methods=["GET", "POST", "PATCH"],
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE"],
         allow_headers=["*"],
     )
     app.state.project_store = project_store or ProjectStore(_project_store_path())
 
     app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
+    app.include_router(workspace_router(get_project_store, get_journal_searcher, _serialize_article))
+    app.include_router(account_router(get_project_store))
+    app.include_router(workflow_router(get_project_store, get_search_engine, _search_filters, fetch_literature))
+    app.include_router(daily_router(get_project_store, get_search_engine, get_journal_searcher, _search_filters, fetch_literature))
+    app.include_router(router_for_publishing(get_project_store, get_journal_searcher))
+    app.include_router(journal_favorites_router(get_project_store, get_journal_catalog_service, get_journal_searcher,
+                                                _serialize_article))
 
     @app.get("/", include_in_schema=False)
     @app.get("/ui", include_in_schema=False)
@@ -531,6 +774,15 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Research project not found")
         return {"searches": store.list_searches(project_id, limit)}
 
+    @app.get("/api/v1/projects/{project_id}/searches/{run_id}")
+    async def saved_paper_search(
+        project_id: str, run_id: str, store: ProjectStore = Depends(get_project_store),
+    ) -> Dict[str, Any]:
+        saved = store.get_search(project_id, run_id)
+        if not saved:
+            raise HTTPException(status_code=404, detail="Saved paper search not found")
+        return saved
+
     @app.get("/api/v1/projects/{project_id}/journal-searches")
     async def project_journal_searches(
         project_id: str, limit: int = Query(default=20, ge=1, le=100),
@@ -539,6 +791,16 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
         if not store.get_project(project_id):
             raise HTTPException(status_code=404, detail="Research project not found")
         return {"searches": store.list_journal_searches(project_id, limit)}
+
+    @app.get("/api/v1/projects/{project_id}/journal-searches/{run_id}")
+    async def saved_journal_search(
+        project_id: str, run_id: str, store: ProjectStore = Depends(get_project_store),
+    ) -> Dict[str, Any]:
+        saved = store.get_journal_search(run_id)
+        if not saved or saved["project_id"] != project_id:
+            raise HTTPException(status_code=404, detail="Saved journal search not found")
+        fits = store.list_journal_fits(project_id, limit=1, journal_search_id=run_id)
+        return {**_journal_response(saved, "saved"), "latest_fit": next(iter(fits), None)}
 
     @app.get("/api/v1/projects/{project_id}/journal-fits")
     async def project_journal_fits(
@@ -571,17 +833,20 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
         searcher: OpenAlexSearcher = Depends(get_journal_searcher),
         ubyt: UbytCatalog = Depends(get_ubyt_catalog),
     ) -> Dict[str, Any]:
-        journals = await run_in_threadpool(searcher.suggest_journals, q.strip(), limit)
+        def fetch_suggestions():
+            journals = searcher.suggest_journals(q.strip(), limit)
+            return journals, getattr(searcher, "last_failure", None)
+
+        journals, failure = await run_in_threadpool(fetch_suggestions)
         for journal in journals:
             journal["ubyt"] = ubyt.match(journal.get("issns") or [], journal.get("display_name"))
-        failure = getattr(searcher, "last_failure", None)
         return {
             "query": q.strip(),
             "journals": journals,
             "provenance": "provider:OpenAlex",
             "provider_status": (
                 {"status": failure["code"], "message": failure["message"]}
-                if failure else {"status": "responded"}
+                if failure else {"status": "responded" if journals else "empty"}
             ),
         }
 
@@ -594,7 +859,11 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
         sort: str = Query(default="mep", pattern="^(mep|payment|name)$"),
         ubyt: UbytCatalog = Depends(get_ubyt_catalog),
     ) -> Dict[str, Any]:
-        journals = ubyt.search(q, category, limit, (page - 1) * limit, sort)
+        def find_journals():
+            journals = ubyt.search(q, category, limit, (page - 1) * limit, sort)
+            return journals, ubyt.last_total
+
+        journals, total = await run_in_threadpool(find_journals)
         return {
             "list": ubyt.label,
             "query": q.strip(),
@@ -602,7 +871,7 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             "page": page,
             "limit": limit,
             "sort": sort,
-            "total": ubyt.last_total,
+            "total": total,
             "journals": journals,
         }
 
@@ -759,6 +1028,7 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             "profile": profile,
             "manifest": manifest,
         }
+        await run_in_threadpool(store.literature.observe, serialized, retrieved_at)
         if request.project_id:
             payload = store.record_journal_search(request.project_id, payload)
         return _journal_response(payload, "refreshed" if request.refresh else "fresh")
@@ -775,6 +1045,8 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
         saved = store.get_journal_search(journal_search_id)
         if not saved or saved["project_id"] != request.project_id:
             raise HTTPException(status_code=404, detail="Saved journal search not found")
+        if not saved["papers"]:
+            raise HTTPException(status_code=422, detail="A saved journal sample with linked papers is required")
         title = " ".join(request.title.split())
         abstract = " ".join(request.abstract.split())
         keywords = [" ".join(item.split()) for item in request.keywords if item.strip()]
@@ -791,86 +1063,41 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             report,
         )
 
+    @app.get("/api/v1/library/status")
+    async def library_status(store: ProjectStore = Depends(get_project_store)) -> Dict[str, Any]:
+        return await run_in_threadpool(store.literature.status)
+
     @app.get("/api/v1/search")
     async def search(
+        response: Response,
         q: str = Query(min_length=2, max_length=300),
         category: str = Query(default="all"),
         providers: Optional[str] = Query(default=None),
-        limit: int = Query(default=20, ge=1, le=50),
-        page: int = Query(default=1, ge=1, le=10),
+        limit: int = Query(default=20, ge=1, le=MAX_SEARCH_SIZE),
+        page: int = Query(default=1, ge=1, le=MAX_SEARCH_PAGE),
         year_min: Optional[int] = Query(default=None, ge=1800, le=2200),
         year_max: Optional[int] = Query(default=None, ge=1800, le=2200),
         project_id: Optional[str] = Query(default=None),
+        mode: Literal["online", "local", "cache"] = Query(default="online"),
         engine: AcademicSearchEngine = Depends(get_search_engine),
         store: ProjectStore = Depends(get_project_store),
     ) -> Dict[str, Any]:
-        query = q.strip()
-        if len(query) < 2:
-            raise HTTPException(status_code=422, detail="Query is too short")
-        if category != "all" and category not in CATEGORIES:
-            raise HTTPException(status_code=422, detail="Unknown category")
-        if year_min is not None and year_max is not None and year_min > year_max:
-            raise HTTPException(
-                status_code=422,
-                detail="year_min must be less than or equal to year_max",
-            )
-
-        provider_names = _parse_providers(providers)
+        response.headers["Cache-Control"] = "no-store"
+        query, provider_names = _search_filters(q, category, providers, year_min, year_max)
+        if mode == "local" and providers is None:
+            provider_names = []
         if project_id and not store.get_project(project_id):
             raise HTTPException(status_code=404, detail="Research project not found")
-        # Providers don't support an offset, so each page re-fetches candidates from
-        # the start and slices the window locally. One extra candidate is requested
-        # past the window edge so `has_more` can be determined without a separate
-        # count call; cap total candidates fetched.
-        window_end = page * limit
-        fetch_target = window_end + 1
-        candidate_limit = min(fetch_target * 3 if category != "all" else fetch_target, 300)
-        result = await run_in_threadpool(
-            engine.search,
-            query,
-            candidate_limit,
-            False,
-            year_min,
-            year_max,
-            provider_names,
+        library = store.literature
+        signature = library.signature(query, category, provider_names, year_min, year_max)
+        if mode != "online":
+            cached = await run_in_threadpool(library.cached_page, signature, page, limit) if mode == "cache" else None
+            return await run_in_threadpool(
+                _saved_response, library, query, category, provider_names, year_min, year_max, page, limit, cached=cached,
+            )
+        payload = await fetch_literature(
+            store, engine, query, category, provider_names, year_min, year_max, page, limit,
         )
-
-        serialized = [
-            item
-            for item in (_serialize_article(article) for article in result.articles)
-            if item is not None
-        ]
-        if category != "all":
-            serialized = [
-                item for item in serialized if item["category"] == category
-            ]
-        window_start = (page - 1) * limit
-        has_more = len(serialized) > window_end
-        serialized = serialized[window_start:window_end]
-
-        payload = {
-            "query": query,
-            "category": category,
-            "category_provenance": "derived:keyword-rules-v1",
-            "providers_requested": provider_names,
-            "sources_responded": result.sources,
-            "provider_outcomes": [outcome.to_dict() for outcome in result.provider_outcomes],
-            "retrieved_at": result.timestamp,
-            "search_time": result.search_time,
-            "total_provider_matches": result.total_found,
-            "returned": len(serialized),
-            "results": serialized,
-            "year_min": year_min,
-            "year_max": year_max,
-            "limit": limit,
-            "page": page,
-            "has_more": has_more,
-            "provider_coverage": _provider_coverage(
-                provider_names, result.sources,
-                [outcome.to_dict() for outcome in result.provider_outcomes],
-            ),
-            "manifest": result.manifest(),
-        }
         if project_id and page == 1:
             store.update_project(project_id, {
                 "default_category": category,
@@ -881,6 +1108,12 @@ def create_app(project_store: Optional[ProjectStore] = None) -> FastAPI:
             run = store.record_search(project_id, payload)
             payload["project_id"] = project_id
             payload["search_run_id"] = run["id"]
+        elif project_id and payload["results"]:
+            run = store.put_workspace_item(project_id, "search-page", {
+                "results": payload["results"], "query": query, "page": page,
+                "retrieved_at": payload["retrieved_at"],
+            })
+            payload["reading_source_id"] = run["id"]
         return payload
 
     return app

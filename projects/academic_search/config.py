@@ -21,6 +21,8 @@ class APIConfig:
     serper_api_key: Optional[str] = None
     clarivate_api_key: Optional[str] = None
     clarivate_journals_api_key: Optional[str] = None
+    openalex_api_key: Optional[str] = field(default=None, repr=False)
+    core_api_key: Optional[str] = field(default=None, repr=False)
     
     def __post_init__(self):
         """Load from environment if not provided."""
@@ -42,6 +44,10 @@ class APIConfig:
             self.clarivate_api_key = os.getenv("CLARIVATE_API_KEY")
         if not self.clarivate_journals_api_key:
             self.clarivate_journals_api_key = os.getenv("CLARIVATE_JOURNALS_API_KEY")
+        if not self.openalex_api_key:
+            self.openalex_api_key = os.getenv("OPENALEX_API_KEY")
+        if not self.core_api_key:
+            self.core_api_key = os.getenv("CORE_API_KEY")
 
 
 @dataclass

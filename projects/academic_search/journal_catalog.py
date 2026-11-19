@@ -16,7 +16,7 @@ CATALOG_PROVIDERS = {
     "ubyt": "TÜBİTAK UBYT",
 }
 # Largest page each catalog API returns; paging maths must use the real page size.
-CATALOG_PAGE_LIMITS = {"web-of-science": 50}
+CATALOG_PAGE_LIMITS = {"web-of-science": 50, "openalex": OpenAlexSearcher.PAGE_SIZE}
 
 
 class JournalCatalogService:
@@ -138,15 +138,21 @@ class JournalCatalogService:
             }
 
         crosswalk = None
-        for issn in journal.get("issns") or []:
+        crosswalk_failure = None
+        identifiers = dict.fromkeys([journal.get("issn_l"), *(journal.get("issns") or [])])
+        for issn in filter(None, identifiers):
             crosswalk = self.openalex.resolve_journal_by_issn(issn)
             if crosswalk:
+                break
+            if self.openalex.last_failure:
+                crosswalk_failure = self.openalex.last_failure
                 break
         if crosswalk:
             original_identifiers = journal.get("identifiers") or {}
             crosswalk["catalog_id"] = journal.get("catalog_id")
             crosswalk["catalog_provider"] = provider
             crosswalk["provider_id"] = journal.get("provider_id")
+            crosswalk["homepage_url"] = crosswalk.get("homepage_url") or journal.get("homepage_url") or ""
             crosswalk["identifiers"] = {
                 **(crosswalk.get("identifiers") or {}),
                 **original_identifiers,
@@ -168,10 +174,10 @@ class JournalCatalogService:
             journal = crosswalk
         else:
             journal["search_supported"] = False
-            journal["resolution_note"] = (
-                "No OpenAlex journal crosswalk was found from the provider ISSN; "
-                "catalog metadata is available but journal-scoped paper search is disabled."
-            )
+            if crosswalk_failure:
+                journal["resolution_note"] = f'OpenAlex could not check the journal ISSN · {crosswalk_failure["message"]}. Try again later.'
+            else:
+                journal["resolution_note"] = "No OpenAlex journal was found for the ISSN supplied by this catalog."
         return {
             "provider": provider,
             "journal": self.annotate(journal),

@@ -27,6 +27,8 @@ htmlcov/
 results/
 *.json
 *.md
+!DATABASE.md
 *.csv
+!data/ubyt_2026.csv
 *.bib
 *.ris

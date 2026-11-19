@@ -52,7 +52,7 @@ def test_provider_conformance_outcomes_cover_success_empty_and_failures():
     assert [outcome.status for outcome in result.provider_outcomes] == [expected for _, _, expected in cases]
     assert result.provider_outcomes[3].error_code == "rate_limited"
     assert result.provider_outcomes[4].error_code == "timeout"
-    assert result.manifest()["deduplication_version"] == "doi-or-title-author-year-v1"
+    assert result.manifest()["deduplication_version"] == "doi-or-title-author-year-v2"
 
 
 def test_global_limit_and_conservative_deduplication_preserve_distinct_short_titles():

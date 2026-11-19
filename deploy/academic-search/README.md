@@ -10,7 +10,8 @@ like `deploy/data-hub/`.
 ## How it runs
 
 - One pod, `academic-search-api` (port 8010, health `GET /api/v1/health`).
-- Projects and saved searches are a SQLite file (`/data/projects.db`) on the
+- Projects, saved search evidence, and the local literature library use the SQLite
+  file `/data/projects.db` on the
   `academic-project-data` PVC, so the deployment is **replicas: 1, strategy: Recreate**:
   two pods must never write the file at once.
 - No Firecrawl. Firecrawl research is disabled (`ACADEMIC_ENABLE_FIRECRAWL_RESEARCH=false`);
@@ -36,15 +37,42 @@ kubectl --context orbstack -n academic-search create secret generic academic-sea
 ```
 
 Web of Science also needs `ACADEMIC_ENABLE_CLARIVATE: "true"` in `base/config.yaml` (on by default).
+The optional `OPENALEX_API_KEY` in `academic-search-secrets` increases the budget
+for OpenAlex literature, journal, and topic discovery requests.
+Set `CORE_API_KEY` in the same Secret to make authenticated CORE requests.
 Without `SEMANTIC_SCHOLAR_API_KEY`, Semantic Scholar's shared anonymous quota often answers 429,
 which the API reports as `rate_limited`.
 
-## Copy the project store from a previous namespace
+For optional manuscript assistance, use `OPENAI_API_KEY` with
+`ACADEMIC_OPENAI_MODEL`, or `ANTHROPIC_API_KEY` with
+`ACADEMIC_ANTHROPIC_MODEL`. Use a model ID enabled for your account. Set the
+pair in the local Compose environment (for example, an untracked `.env` file),
+or add the variables to the existing `academic-search-secrets` in the local
+OrbStack namespace. Restart the service after changing its environment.
+
+## Back up the project store
+
+Use SQLite's backup API to include committed changes from the write-ahead log.
 
 ```
-kubectl --context orbstack -n <old-ns> exec deploy/academic-search-api -- cat /data/projects.db \
-  > /tmp/projects.db
-kubectl --context orbstack -n academic-search cp /tmp/projects.db \
-  "$(kubectl --context orbstack -n academic-search get pod -l app=academic-search-api -o name | cut -d/ -f2)":/data/projects.db
-kubectl --context orbstack -n academic-search rollout restart deploy/academic-search-api
+kubectl --context orbstack -n academic-search exec deploy/academic-search-api -- python -c '
+from pathlib import Path
+import sqlite3, sys, tempfile
+with sqlite3.connect("file:/data/projects.db?mode=ro", uri=True) as source:
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "projects.db"
+        snapshot = sqlite3.connect(path)
+        try:
+            source.backup(snapshot)
+            snapshot.execute("PRAGMA journal_mode = DELETE")
+        finally:
+            snapshot.close()
+        sys.stdout.buffer.write(path.read_bytes())
+' > academic-projects-backup.db
+sqlite3 academic-projects-backup.db 'PRAGMA integrity_check;'
 ```
+
+To restore into a deployment, stop the application before replacing the database
+on its volume. Retain the previous database and its SQLite sidecar files as a
+separate backup. Restore the snapshot as `projects.db` in a directory with no
+sidecar files from the previous database, then start the application.

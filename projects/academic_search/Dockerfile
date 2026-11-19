@@ -29,4 +29,4 @@ COPY projects/academic_search/requirements.test.txt /tmp/academic-test-requireme
 
 RUN python -m pip install -r /tmp/academic-test-requirements.txt
 
-CMD ["python", "-m", "pytest", "-q", "academic_search/tests/test_academic_search.py", "academic_search/tests/test_firecrawl_research.py", "academic_search/tests/test_service.py"]
+CMD ["python", "-m", "pytest", "-q", "academic_search/tests"]

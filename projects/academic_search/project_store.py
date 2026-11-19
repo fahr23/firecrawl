@@ -15,6 +15,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .daily_store import DailyReadingStore
+from .journal_favorites_store import JournalFavoritesStore
+from .literature_store import LiteratureStore
+from .publishing_store import PublishingStore
+from .workflow_store import WorkflowStore
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -27,6 +33,10 @@ class DuplicateProjectName(ValueError):
     pass
 
 
+class WorkspaceConflict(ValueError):
+    pass
+
+
 class ProjectStore:
     """SQLite persistence for essay/research-project search evidence."""
 
@@ -36,6 +46,9 @@ class ProjectStore:
         self._connection = sqlite3.connect(path, check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self._connection.execute("PRAGMA foreign_keys = ON")
+        if path != ":memory:":
+            self._connection.execute("PRAGMA journal_mode = WAL")
         with self._connection:
             self._connection.executescript(
                 """
@@ -98,6 +111,15 @@ class ProjectStore:
                 );
                 CREATE INDEX IF NOT EXISTS journal_fits_project_created_idx
                   ON journal_fit_runs(project_id, created_at DESC);
+                CREATE TABLE IF NOT EXISTS workspace_revisions (
+                  project_id TEXT NOT NULL REFERENCES research_projects(id),
+                  section TEXT NOT NULL,
+                  id TEXT NOT NULL,
+                  revision INTEGER NOT NULL,
+                  data_json TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  PRIMARY KEY (project_id, section, id, revision)
+                );
                 """
             )
             columns = {
@@ -107,6 +129,12 @@ class ProjectStore:
                 self._connection.execute(
                     "ALTER TABLE search_runs ADD COLUMN manifest_json TEXT NOT NULL DEFAULT '{}'"
                 )
+        self.literature = LiteratureStore(self._connection, self._lock)
+        self.literature.import_project_history()
+        self.workflow = WorkflowStore(self)
+        self.daily = DailyReadingStore(self._connection, self._lock)
+        self.publishing = PublishingStore(self._connection, self._lock)
+        self.journal_favorites = JournalFavoritesStore(self._connection, self._lock)
 
     @staticmethod
     def _project(row: sqlite3.Row) -> Dict[str, Any]:
@@ -216,6 +244,27 @@ class ProjectStore:
             for row in rows
         ]
 
+    @staticmethod
+    def _search_run(row: sqlite3.Row) -> Dict[str, Any]:
+        item = dict(row)
+        for field, column in (
+            ("providers_requested", "providers_json"),
+            ("sources_responded", "sources_responded_json"),
+            ("provider_coverage", "provider_coverage_json"),
+            ("manifest", "manifest_json"),
+            ("results", "results_json"),
+        ):
+            item[field] = json.loads(item.pop(column))
+        return item
+
+    def get_search(self, project_id: str, run_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM search_runs WHERE project_id = ? AND id = ?",
+                (project_id, run_id),
+            ).fetchone()
+        return self._search_run(row) if row else None
+
     def evidence(self, project_id: str) -> Optional[Dict[str, Any]]:
         project = self.get_project(project_id)
         if not project:
@@ -225,15 +274,6 @@ class ProjectStore:
                 "SELECT * FROM search_runs WHERE project_id = ? ORDER BY retrieved_at DESC",
                 (project_id,),
             ).fetchall()
-        runs = []
-        for row in rows:
-            item = dict(row)
-            item["providers_requested"] = json.loads(item.pop("providers_json"))
-            item["sources_responded"] = json.loads(item.pop("sources_responded_json"))
-            item["provider_coverage"] = json.loads(item.pop("provider_coverage_json"))
-            item["manifest"] = json.loads(item.pop("manifest_json"))
-            item["results"] = json.loads(item.pop("results_json"))
-            runs.append(item)
         with self._lock:
             journal_rows = self._connection.execute(
                 "SELECT * FROM journal_search_runs WHERE project_id = ? ORDER BY retrieved_at DESC",
@@ -241,7 +281,7 @@ class ProjectStore:
             ).fetchall()
         return {
             "project": project,
-            "search_runs": runs,
+            "search_runs": [self._search_run(row) for row in rows],
             "journal_search_runs": [self._journal_run(row) for row in journal_rows],
             "journal_fit_runs": self.list_journal_fits(project_id, 1000),
         }
@@ -279,6 +319,9 @@ class ProjectStore:
             ).fetchall()
         for row in rows:
             parsed = self._journal_run(row)
+            if any(outcome.get("status") in {"failed", "rate_limited", "unavailable"}
+                   for outcome in parsed["provider_outcomes"]):
+                continue
             if parsed["journal"].get("id") == journal_id:
                 return parsed
         return None
@@ -350,12 +393,18 @@ class ProjectStore:
         return {"id": fit_id, "project_id": project_id,
                 "journal_search_id": journal_search_id, "created_at": created_at, **report}
 
-    def list_journal_fits(self, project_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    def list_journal_fits(
+        self, project_id: str, limit: int = 20, journal_search_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        where = "project_id = ?"
+        parameters: List[Any] = [project_id]
+        if journal_search_id is not None:
+            where += " AND journal_search_id = ?"
+            parameters.append(journal_search_id)
         with self._lock:
             rows = self._connection.execute(
-                """SELECT * FROM journal_fit_runs WHERE project_id = ?
-                   ORDER BY created_at DESC LIMIT ?""",
-                (project_id, limit),
+                f"SELECT * FROM journal_fit_runs WHERE {where} ORDER BY created_at DESC LIMIT ?",
+                [*parameters, limit],
             ).fetchall()
         fits = []
         for row in rows:
@@ -364,3 +413,70 @@ class ProjectStore:
             item.update(json.loads(item.pop("report_json")))
             fits.append(item)
         return fits
+
+    @staticmethod
+    def _workspace_record(row: sqlite3.Row) -> Dict[str, Any]:
+        item = dict(row)
+        item["data"] = json.loads(item.pop("data_json"))
+        return item
+
+    def workspace_history(self, project_id: str, section: str, item_id: str, limit: int = 30) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM workspace_revisions WHERE project_id = ? AND section = ? AND id = ?
+                   ORDER BY revision DESC LIMIT ?""", (project_id, section, item_id, limit),
+            ).fetchall()
+        return [self._workspace_record(row) for row in rows]
+
+    def workspace_items(self, project_id: str, section: str, limit: int = 100) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT * FROM workspace_revisions WHERE project_id = ? AND section = ?
+                   AND (id, revision) IN (
+                     SELECT id, MAX(revision) FROM workspace_revisions
+                     WHERE project_id = ? AND section = ? GROUP BY id
+                   ) ORDER BY updated_at DESC, id LIMIT ?""", (project_id, section, project_id, section, limit),
+            ).fetchall()
+        return [self._workspace_record(row) for row in rows]
+
+    def all_workspace_items(self, section: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT w.*, p.name AS project_name FROM workspace_revisions w
+                   JOIN research_projects p ON p.id = w.project_id
+                   JOIN (SELECT project_id, id, MAX(revision) AS revision FROM workspace_revisions
+                         WHERE section = ? GROUP BY project_id, id) latest
+                     ON latest.project_id = w.project_id AND latest.id = w.id AND latest.revision = w.revision
+                   WHERE w.section = ? ORDER BY w.updated_at DESC, w.id""", (section, section),
+            ).fetchall()
+        return [self._workspace_record(row) for row in rows]
+
+    def put_workspace_item(
+        self, project_id: str, section: str, data: Dict[str, Any],
+        item_id: Optional[str] = None, expected_revision: int = 0,
+        expected_autosave_version: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        item_id = item_id or str(uuid.uuid4())
+        now = _now()
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            revision = self._connection.execute(
+                "SELECT COALESCE(MAX(revision), 0) FROM workspace_revisions WHERE project_id = ? AND section = ? AND id = ?",
+                (project_id, section, item_id),
+            ).fetchone()[0]
+            if revision != expected_revision:
+                raise WorkspaceConflict("This item changed. Reload the latest version before saving.")
+            if section == "manuscripts" and expected_autosave_version is not None:
+                buffer = self.publishing.autosave(project_id, item_id)
+                if (buffer or {}).get("version", 0) != expected_autosave_version:
+                    raise WorkspaceConflict("An autosave changed in another tab. Reload the draft before saving a version.")
+            self._connection.execute(
+                "INSERT INTO workspace_revisions VALUES (?, ?, ?, ?, ?, ?)",
+                (project_id, section, item_id, revision + 1, json.dumps(data, ensure_ascii=False), now),
+            )
+            if section == "manuscripts":
+                self._connection.execute(
+                    "DELETE FROM manuscript_autosaves WHERE project_id = ? AND draft_id = ?", (project_id, item_id),
+                )
+        return {"project_id": project_id, "section": section, "id": item_id,
+                "revision": revision + 1, "updated_at": now, "data": data}

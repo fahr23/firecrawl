@@ -16,8 +16,11 @@ import os
 import re
 import sys
 import unicodedata
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+
+from .base import ProviderRequestState
 
 
 DEFAULT_CATALOG_PATH = Path(__file__).resolve().parent / "data" / "ubyt_2026.csv"
@@ -74,15 +77,14 @@ def _truthy(value: str) -> bool:
     return str(value).strip().lower() in {"true", "1", "yes", "x"}
 
 
-class UbytCatalog:
+class UbytCatalog(ProviderRequestState):
     """In-memory UBYT list with the journal-catalog adapter interface."""
 
     source_name = "TÜBİTAK UBYT"
 
     def __init__(self, path: Optional[os.PathLike] = None) -> None:
+        super().__init__()
         self.path = Path(path or os.getenv("ACADEMIC_UBYT_CATALOG_PATH") or DEFAULT_CATALOG_PATH)
-        self.last_failure: Optional[Dict[str, str]] = None
-        self.last_total: Optional[int] = None
         self.records: List[Dict[str, Any]] = []
         self._by_issn: Dict[str, Dict[str, Any]] = {}
         self._by_title: Dict[str, Dict[str, Any]] = {}
@@ -92,16 +94,13 @@ class UbytCatalog:
     def is_available(self) -> bool:
         return bool(self.records)
 
-    @property
+    @cached_property
     def year(self) -> Optional[int]:
         return max((record["year"] for record in self.records if record["year"]), default=None)
 
     @property
     def label(self) -> str:
         return f"TÜBİTAK UBYT {self.year}" if self.year else "TÜBİTAK UBYT"
-
-    def clear_last_failure(self) -> None:
-        self.last_failure = None
 
     def _load(self) -> None:
         if not self.path.is_file():

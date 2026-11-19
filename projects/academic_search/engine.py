@@ -140,7 +140,7 @@ class AcademicSearchEngine:
                use_all_sources: bool = False,
                year_min: Optional[int] = None,
                year_max: Optional[int] = None,
-               providers: Optional[List[str]] = None) -> SearchResult:
+               providers: Optional[List[str]] = None, *, prefer_recent: bool = False) -> SearchResult:
         """
         Search for academic papers.
         
@@ -157,7 +157,7 @@ class AcademicSearchEngine:
         Returns:
             SearchResult containing found articles.
         """
-        self.logger.info(f"Searching for: '{query}'")
+        self.logger.info("Searching academic providers")
         if year_min or year_max:
             year_range = f" ({year_min or 'any'} - {year_max or 'now'})"
             self.logger.info(f"Year filter: {year_range}")
@@ -194,7 +194,7 @@ class AcademicSearchEngine:
             # The prompt says "if not given do it all if given use them". 
             # So if providers are given, we iterate them all (implied 'all' behavior for the subset).
             return self._search_all_sources(
-                query, max_results, year_min, year_max, active_searchers, requested_names
+                query, max_results, year_min, year_max, active_searchers, requested_names, prefer_recent
             )
         else:
             return self._search_primary_source(
@@ -213,29 +213,21 @@ class AcademicSearchEngine:
                                                 message="provider is not configured"))
                 continue
             try:
-                searcher.clear_last_failure()
-                self.logger.info(f"Trying {searcher.source_name}...")
-                result = searcher.search(query, max_results, year_min, year_max)
+                result, provider_outcomes = self._fetch_source(searcher, query, max_results, year_min, year_max)
+                outcomes.extend(provider_outcomes)
                 
                 if result.articles:
                     self.logger.info(
                         f"Found {result.total_found:,} results from {searcher.source_name}"
                     )
                     result.requested_providers = requested_names or [searcher.source_name]
-                    result.provider_outcomes = outcomes + [ProviderOutcome(
-                        searcher.source_name, "responded", returned_count=len(result.articles),
-                        total_found=result.total_found,
-                    )]
+                    result.provider_outcomes = outcomes
                     result.year_min, result.year_max, result.limit = year_min, year_max, max_results
                     result.raw_article_count = result.count
                     result.deduplicated_article_count = result.count
                     return result
-                else:
-                    self.logger.warning(f"No results from {searcher.source_name}")
-                    outcomes.append(self._outcome_from_failure(searcher.source_name, searcher.last_failure))
-                    
             except Exception as e:
-                self.logger.error(f"Error with {searcher.source_name}: {e}")
+                self.logger.warning("%s search raised %s", searcher.source_name, type(e).__name__)
                 outcomes.append(self._outcome_from_exception(searcher.source_name, e))
                 continue
         
@@ -254,7 +246,7 @@ class AcademicSearchEngine:
     
     def _search_all_sources(self, query: str, max_results: int, year_min: Optional[int] = None,
                             year_max: Optional[int] = None, searchers: List[BaseSearcher] = None,
-                            requested_names: Optional[List[str]] = None) -> SearchResult:
+                            requested_names: Optional[List[str]] = None, prefer_recent: bool = False) -> SearchResult:
         """Search all sources in parallel and merge results by provider rank."""
         searchers = searchers or self._searchers
         start_time = time.time()
@@ -269,10 +261,9 @@ class AcademicSearchEngine:
         if available:
             with ThreadPoolExecutor(max_workers=len(available)) as executor:
                 for searcher in available:
-                    searcher.clear_last_failure()
                     self.logger.info(f"Searching {searcher.source_name}...")
                     futures[searcher] = executor.submit(
-                        searcher.search, query, max_results, year_min, year_max
+                        self._fetch_source, searcher, query, max_results, year_min, year_max, prefer_recent
                     )
 
         # Outcomes keep the requested provider order so manifests stay deterministic.
@@ -282,20 +273,17 @@ class AcademicSearchEngine:
                                                 message="provider is not configured"))
                 continue
             try:
-                result = futures[searcher].result()
+                result, provider_outcomes = futures[searcher].result()
             except Exception as e:
-                self.logger.error(f"Error with {searcher.source_name}: {e}")
+                self.logger.warning("%s search raised %s", searcher.source_name, type(e).__name__)
                 outcomes.append(self._outcome_from_exception(searcher.source_name, e))
                 continue
             total += result.total_found
             raw_article_count += len(result.articles)
+            outcomes.extend(provider_outcomes)
             if result.articles:
                 sources.append(searcher.source_name)
-                outcomes.append(ProviderOutcome(searcher.source_name, "responded", True,
-                                                len(result.articles), result.total_found))
                 ranked_lists.append(result.articles)
-            else:
-                outcomes.append(self._outcome_from_failure(searcher.source_name, searcher.last_failure))
 
         # Interleave by each provider's own relevance rank so no single source
         # crowds out the others; duplicates merge into the first-seen record.
@@ -329,7 +317,23 @@ class AcademicSearchEngine:
             limit=max_results,
             raw_article_count=raw_article_count,
             deduplicated_article_count=deduplicated_article_count,
+            provider_articles=[article for articles in ranked_lists for article in articles],
         )
+
+    @staticmethod
+    def _fetch_source(searcher, query, max_results, year_min, year_max, prefer_recent=False):
+        searcher.clear_last_failure()
+        fetch = getattr(searcher, "search_recent", searcher.search) if prefer_recent else searcher.search
+        result = fetch(query, max_results, year_min, year_max)
+        outcomes = result.provider_outcomes
+        if not outcomes:
+            outcome = AcademicSearchEngine._outcome_from_failure(searcher.source_name, searcher.last_failure)
+            if result.articles and not searcher.last_failure:
+                outcome.status = "responded"
+            outcome.returned_count = len(result.articles)
+            outcome.total_found = result.total_found
+            outcomes = [outcome]
+        return result, outcomes
 
     @staticmethod
     def _deduplication_key(article: Article) -> str:
@@ -337,9 +341,9 @@ class AcademicSearchEngine:
         if article.doi_normalized:
             return f"doi:{article.doi_normalized}"
         title = article.title_normalized
-        if len(title) < 20:
-            return f"unique:{id(article)}"
         first_author = re.sub(r"[^a-z0-9]", "", (article.authors or "").split(",")[0].lower())
+        if len(title) < 20 or not article.year or not first_author:
+            return f"unique:{id(article)}"
         return f"title:{title}|year:{article.year or ''}|author:{first_author}"
 
     @staticmethod
@@ -351,8 +355,10 @@ class AcademicSearchEngine:
 
     @staticmethod
     def _outcome_from_exception(provider: str, exc: Exception) -> ProviderOutcome:
-        code = "timeout" if "timeout" in type(exc).__name__.lower() else "provider_error"
-        return ProviderOutcome(provider, "failed", error_code=code, message="provider search failed")
+        failure = BaseSearcher._failure_from_exception(exc)
+        if failure["code"] == "request_error":
+            failure = {"code": "provider_error", "message": "provider search failed"}
+        return AcademicSearchEngine._outcome_from_failure(provider, failure)
     
     # ========== Enrichment Methods ==========
     

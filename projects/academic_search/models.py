@@ -258,7 +258,7 @@ class Article:
     @property
     def doi_normalized(self) -> str:
         """Get normalized DOI for deduplication."""
-        if not self.doi:
+        if not isinstance(self.doi, str):
             return ""
         return self.doi.lower().replace("https://doi.org/", "").strip()
     
@@ -326,11 +326,12 @@ class SearchResult:
     year_min: Optional[int] = None
     year_max: Optional[int] = None
     limit: Optional[int] = None
-    deduplication_version: str = "doi-or-title-author-year-v1"
+    deduplication_version: str = "doi-or-title-author-year-v2"
     ordering_version: str = "provider-rank-interleave-v1"
     raw_article_count: int = 0
     deduplicated_article_count: int = 0
     derived_outputs: List[Dict[str, Any]] = field(default_factory=list)
+    provider_articles: List[Article] = field(default_factory=list, repr=False, compare=False)
     
     @property
     def count(self) -> int:

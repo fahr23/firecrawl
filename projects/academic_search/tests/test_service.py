@@ -258,7 +258,10 @@ def test_ui_and_assets_are_served():
     script = client.get("/assets/app.js")
 
     assert page.status_code == 200
-    assert "Find papers. Keep the trail." in page.text
+    assert 'aria-label="Research topics"' in page.text
+    assert 'id="topic-filter"' in page.text
+    assert 'aria-controls="papers-view"' in page.text
+    assert 'aria-controls="journals-view"' in page.text
     assert "Read a local research document" not in page.text
     assert 'id="providers"' in page.text
     assert 'id="sources-unavailable"' in page.text
@@ -269,7 +272,7 @@ def test_ui_and_assets_are_served():
     assert "/api/v1/health" in script.text
     assert "Journal explorer" in page.text
     assert "/api/v1/journals/search" in script.text
-    assert "Journal catalog" in page.text
+    assert "Find a journal" in page.text
     assert "/api/v1/journal-catalog/journals" in script.text
 
 
@@ -401,7 +404,7 @@ def test_project_keeps_search_defaults_history_and_exportable_evidence():
     assert "Which interventions reduce emissions?" in evidence.text
     assert "https://example.org/paper" in evidence.text
     assert "Deduplication:" in evidence.text
-    assert history[0]["manifest"]["deduplication_version"] == "doi-or-title-author-year-v1"
+    assert history[0]["manifest"]["deduplication_version"] == "doi-or-title-author-year-v2"
 
 
 def test_search_beyond_page_one_does_not_duplicate_project_history():
@@ -413,6 +416,26 @@ def test_search_beyond_page_one_does_not_duplicate_project_history():
 
     history = client.get(f"/api/v1/projects/{project['id']}/searches").json()["searches"]
     assert len(history) == 1
+
+
+def test_saved_paper_search_reopens_without_fetching_and_belongs_to_one_project():
+    client, engine, _ = make_client()
+    first = client.post("/api/v1/projects", json={"name": "Energy"}).json()
+    second = client.post("/api/v1/projects", json={"name": "Carbon"}).json()
+    run = client.get("/api/v1/search", params={
+        "q": "energy", "project_id": first["id"], "year_min": 2020,
+    }).json()
+    path = f"searches/{run['search_run_id']}"
+
+    reopened = client.get(f"/api/v1/projects/{first['id']}/{path}")
+    assert reopened.status_code == 200
+    assert reopened.json()["results"] == run["results"]
+    assert reopened.json()["provider_coverage"] == run["provider_coverage"]
+    assert reopened.json()["year_min"] == 2020
+    assert reopened.json()["retrieved_at"] == run["retrieved_at"]
+    assert client.get(f"/api/v1/projects/{second['id']}/{path}").status_code == 404
+    assert client.get(f"/api/v1/projects/{first['id']}/searches/missing").status_code == 404
+    assert len(engine.calls) == 1
 
 
 def test_project_names_are_unique_ignoring_case_and_spaces():
@@ -591,6 +614,17 @@ def test_saved_journal_search_reuses_snapshot_and_refreshes_on_request():
     assert saved[0]["journal"]["display_name"] == "Journal of Computing"
     assert saved[0]["topics"] == ["machine learning", "energy forecasting"]
 
+    other = client.post("/api/v1/projects", json={"name": "Another topic"}).json()
+    path = f"journal-searches/{first.json()['id']}"
+    reopened = client.get(f"/api/v1/projects/{project['id']}/{path}")
+    assert reopened.status_code == 200
+    assert reopened.json()["id"] == first.json()["id"]
+    assert reopened.json()["papers"] == first.json()["papers"]
+    assert reopened.json()["cache_status"] == "saved"
+    assert reopened.json()["latest_fit"] is None
+    assert client.get(f"/api/v1/projects/{other['id']}/{path}").status_code == 404
+    assert len(journal_searcher.search_calls) == 2
+
 
 def test_manuscript_fit_uses_and_saves_exact_journal_snapshot():
     client, _, _ = make_client()
@@ -631,6 +665,10 @@ def test_manuscript_fit_uses_and_saves_exact_journal_snapshot():
     ).json()["fits"]
     assert saved[0]["id"] == fit["id"]
     assert saved[0]["journal_search_id"] == searched["id"]
+    snapshot = client.get(
+        f"/api/v1/projects/{project['id']}/journal-searches/{searched['id']}"
+    ).json()
+    assert snapshot["latest_fit"] == saved[0]
 
 
 def test_journal_search_and_fit_validate_project_and_manuscript():
